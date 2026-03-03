@@ -95,17 +95,27 @@ func packUint32Scalar(flag byte, dst []byte, values []uint32) ([]byte, error) {
 		return nil, ErrInvalidBuffer
 	}
 
-	bitWidth := maxBitWidth(values)
+	headerFlags := headerTypeUint32Flag
+	workValues := values
+
+	if flag&Delta != 0 {
+		needZZ := deltaEncodePerLaneScalar(values, values)
+		if needZZ {
+			headerFlags |= headerZigZagFlag
+		}
+		headerFlags |= headerDeltaFlag
+		workValues = values
+	}
+
+	bitWidth := maxBitWidth(workValues)
 	payloadBytes := utlPayloadBytesLUT[bitWidth]
 	totalLen := headerBytes + payloadBytes
 
 	dst = ensureLen(dst, totalLen)
-	headerFlags := headerTypeUint32Flag
 	bo.PutUint32(dst, encodeHeader(len(values), bitWidth, 0, headerFlags))
 
 	payload := dst[headerBytes : headerBytes+payloadBytes]
-	clear(payload)
-	packLanesUTLScalar(payload, values, bitWidth)
+	packLanesUTLScalar(payload, workValues, bitWidth)
 
 	return dst[:totalLen], nil
 }
@@ -117,7 +127,7 @@ func unpackUint32Scalar(dst []uint32, scratch []uint32, buf []byte) ([]uint32, i
 	}
 
 	header := bo.Uint32(buf)
-	count, bitWidth, intType, _, _, _, _, _ := decodeHeader(header)
+	count, bitWidth, intType, _, _, hasDelta, hasZigZag, _ := decodeHeader(header)
 
 	if err := validateIntType(intType); err != nil {
 		return nil, 0, err
@@ -145,6 +155,13 @@ func unpackUint32Scalar(dst []uint32, scratch []uint32, buf []byte) ([]uint32, i
 
 	payload := buf[headerBytes : headerBytes+payloadBytes]
 	unpackLanesUTLScalar(dst, payload, count, bitWidth)
+
+	if hasDelta {
+		overflowPos := deltaDecodePerLaneWithOverflowScalar(dst, dst, hasZigZag)
+		if overflowPos > 0 {
+			return nil, 0, &ErrOverflow{Position: overflowPos}
+		}
+	}
 
 	return dst, headerBytes + payloadBytes, nil
 }
