@@ -16,7 +16,20 @@ func init() {
 	simdLevel = detectSIMDLevel()
 }
 
-// detectSIMDLevel returns scalar until it's wired up with archsimd probes.
-func detectSIMDLevel() int {
+// selectSimdLevel returns the SIMD level for given CPU feature flags.
+// Exported for testability; the actual dispatch uses detectSIMDLevel.
+func selectSimdLevel(hasAVX512VBMI, hasAVX512, hasAVX2, hasSSE2 bool) int {
+	if hasAVX512VBMI {
+		return simdLevelAVX512VBMI
+	}
+	if hasAVX512 {
+		return simdLevelAVX512
+	}
+	if hasAVX2 {
+		return simdLevelAVX2
+	}
+	if hasSSE2 {
+		return simdLevelSSE2
+	}
 	return simdLevelScalar
 }

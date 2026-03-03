@@ -6,6 +6,45 @@ import (
 	"github.com/mhr3/streamvbyte"
 )
 
+// excIndexSize returns the byte size of the exception index for a given count.
+func excIndexSize(excCount int) int {
+	if excCount <= excBitmapThreshold {
+		return excCount
+	}
+	return 16
+}
+
+// readSVBLen reads the StreamVByte data length from the block buffer.
+func readSVBLen(buf []byte, hasFOR bool) (int, error) {
+	offset := headerBytes
+	if hasFOR {
+		offset += headerFORBytes
+	}
+	if len(buf) < offset+svbLenBytes {
+		return 0, ErrInvalidBuffer
+	}
+	return int(bo.Uint16(buf[offset:])), nil
+}
+
+// decodeExceptionHighBitsInto decodes all SVB exception high bits into dst.
+// excStart is the byte offset where the exception index begins (after payload).
+// Returns the offset past the SVB data and any error.
+func decodeExceptionHighBitsInto(dst []uint32, buf []byte, excStart, excCount int, hasFOR bool) (int, error) {
+	svbLen, err := readSVBLen(buf, hasFOR)
+	if err != nil {
+		return 0, err
+	}
+	svbStart := excStart + excIndexSize(excCount)
+	if svbStart+svbLen > len(buf) {
+		return 0, ErrInvalidBuffer
+	}
+	streamvbyte.DecodeUint32(
+		buf[svbStart:svbStart+svbLen], excCount,
+		&streamvbyte.DecodeOptions[uint32]{Buffer: dst[:excCount]},
+	)
+	return svbStart + svbLen, nil
+}
+
 // collectExceptionsDirect finds values that exceed the chosen bit width.
 // Returns the exception count. Fills positions (for <=16 exceptions)
 // or bitmap (for >16 exceptions) and highBits.
@@ -61,22 +100,10 @@ func encodeExceptionHighBits(highBits []uint32) []byte {
 
 // applyExceptions patches decoded values with exception high bits.
 // excStart is the byte offset where the exception index begins (after payload).
-// svbLen is the StreamVByte data length read from the header area.
 // scratch is used as a decode buffer (must have capacity >= excCount).
 // Returns the total number of bytes consumed and any error.
-func applyExceptions(dst []uint32, buf []byte, excStart, count, bitWidth, excCount, svbLen int, scratch []uint32) (int, error) {
-	svbStart := excStart
-	if excCount <= excBitmapThreshold {
-		svbStart += excCount
-	} else {
-		svbStart += 16
-	}
-
-	if svbStart+svbLen > len(buf) {
-		return 0, ErrInvalidBuffer
-	}
-
-	// TODO-PERF: The scratchbuffer should always be large enough - no tests necessary
+func applyExceptions(dst []uint32, buf []byte, excStart, count, bitWidth, excCount int, hasFOR bool, scratch []uint32) (int, error) {
+	// TODO-PERF: scratch should always be large enough
 	var decodeBuf []uint32
 	if len(scratch) >= excCount {
 		decodeBuf = scratch[:excCount]
@@ -84,16 +111,16 @@ func applyExceptions(dst []uint32, buf []byte, excStart, count, bitWidth, excCou
 		decodeBuf = make([]uint32, excCount)
 	}
 
-	highBits := streamvbyte.DecodeUint32(
-		buf[svbStart:svbStart+svbLen], excCount,
-		&streamvbyte.DecodeOptions[uint32]{Buffer: decodeBuf},
-	)
+	consumed, err := decodeExceptionHighBitsInto(decodeBuf, buf, excStart, excCount, hasFOR)
+	if err != nil {
+		return 0, err
+	}
 
 	if excCount <= excBitmapThreshold {
 		for i := range excCount {
 			pos := int(buf[excStart+i])
 			if pos < count {
-				dst[pos] |= highBits[i] << bitWidth
+				dst[pos] |= decodeBuf[i] << bitWidth
 			}
 		}
 	} else {
@@ -101,12 +128,12 @@ func applyExceptions(dst []uint32, buf []byte, excStart, count, bitWidth, excCou
 		excIdx := 0
 		for pos := range count {
 			if bitmap[pos/8]&(1<<(pos%8)) != 0 {
-				dst[pos] |= highBits[excIdx] << bitWidth
+				dst[pos] |= decodeBuf[excIdx] << bitWidth
 				excIdx++
 			}
 		}
 	}
-	return svbStart + svbLen, nil
+	return consumed, nil
 }
 
 // findExceptionIndex finds the index of a position in the exception list.

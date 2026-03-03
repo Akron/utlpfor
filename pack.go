@@ -14,6 +14,12 @@ func ensureLen(dst []byte, n int) []byte {
 // When Delta is set, values are delta-encoded in place.
 func PackUint32(flag byte, dst []byte, values []uint32) ([]byte, error) {
 	switch simdLevel {
+	case simdLevelAVX512VBMI, simdLevelAVX512:
+		return packUint32AVX512(flag, dst, values)
+	case simdLevelAVX2:
+		return packUint32AVX2(flag, dst, values)
+	case simdLevelSSE2:
+		return packUint32SSE2(flag, dst, values)
 	default:
 		return packUint32Scalar(flag, dst, values)
 	}

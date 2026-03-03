@@ -132,13 +132,3 @@ func validateIntType(intType int) error {
 	}
 }
 
-// blockBytesConsumed computes total bytes consumed by a block including exceptions.
-func blockBytesConsumed(header uint32, svbLen int) int {
-	_, bitWidth, _, excCount, hasExceptions, _, _, hasFOR := decodeHeader(header)
-	base := payloadOffset(hasFOR, hasExceptions) + utlPayloadBytesLUT[bitWidth]
-	if !hasExceptions {
-		return base
-	}
-	excIndexSize := min(excCount, excBitmapThreshold)
-	return base + excIndexSize + svbLen
-}

@@ -1,7 +1,5 @@
 package utlpfor
 
-import "github.com/mhr3/streamvbyte"
-
 // extractPackedValueUTL extracts a single packed value from a UTL payload.
 func extractPackedValueUTL(pos int, payload []byte, bitWidth int) uint32 {
 	lane := pos % utlLaneCount
@@ -35,6 +33,20 @@ func extractPackedValueUTL(pos int, payload []byte, bitWidth int) uint32 {
 
 // GetUint32 extracts a single value at the given position from the packed block.
 func GetUint32(pos int, buf []byte) (uint32, error) {
+	switch simdLevel {
+	case simdLevelAVX512VBMI, simdLevelAVX512:
+		return getUint32AVX512(pos, buf)
+	case simdLevelAVX2:
+		return getUint32AVX2(pos, buf)
+	case simdLevelSSE2:
+		return getUint32SSE2(pos, buf)
+	default:
+		return getUint32Scalar(pos, buf)
+	}
+}
+
+// getUint32Scalar is the scalar implementation of GetUint32.
+func getUint32Scalar(pos int, buf []byte) (uint32, error) {
 	if len(buf) < headerBytes {
 		return 0, ErrInvalidBuffer
 	}
@@ -78,11 +90,11 @@ func getValueDirect(pos int, buf []byte, payload []byte, excStart, bitWidth, cou
 	if hasExceptions {
 		excIdx := findExceptionIndex(buf, excStart, excCount, pos)
 		if excIdx >= 0 {
-			highBit, err := decodeExceptionHighBit(buf, excStart, excCount, excIdx, hasFOR)
-			if err != nil {
+			var decodeBuf [blockSize]uint32
+			if _, err := decodeExceptionHighBitsInto(decodeBuf[:], buf, excStart, excCount, hasFOR); err != nil {
 				return 0, err
 			}
-			value |= highBit << bitWidth
+			value |= decodeBuf[excIdx] << bitWidth
 		}
 	}
 
@@ -95,15 +107,13 @@ func getValueWithDelta(pos int, buf []byte, payload []byte, excStart, bitWidth, 
 	lane := pos % utlLaneCount
 	posInLane := pos / utlLaneCount
 
-	// Decode all exception high bits once (shared across lane positions).
 	var allHighBits [blockSize]uint32
 	if hasExceptions {
-		if err := decodeAllExceptionHighBits(allHighBits[:], buf, excStart, excCount, hasFOR); err != nil {
+		if _, err := decodeExceptionHighBitsInto(allHighBits[:], buf, excStart, excCount, hasFOR); err != nil {
 			return 0, err
 		}
 	}
 
-	// Extract and reconstruct work values for this lane.
 	var laneValues [utlValuesPerLane]uint32
 	for v := 0; v <= posInLane; v++ {
 		seqIdx := lane + v*utlLaneCount
@@ -123,7 +133,6 @@ func getValueWithDelta(pos int, buf []byte, payload []byte, excStart, bitWidth, 
 		}
 	}
 
-	// Per-lane prefix sum (delta decode).
 	if hasZigZag {
 		laneValues[0] = uint32(zigzagDecode32(laneValues[0]))
 	}
@@ -140,65 +149,4 @@ func getValueWithDelta(pos int, buf []byte, payload []byte, excStart, bitWidth, 
 	}
 
 	return laneValues[posInLane], nil
-}
-
-// decodeExceptionHighBit decodes a single exception's high bits by decoding
-// all SVB values and returning the one at excIdx.
-func decodeExceptionHighBit(buf []byte, excStart, excCount, excIdx int, hasFOR bool) (uint32, error) {
-	svbLenOffset := headerBytes
-	if hasFOR {
-		svbLenOffset += headerFORBytes
-	}
-	if len(buf) < svbLenOffset+svbLenBytes {
-		return 0, ErrInvalidBuffer
-	}
-	svbLen := int(bo.Uint16(buf[svbLenOffset:]))
-
-	svbStart := excStart
-	if excCount <= excBitmapThreshold {
-		svbStart += excCount
-	} else {
-		svbStart += 16
-	}
-
-	if svbStart+svbLen > len(buf) {
-		return 0, ErrInvalidBuffer
-	}
-
-	//stack buffer for small excCounts to avoid additional allocations
-	var decodeBuf [blockSize]uint32
-	highBits := streamvbyte.DecodeUint32(
-		buf[svbStart:svbStart+svbLen], excCount,
-		&streamvbyte.DecodeOptions[uint32]{Buffer: decodeBuf[:excCount]},
-	)
-	return highBits[excIdx], nil
-}
-
-// decodeAllExceptionHighBits decodes all SVB exception high bits into dst.
-func decodeAllExceptionHighBits(dst []uint32, buf []byte, excStart, excCount int, hasFOR bool) error {
-	svbLenOffset := headerBytes
-	if hasFOR {
-		svbLenOffset += headerFORBytes
-	}
-	if len(buf) < svbLenOffset+svbLenBytes {
-		return ErrInvalidBuffer
-	}
-	svbLen := int(bo.Uint16(buf[svbLenOffset:]))
-
-	svbStart := excStart
-	if excCount <= excBitmapThreshold {
-		svbStart += excCount
-	} else {
-		svbStart += 16
-	}
-
-	if svbStart+svbLen > len(buf) {
-		return ErrInvalidBuffer
-	}
-
-	streamvbyte.DecodeUint32(
-		buf[svbStart:svbStart+svbLen], excCount,
-		&streamvbyte.DecodeOptions[uint32]{Buffer: dst[:excCount]},
-	)
-	return nil
 }

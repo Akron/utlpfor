@@ -186,18 +186,9 @@ func unpackUint32Scalar(dst []uint32, scratch []uint32, buf []byte) ([]uint32, i
 	consumed := pOff + payloadBytes
 
 	if hasExceptions {
-		svbLenOffset := headerBytes
-		if hasFOR {
-			svbLenOffset += headerFORBytes
-		}
-		if len(buf) < svbLenOffset+svbLenBytes {
-			return nil, 0, ErrInvalidBuffer
-		}
-		svbLen := int(bo.Uint16(buf[svbLenOffset:]))
 		excStart := pOff + payloadBytes
-
 		var err error
-		consumed, err = applyExceptions(dst, buf, excStart, count, bitWidth, excCount, svbLen, scratch)
+		consumed, err = applyExceptions(dst, buf, excStart, count, bitWidth, excCount, hasFOR, scratch)
 		if err != nil {
 			return nil, 0, err
 		}

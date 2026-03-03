@@ -25,17 +25,10 @@ func BlockLength(buf []byte) (int, error) {
 		return base, nil
 	}
 
-	svbLenOffset := headerBytes
-	if hasFOR {
-		svbLenOffset += headerFORBytes
+	svbLen, err := readSVBLen(buf, hasFOR)
+	if err != nil {
+		return 0, err
 	}
 
-	if len(buf) < svbLenOffset+svbLenBytes {
-		return 0, ErrInvalidBuffer
-	}
-	svbLen := int(bo.Uint16(buf[svbLenOffset:]))
-
-	excIndexSize := min(excCount, excBitmapThreshold)
-
-	return base + excIndexSize + svbLen, nil
+	return base + excIndexSize(excCount) + svbLen, nil
 }
