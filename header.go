@@ -33,7 +33,7 @@ const (
 
 	// Bit 18: SPECIAL flag -- modifies interpretation of other header fields
 	// in specific combinations (e.g. full-block all-exceptions in 256-mode).
-	// Must be 0 in current implementation.
+	// Silently ignored in current implementation.
 	headerSpecialFlag = uint32(1 << 18)
 
 	// Bit 19: combine-with-next (uint64 double-block extension).
@@ -44,7 +44,7 @@ const (
 	// Must be 0 in current implementation.
 	headerBlock256Flag = uint32(1 << 20)
 
-	// Bit 21: FOR flag (frame-of-reference, Phase 11).
+	// Bit 21: FOR flag (frame-of-reference).
 	// Must be 0 in current implementation.
 	headerFORFlag = uint32(1 << 21)
 
@@ -66,9 +66,10 @@ const (
 	// headerFORBytes is the byte size of the FOR base value.
 	headerFORBytes = 4
 
-	// headerReservedMask covers bits 16-21 (extension and reserved bits).
+	// headerReservedMask covers bits 19-21 (extension bits).
 	// In the current implementation, all these must be zero.
-	headerReservedMask = headerSpecialFlag | headerCombineFlag | headerBlock256Flag | headerFORFlag
+	// Bit 18 (SPECIAL) is intentionally excluded -- it is silently ignored.
+	headerReservedMask = headerCombineFlag | headerBlock256Flag | headerFORFlag
 )
 
 // utlPayloadBytesLUT maps bit width (0-32) to UTL payload size in bytes.
@@ -118,6 +119,17 @@ func payloadOffset(hasFOR, hasExceptions bool) int {
 		offset += svbLenBytes
 	}
 	return offset
+}
+
+// validateIntType checks that the integer type in the header is supported.
+// IntTypeUint32 and IntTypeUint16 are accepted; others return ErrUnsupportedType.
+func validateIntType(intType int) error {
+	switch intType {
+	case IntTypeUint32, IntTypeUint16:
+		return nil
+	default:
+		return ErrUnsupportedType
+	}
 }
 
 // blockBytesConsumed computes total bytes consumed by a block including exceptions.

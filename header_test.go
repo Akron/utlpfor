@@ -85,7 +85,7 @@ func TestEncodeDecodeHeader_Uint16Type(t *testing.T) {
 func TestDecodeHeader_ReservedBitsZero(t *testing.T) {
 	h := encodeHeader(128, 8, 0, headerTypeUint32Flag)
 	reserved := h & headerReservedMask
-	assert.Equal(t, uint32(0), reserved, "bits 18-21 must be zero in current impl")
+	assert.Equal(t, uint32(0), reserved, "bits 19-21 must be zero in current impl")
 }
 
 func TestDecodeHeader_FORFlag(t *testing.T) {
