@@ -1,4 +1,4 @@
-module github.com/Akron/utl-pfor
+module github.com/Akron/utlpfor
 
 go 1.26
 

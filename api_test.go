@@ -3,7 +3,7 @@ package utlpfor_test
 import (
 	"testing"
 
-	utlpfor "github.com/Akron/utl-pfor"
+	utlpfor "github.com/Akron/utlpfor"
 	"github.com/stretchr/testify/assert"
 )
 
