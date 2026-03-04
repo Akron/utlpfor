@@ -3,6 +3,7 @@
 package utlpfor
 
 import (
+	"math/bits"
 	"simd/archsimd"
 	"unsafe"
 )
@@ -224,7 +225,7 @@ func deltaDecodePerLaneWithOverflowAVX2(dst, deltas []uint32, useZigZag bool) in
 
 		overflow0 := sum0.Less(prev0)
 		if overflowPos == 0 && overflow0.ToBits() != 0 {
-			lane := trailingZeros8(overflow0.ToBits())
+			lane := bits.TrailingZeros8(overflow0.ToBits())
 			overflowPos = curBase + lane
 		}
 
@@ -236,7 +237,7 @@ func deltaDecodePerLaneWithOverflowAVX2(dst, deltas []uint32, useZigZag bool) in
 
 		overflow1 := sum1.Less(prev1)
 		if overflowPos == 0 && overflow1.ToBits() != 0 {
-			lane := trailingZeros8(overflow1.ToBits())
+			lane := bits.TrailingZeros8(overflow1.ToBits())
 			overflowPos = curBase + 8 + lane
 		}
 
@@ -244,19 +245,6 @@ func deltaDecodePerLaneWithOverflowAVX2(dst, deltas []uint32, useZigZag bool) in
 	}
 
 	return overflowPos
-}
-
-// trailingZeros8 returns the number of trailing zero bits in a uint8.
-func trailingZeros8(v uint8) int {
-	if v == 0 {
-		return 8
-	}
-	n := 0
-	for v&1 == 0 {
-		n++
-		v >>= 1
-	}
-	return n
 }
 
 // packUint32AVX2 is the full AVX2 packing pipeline.

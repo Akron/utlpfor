@@ -3,6 +3,7 @@
 package utlpfor
 
 import (
+	"math/bits"
 	"simd/archsimd"
 	"unsafe"
 )
@@ -228,7 +229,7 @@ func deltaDecodePerLaneWithOverflowSSE2(dst, deltas []uint32, useZigZag bool) in
 
 			overflow := sum.Less(prev)
 			if overflowPos == 0 && overflow.ToBits() != 0 {
-				lane := trailingZeros8(overflow.ToBits())
+				lane := bits.TrailingZeros8(overflow.ToBits())
 				overflowPos = curBase + off + lane
 			}
 
