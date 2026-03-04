@@ -81,6 +81,8 @@ func getUint32Scalar(pos int, buf []byte) (uint32, error) {
 }
 
 // getValueDirect extracts a single value without delta decoding.
+// TODO-PERF: decodes ALL exception high bits just to return one value at excIdx.
+// Phase 10a's svbDecodeOne will enable targeted single-value decode.
 func getValueDirect(pos int, buf []byte, payload []byte, excStart, bitWidth, count, excCount int, hasExceptions, hasFOR bool) (uint32, error) {
 	var value uint32
 	if bitWidth > 0 {
