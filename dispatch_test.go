@@ -7,10 +7,37 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func simdLevelName(level int) string {
+	switch level {
+	case simdLevelScalar:
+		return "Scalar"
+	case simdLevelSSE2:
+		return "SSE2"
+	case simdLevelAVX2:
+		return "AVX2"
+	case simdLevelAVX512:
+		return "AVX-512"
+	case simdLevelAVX512VBMI:
+		return "AVX-512 VBMI"
+	default:
+		return "Unknown"
+	}
+}
+
 func TestDispatch_SimdLevelIsSet(t *testing.T) {
 	assert.GreaterOrEqual(t, simdLevel, simdLevelScalar)
 	assert.LessOrEqual(t, simdLevel, simdLevelAVX512VBMI)
-	t.Logf("detected SIMD level: %d", simdLevel)
+
+	t.Logf("Active SIMD level: %s (%d)", simdLevelName(simdLevel), simdLevel)
+	t.Logf("SIMD levels testable on this system:")
+	t.Logf("  Scalar:       always available")
+	for _, lvl := range []int{simdLevelSSE2, simdLevelAVX2, simdLevelAVX512, simdLevelAVX512VBMI} {
+		if simdLevel >= lvl {
+			t.Logf("  %-14s available", simdLevelName(lvl)+":")
+		} else {
+			t.Logf("  %-14s not available", simdLevelName(lvl)+":")
+		}
+	}
 }
 
 func TestDispatch_ScalarAlwaysAvailable(t *testing.T) {

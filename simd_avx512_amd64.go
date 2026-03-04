@@ -9,6 +9,7 @@ import (
 
 // unpackLanesUTLAVX512 unpacks UTL payload using AVX-512 (Uint32x16).
 // Implements FastLanes Algorithm 2 with 512-bit vectors (1 load per super-word).
+// TODO-PERF: per-bitwidth specialization may enable inlining (current cost exceeds budget).
 func unpackLanesUTLAVX512(dst []uint32, payload []byte, count, bitWidth int) {
 	if bitWidth == 0 {
 		clear(dst[:count])
@@ -45,6 +46,7 @@ func unpackLanesUTLAVX512(dst []uint32, payload []byte, count, bitWidth int) {
 
 // packLanesUTLAVX512 packs values into UTL payload using AVX-512 (Uint32x16).
 // Implements FastLanes Algorithm 1 with 512-bit vectors (1 store per super-word).
+// TODO-PERF: per-bitwidth specialization may enable inlining (current cost exceeds budget).
 func packLanesUTLAVX512(dst []byte, values []uint32, bitWidth int) {
 	if bitWidth == 0 {
 		return
@@ -89,7 +91,7 @@ func packLanesUTLAVX512(dst []byte, values []uint32, bitWidth int) {
 }
 
 // packUint32AVX512 is the full AVX-512 packing pipeline.
-// Uses AVX-512 for bit-packing, scalar for delta/zigzag/exceptions.
+// Uses AVX-512 for bit-packing, AVX2 for delta/zigzag; scalar for exceptions.
 func packUint32AVX512(flag byte, dst []byte, values []uint32) ([]byte, error) {
 	if len(values) == 0 || len(values) > blockSize {
 		return nil, ErrInvalidBuffer
@@ -99,7 +101,12 @@ func packUint32AVX512(flag byte, dst []byte, values []uint32) ([]byte, error) {
 	workValues := values
 
 	if flag&Delta != 0 {
-		needZZ := deltaEncodePerLaneScalar(values, values)
+		var needZZ bool
+		if len(values) == blockSize {
+			needZZ = deltaEncodePerLaneAVX2(values, values)
+		} else {
+			needZZ = deltaEncodePerLaneScalar(values, values)
+		}
 		if needZZ {
 			headerFlags |= headerZigZagFlag
 		}
@@ -149,7 +156,7 @@ func packUint32AVX512(flag byte, dst []byte, values []uint32) ([]byte, error) {
 }
 
 // unpackUint32AVX512 is the full AVX-512 unpacking pipeline.
-// Uses AVX-512 for bit-unpacking, scalar for delta/zigzag/exceptions.
+// Uses AVX-512 for bit-unpacking, AVX2 for delta/zigzag; scalar for exceptions.
 func unpackUint32AVX512(dst []uint32, scratch []uint32, buf []byte) ([]uint32, int, error) {
 	if len(buf) < headerBytes {
 		return nil, 0, ErrInvalidBuffer
@@ -201,7 +208,12 @@ func unpackUint32AVX512(dst []uint32, scratch []uint32, buf []byte) ([]uint32, i
 	}
 
 	if hasDelta {
-		overflowPos := deltaDecodePerLaneWithOverflowScalar(dst, dst, hasZigZag)
+		var overflowPos int
+		if count == blockSize {
+			overflowPos = deltaDecodePerLaneWithOverflowAVX2(dst, dst, hasZigZag)
+		} else {
+			overflowPos = deltaDecodePerLaneWithOverflowScalar(dst, dst, hasZigZag)
+		}
 		if overflowPos > 0 {
 			return nil, 0, &ErrOverflow{Position: overflowPos}
 		}

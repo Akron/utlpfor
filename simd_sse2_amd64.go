@@ -9,6 +9,7 @@ import (
 
 // unpackLanesUTLSSE2 unpacks UTL payload using SSE2 (Uint32x4).
 // Implements FastLanes Algorithm 2 with 128-bit vectors (4 loads per super-word).
+// TODO-PERF: per-bitwidth specialization may enable inlining (current cost exceeds budget).
 func unpackLanesUTLSSE2(dst []uint32, payload []byte, count, bitWidth int) {
 	if bitWidth == 0 {
 		clear(dst[:count])
@@ -49,6 +50,7 @@ func unpackLanesUTLSSE2(dst []uint32, payload []byte, count, bitWidth int) {
 
 // packLanesUTLSSE2 packs values into UTL payload using SSE2 (Uint32x4).
 // Implements FastLanes Algorithm 1 with 128-bit vectors (4 stores per super-word).
+// TODO-PERF: per-bitwidth specialization may enable inlining (current cost exceeds budget).
 func packLanesUTLSSE2(dst []byte, values []uint32, bitWidth int) {
 	if bitWidth == 0 {
 		return
@@ -111,8 +113,134 @@ func packLanesUTLSSE2(dst []byte, values []uint32, bitWidth int) {
 	}
 }
 
+// --- SSE2 Zigzag Encode/Decode ---
+
+// zigzagEncodeSSE2 applies zigzag encoding using SSE2 (Uint32x4).
+// Formula: (n << 1) ^ (n >> 31) with arithmetic right shift.
+func zigzagEncodeSSE2(buf []uint32, n int) {
+	for i := 0; i <= n-4; i += 4 {
+		v := archsimd.LoadUint32x4Slice(buf[i : i+4])
+		shifted := v.ShiftAllLeft(1)
+		sign := v.AsInt32x4().ShiftAllRight(31).AsUint32x4()
+		result := shifted.Xor(sign)
+		result.StoreSlice(buf[i : i+4])
+	}
+	for i := (n / 4) * 4; i < n; i++ {
+		buf[i] = zigzagEncode32(int32(buf[i]))
+	}
+}
+
+// zigzagDecodeSSE2 applies zigzag decoding using SSE2 (Uint32x4).
+// Formula: (n >>> 1) ^ -(n & 1).
+func zigzagDecodeSSE2(dst, src []uint32) {
+	one := archsimd.BroadcastUint32x4(1)
+	zero := archsimd.BroadcastUint32x4(0)
+	for i := 0; i <= len(src)-4; i += 4 {
+		v := archsimd.LoadUint32x4Slice(src[i : i+4])
+		half := v.ShiftAllRight(1)
+		signBit := v.And(one)
+		negSign := zero.Sub(signBit)
+		result := half.Xor(negSign)
+		result.StoreSlice(dst[i : i+4])
+	}
+	for i := (len(src) / 4) * 4; i < len(src); i++ {
+		dst[i] = uint32(zigzagDecode32(src[i]))
+	}
+}
+
+// --- SSE2 Per-Lane Delta Encode/Decode ---
+
+// deltaEncodePerLaneSSE2 computes per-lane deltas using SSE2 (Uint32x4).
+// Processes all 16 lanes in four register groups.
+// Returns true if zigzag encoding was needed (negative deltas detected).
+func deltaEncodePerLaneSSE2(dst, src []uint32) bool {
+	needZigZag := false
+
+	for v := utlValuesPerLane - 1; v > 0; v-- {
+		curBase := v * utlLaneCount
+		prevBase := (v - 1) * utlLaneCount
+
+		for group := 0; group < 4; group++ {
+			off := group * 4
+			cur := archsimd.LoadUint32x4Slice(src[curBase+off : curBase+off+4])
+			prev := archsimd.LoadUint32x4Slice(src[prevBase+off : prevBase+off+4])
+			delta := cur.Sub(prev)
+
+			borrow := prev.Greater(cur)
+			if borrow.ToBits() != 0 {
+				needZigZag = true
+			}
+
+			delta.StoreSlice(dst[curBase+off : curBase+off+4])
+		}
+	}
+
+	copy(dst[:utlLaneCount], src[:utlLaneCount])
+
+	if needZigZag {
+		zigzagEncodeSSE2(dst, len(src))
+	}
+	return needZigZag
+}
+
+// deltaDecodePerLaneSSE2 performs per-lane prefix sums using SSE2 (Uint32x4).
+func deltaDecodePerLaneSSE2(dst, deltas []uint32, useZigZag bool) {
+	if useZigZag {
+		zigzagDecodeSSE2(dst, deltas)
+	} else {
+		copy(dst, deltas)
+	}
+
+	for v := 1; v < utlValuesPerLane; v++ {
+		curBase := v * utlLaneCount
+		prevBase := (v - 1) * utlLaneCount
+
+		for group := 0; group < 4; group++ {
+			off := group * 4
+			prev := archsimd.LoadUint32x4Slice(dst[prevBase+off : prevBase+off+4])
+			cur := archsimd.LoadUint32x4Slice(dst[curBase+off : curBase+off+4])
+			sum := prev.Add(cur)
+			sum.StoreSlice(dst[curBase+off : curBase+off+4])
+		}
+	}
+}
+
+// deltaDecodePerLaneWithOverflowSSE2 performs prefix sum with overflow check
+// using SSE2 (Uint32x4). Returns position of first overflow (0 = none).
+func deltaDecodePerLaneWithOverflowSSE2(dst, deltas []uint32, useZigZag bool) int {
+	if useZigZag {
+		deltaDecodePerLaneSSE2(dst, deltas, true)
+		return 0
+	}
+
+	copy(dst, deltas)
+	var overflowPos int
+
+	for v := 1; v < utlValuesPerLane; v++ {
+		curBase := v * utlLaneCount
+		prevBase := (v - 1) * utlLaneCount
+
+		for group := 0; group < 4; group++ {
+			off := group * 4
+			prev := archsimd.LoadUint32x4Slice(dst[prevBase+off : prevBase+off+4])
+			cur := archsimd.LoadUint32x4Slice(dst[curBase+off : curBase+off+4])
+			sum := prev.Add(cur)
+
+			overflow := sum.Less(prev)
+			if overflowPos == 0 && overflow.ToBits() != 0 {
+				lane := trailingZeros8(overflow.ToBits())
+				overflowPos = curBase + off + lane
+			}
+
+			sum.StoreSlice(dst[curBase+off : curBase+off+4])
+		}
+	}
+
+	return overflowPos
+}
+
 // packUint32SSE2 is the full SSE2 packing pipeline.
-// Uses SSE2 for bit-packing, scalar for delta/zigzag/exceptions.
+// Uses SSE2 for bit-packing and delta/zigzag; scalar for exceptions.
 func packUint32SSE2(flag byte, dst []byte, values []uint32) ([]byte, error) {
 	if len(values) == 0 || len(values) > blockSize {
 		return nil, ErrInvalidBuffer
@@ -122,7 +250,12 @@ func packUint32SSE2(flag byte, dst []byte, values []uint32) ([]byte, error) {
 	workValues := values
 
 	if flag&Delta != 0 {
-		needZZ := deltaEncodePerLaneScalar(values, values)
+		var needZZ bool
+		if len(values) == blockSize {
+			needZZ = deltaEncodePerLaneSSE2(values, values)
+		} else {
+			needZZ = deltaEncodePerLaneScalar(values, values)
+		}
 		if needZZ {
 			headerFlags |= headerZigZagFlag
 		}
@@ -172,7 +305,7 @@ func packUint32SSE2(flag byte, dst []byte, values []uint32) ([]byte, error) {
 }
 
 // unpackUint32SSE2 is the full SSE2 unpacking pipeline.
-// Uses SSE2 for bit-unpacking, scalar for delta/zigzag/exceptions.
+// Uses SSE2 for bit-unpacking and delta/zigzag; scalar for exceptions.
 func unpackUint32SSE2(dst []uint32, scratch []uint32, buf []byte) ([]uint32, int, error) {
 	if len(buf) < headerBytes {
 		return nil, 0, ErrInvalidBuffer
@@ -224,7 +357,12 @@ func unpackUint32SSE2(dst []uint32, scratch []uint32, buf []byte) ([]uint32, int
 	}
 
 	if hasDelta {
-		overflowPos := deltaDecodePerLaneWithOverflowScalar(dst, dst, hasZigZag)
+		var overflowPos int
+		if count == blockSize {
+			overflowPos = deltaDecodePerLaneWithOverflowSSE2(dst, dst, hasZigZag)
+		} else {
+			overflowPos = deltaDecodePerLaneWithOverflowScalar(dst, dst, hasZigZag)
+		}
 		if overflowPos > 0 {
 			return nil, 0, &ErrOverflow{Position: overflowPos}
 		}
