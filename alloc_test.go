@@ -83,7 +83,7 @@ func TestUnpackUint32_DstReuseAcrossCalls(t *testing.T) {
 	dst := make([]uint32, 0, blockSize)
 	scratch := make([]uint32, blockSize)
 
-	for trial := 0; trial < 10; trial++ {
+	for trial := range 10 {
 		values := make([]uint32, blockSize)
 		for i := range values {
 			values[i] = uint32(trial*blockSize + i)
