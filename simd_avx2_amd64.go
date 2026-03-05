@@ -10,7 +10,6 @@ import (
 
 // unpackLanesUTLAVX2 unpacks UTL payload using AVX2 (Uint32x8).
 // Implements FastLanes Algorithm 2 with 256-bit vectors (2 loads per super-word).
-// TODO-PERF: per-bitwidth specialization may enable inlining (current cost exceeds budget).
 func unpackLanesUTLAVX2(dst []uint32, payload []byte, count, bitWidth int) {
 	if bitWidth == 0 {
 		clear(dst[:count])
@@ -55,58 +54,53 @@ func unpackLanesUTLAVX2(dst []uint32, payload []byte, count, bitWidth int) {
 }
 
 // packLanesUTLAVX2 packs values into UTL payload using AVX2 (Uint32x8).
-// Implements FastLanes Algorithm 1 with 256-bit vectors (2 stores per super-word).
-// TODO-PERF: per-bitwidth specialization may enable inlining (current cost exceeds budget).
+// Implements FastLanes Algorithm 1 with 256-bit vectors.
+// Uses a load-OR-store pattern to avoid register spilling.
 func packLanesUTLAVX2(dst []byte, values []uint32, bitWidth int) {
 	if bitWidth == 0 {
 		return
 	}
-	mask := archsimd.BroadcastUint32x8(uint32((1 << bitWidth) - 1))
 	if bitWidth == 32 {
-		mask = archsimd.BroadcastUint32x8(0xFFFFFFFF)
+		for v := 0; v < utlValuesPerLane; v++ {
+			inBase := v * utlLaneCount
+			base := v * utlSuperWordBytes
+			archsimd.LoadUint32x8Slice(values[inBase : inBase+8]).Store(
+				(*[8]uint32)(unsafe.Pointer(&dst[base])))
+			archsimd.LoadUint32x8Slice(values[inBase+8 : inBase+16]).Store(
+				(*[8]uint32)(unsafe.Pointer(&dst[base+32])))
+		}
+		return
 	}
 
-	zero := archsimd.BroadcastUint32x8(0)
-	accLo := zero
-	accHi := zero
-	bitOffset := 0
+	mask := archsimd.BroadcastUint32x8(uint32((1 << bitWidth) - 1))
 
+	clear(dst)
+
+	bitOffset := 0
 	for v := 0; v < utlValuesPerLane; v++ {
 		inBase := v * utlLaneCount
-		vLo := archsimd.LoadUint32x8Slice(values[inBase : inBase+8])
-		vHi := archsimd.LoadUint32x8Slice(values[inBase+8 : inBase+16])
+		vLo := archsimd.LoadUint32x8Slice(values[inBase : inBase+8]).And(mask)
+		vHi := archsimd.LoadUint32x8Slice(values[inBase+8 : inBase+16]).And(mask)
 
-		vLo = vLo.And(mask)
-		vHi = vHi.And(mask)
-
-		shift := uint64(bitOffset % 32)
-		accLo = accLo.Or(vLo.ShiftAllLeft(shift))
-		accHi = accHi.Or(vHi.ShiftAllLeft(shift))
-
-		if int(shift)+bitWidth >= 32 {
-			wordIdx := bitOffset / 32
-			base := wordIdx * utlSuperWordBytes
-			accLo.Store((*[8]uint32)(unsafe.Pointer(&dst[base])))
-			accHi.Store((*[8]uint32)(unsafe.Pointer(&dst[base+32])))
-
-			overflow := int(shift) + bitWidth - 32
-			if overflow > 0 {
-				rightShift := uint64(bitWidth - overflow)
-				accLo = vLo.ShiftAllRight(rightShift)
-				accHi = vHi.ShiftAllRight(rightShift)
-			} else {
-				accLo = zero
-				accHi = zero
-			}
-		}
-		bitOffset += bitWidth
-	}
-
-	if bitOffset%32 != 0 {
 		wordIdx := bitOffset / 32
+		shift := uint64(bitOffset % 32)
 		base := wordIdx * utlSuperWordBytes
-		accLo.Store((*[8]uint32)(unsafe.Pointer(&dst[base])))
-		accHi.Store((*[8]uint32)(unsafe.Pointer(&dst[base+32])))
+
+		curLo := archsimd.LoadUint32x8((*[8]uint32)(unsafe.Pointer(&dst[base])))
+		curHi := archsimd.LoadUint32x8((*[8]uint32)(unsafe.Pointer(&dst[base+32])))
+		curLo.Or(vLo.ShiftAllLeft(shift)).Store((*[8]uint32)(unsafe.Pointer(&dst[base])))
+		curHi.Or(vHi.ShiftAllLeft(shift)).Store((*[8]uint32)(unsafe.Pointer(&dst[base+32])))
+
+		if int(shift)+bitWidth > 32 {
+			rightShift := uint64(32) - shift
+			nextBase := (wordIdx + 1) * utlSuperWordBytes
+			nextLo := archsimd.LoadUint32x8((*[8]uint32)(unsafe.Pointer(&dst[nextBase])))
+			nextHi := archsimd.LoadUint32x8((*[8]uint32)(unsafe.Pointer(&dst[nextBase+32])))
+			nextLo.Or(vLo.ShiftAllRight(rightShift)).Store((*[8]uint32)(unsafe.Pointer(&dst[nextBase])))
+			nextHi.Or(vHi.ShiftAllRight(rightShift)).Store((*[8]uint32)(unsafe.Pointer(&dst[nextBase+32])))
+		}
+
+		bitOffset += bitWidth
 	}
 }
 
@@ -146,9 +140,10 @@ func zigzagDecodeAVX2(dst, src []uint32) {
 // deltaEncodePerLaneAVX2 computes per-lane deltas using AVX2.
 // Processes all 16 lanes in two register groups (lanes 0-7 and 8-15).
 // Returns true if zigzag encoding was needed (negative deltas detected).
-// TODO-PERF: batch borrow detection by ORing all borrow masks and checking once.
+// Borrow detection is batched: all borrow masks are ORed into a single uint8
+// and checked once after the loop, eliminating branches from the inner loop.
 func deltaEncodePerLaneAVX2(dst, src []uint32) bool {
-	needZigZag := false
+	var anyBorrow uint8
 
 	for v := utlValuesPerLane - 1; v > 0; v-- {
 		curBase := v * utlLaneCount
@@ -162,11 +157,8 @@ func deltaEncodePerLaneAVX2(dst, src []uint32) bool {
 		prev1 := archsimd.LoadUint32x8Slice(src[prevBase+8 : prevBase+16])
 		delta1 := cur1.Sub(prev1)
 
-		borrow0 := prev0.Greater(cur0)
-		borrow1 := prev1.Greater(cur1)
-		if borrow0.ToBits() != 0 || borrow1.ToBits() != 0 {
-			needZigZag = true
-		}
+		anyBorrow |= prev0.Greater(cur0).ToBits()
+		anyBorrow |= prev1.Greater(cur1).ToBits()
 
 		delta0.StoreSlice(dst[curBase : curBase+8])
 		delta1.StoreSlice(dst[curBase+8 : curBase+16])
@@ -174,6 +166,7 @@ func deltaEncodePerLaneAVX2(dst, src []uint32) bool {
 
 	copy(dst[:utlLaneCount], src[:utlLaneCount])
 
+	needZigZag := anyBorrow != 0
 	if needZigZag {
 		zigzagEncodeAVX2(dst, len(src))
 	}
@@ -248,7 +241,7 @@ func deltaDecodePerLaneWithOverflowAVX2(dst, deltas []uint32, useZigZag bool) in
 }
 
 // packUint32AVX2 is the full AVX2 packing pipeline.
-// Uses AVX2 for bit-packing and delta/zigzag; scalar for exceptions.
+// Uses AVX2 for bit-packing and delta/zigzag encoding; scalar for exceptions.
 func packUint32AVX2(flag byte, dst []byte, values []uint32) ([]byte, error) {
 	if len(values) == 0 || len(values) > blockSize {
 		return nil, ErrInvalidBuffer
@@ -275,7 +268,6 @@ func packUint32AVX2(flag byte, dst []byte, values []uint32) ([]byte, error) {
 	payloadBytes := utlPayloadBytesLUT[bitWidth]
 	hasExceptions := excCount > 0
 
-	// TODO-PERF: Try to avoid the allocation and copy.
 	var padded [blockSize]uint32
 	copy(padded[:], workValues)
 
@@ -284,10 +276,10 @@ func packUint32AVX2(flag byte, dst []byte, values []uint32) ([]byte, error) {
 		dst = ensureLen(dst, totalLen)
 		bo.PutUint32(dst, encodeHeader(len(values), bitWidth, 0, headerFlags))
 		packLanesUTLAVX2(dst[headerBytes:headerBytes+payloadBytes], padded[:], bitWidth)
+		archsimd.ClearAVXUpperBits()
 		return dst[:totalLen], nil
 	}
 
-	// TODO-PERF: Try to avoid the allocation and copy.
 	var positions [blockSize]byte
 	var bitmap [16]byte
 	var highBits [blockSize]uint32
@@ -309,6 +301,7 @@ func packUint32AVX2(flag byte, dst []byte, values []uint32) ([]byte, error) {
 	bo.PutUint16(dst[headerBytes:], uint16(svbLen))
 
 	packLanesUTLAVX2(dst[pOff:pOff+payloadBytes], padded[:], bitWidth)
+	archsimd.ClearAVXUpperBits()
 	writeExceptionsDirect(dst[pOff+payloadBytes:], positions[:], bitmap[:], excCount, svbData)
 
 	return dst[:totalLen], nil
@@ -352,6 +345,7 @@ func unpackUint32AVX2(dst []uint32, scratch []uint32, buf []byte) ([]uint32, int
 
 	payload := buf[pOff : pOff+payloadBytes]
 	unpackLanesUTLAVX2(dst, payload, blockSize, bitWidth)
+	archsimd.ClearAVXUpperBits()
 
 	dst = dst[:count]
 
@@ -370,6 +364,7 @@ func unpackUint32AVX2(dst []uint32, scratch []uint32, buf []byte) ([]uint32, int
 		var overflowPos int
 		if count == blockSize {
 			overflowPos = deltaDecodePerLaneWithOverflowAVX2(dst, dst, hasZigZag)
+			archsimd.ClearAVXUpperBits()
 		} else {
 			overflowPos = deltaDecodePerLaneWithOverflowScalar(dst, dst, hasZigZag)
 		}

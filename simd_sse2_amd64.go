@@ -10,7 +10,6 @@ import (
 
 // unpackLanesUTLSSE2 unpacks UTL payload using SSE2 (Uint32x4).
 // Implements FastLanes Algorithm 2 with 128-bit vectors (4 loads per super-word).
-// TODO-PERF: per-bitwidth specialization may enable inlining (current cost exceeds budget).
 func unpackLanesUTLSSE2(dst []uint32, payload []byte, count, bitWidth int) {
 	if bitWidth == 0 {
 		clear(dst[:count])
@@ -27,7 +26,6 @@ func unpackLanesUTLSSE2(dst []uint32, payload []byte, count, bitWidth int) {
 		shift := uint64(bitOffset % 32)
 		base := wordIdx * utlSuperWordBytes
 
-		// TODO-PERF: unroll these 4 load groups
 		for group := 0; group < 4; group++ {
 			off := base + group*16
 			vec := archsimd.LoadUint32x4(
@@ -50,67 +48,51 @@ func unpackLanesUTLSSE2(dst []uint32, payload []byte, count, bitWidth int) {
 }
 
 // packLanesUTLSSE2 packs values into UTL payload using SSE2 (Uint32x4).
-// Implements FastLanes Algorithm 1 with 128-bit vectors (4 stores per super-word).
-// TODO-PERF: per-bitwidth specialization may enable inlining (current cost exceeds budget).
+// Implements FastLanes Algorithm 1 with 128-bit vectors.
+// Uses a load-OR-store pattern to avoid register spilling.
 func packLanesUTLSSE2(dst []byte, values []uint32, bitWidth int) {
 	if bitWidth == 0 {
 		return
 	}
-	mask := archsimd.BroadcastUint32x4(uint32((1 << bitWidth) - 1))
 	if bitWidth == 32 {
-		mask = archsimd.BroadcastUint32x4(0xFFFFFFFF)
+		for v := 0; v < utlValuesPerLane; v++ {
+			for group := 0; group < 4; group++ {
+				inBase := v*utlLaneCount + group*4
+				off := v*utlSuperWordBytes + group*16
+				archsimd.LoadUint32x4Slice(values[inBase : inBase+4]).Store(
+					(*[4]uint32)(unsafe.Pointer(&dst[off])))
+			}
+		}
+		return
 	}
 
-	var acc [4]archsimd.Uint32x4
-	zero := archsimd.BroadcastUint32x4(0)
-	for i := range acc {
-		acc[i] = zero
-	}
+	mask := archsimd.BroadcastUint32x4(uint32((1 << bitWidth) - 1))
+
+	clear(dst)
+
 	bitOffset := 0
-
 	for v := 0; v < utlValuesPerLane; v++ {
+		wordIdx := bitOffset / 32
 		shift := uint64(bitOffset % 32)
+		base := wordIdx * utlSuperWordBytes
 
 		for group := 0; group < 4; group++ {
 			inBase := v*utlLaneCount + group*4
-			val := archsimd.LoadUint32x4Slice(values[inBase : inBase+4])
-			val = val.And(mask)
-			acc[group] = acc[group].Or(val.ShiftAllLeft(shift))
-		}
+			val := archsimd.LoadUint32x4Slice(values[inBase : inBase+4]).And(mask)
 
-		if int(shift)+bitWidth >= 32 {
-			wordIdx := bitOffset / 32
-			base := wordIdx * utlSuperWordBytes
-			for group := 0; group < 4; group++ {
-				acc[group].Store(
-					(*[4]uint32)(unsafe.Pointer(&dst[base+group*16])))
-			}
+			off := base + group*16
+			cur := archsimd.LoadUint32x4((*[4]uint32)(unsafe.Pointer(&dst[off])))
+			cur.Or(val.ShiftAllLeft(shift)).Store((*[4]uint32)(unsafe.Pointer(&dst[off])))
 
-			overflow := int(shift) + bitWidth - 32
-			if overflow > 0 {
-				rightShift := uint64(bitWidth - overflow)
-				for group := 0; group < 4; group++ {
-					inBase := v*utlLaneCount + group*4
-					val := archsimd.LoadUint32x4Slice(values[inBase : inBase+4])
-					val = val.And(mask)
-					acc[group] = val.ShiftAllRight(rightShift)
-				}
-			} else {
-				for group := range acc {
-					acc[group] = zero
-				}
+			if int(shift)+bitWidth > 32 {
+				rightShift := uint64(32) - shift
+				nextOff := (wordIdx+1)*utlSuperWordBytes + group*16
+				next := archsimd.LoadUint32x4((*[4]uint32)(unsafe.Pointer(&dst[nextOff])))
+				next.Or(val.ShiftAllRight(rightShift)).Store((*[4]uint32)(unsafe.Pointer(&dst[nextOff])))
 			}
 		}
+
 		bitOffset += bitWidth
-	}
-
-	if bitOffset%32 != 0 {
-		wordIdx := bitOffset / 32
-		base := wordIdx * utlSuperWordBytes
-		for group := 0; group < 4; group++ {
-			acc[group].Store(
-				(*[4]uint32)(unsafe.Pointer(&dst[base+group*16])))
-		}
 	}
 }
 
@@ -154,8 +136,9 @@ func zigzagDecodeSSE2(dst, src []uint32) {
 // deltaEncodePerLaneSSE2 computes per-lane deltas using SSE2 (Uint32x4).
 // Processes all 16 lanes in four register groups.
 // Returns true if zigzag encoding was needed (negative deltas detected).
+// Borrow detection is batched to eliminate branches from the inner loop.
 func deltaEncodePerLaneSSE2(dst, src []uint32) bool {
-	needZigZag := false
+	var anyBorrow uint8
 
 	for v := utlValuesPerLane - 1; v > 0; v-- {
 		curBase := v * utlLaneCount
@@ -167,10 +150,7 @@ func deltaEncodePerLaneSSE2(dst, src []uint32) bool {
 			prev := archsimd.LoadUint32x4Slice(src[prevBase+off : prevBase+off+4])
 			delta := cur.Sub(prev)
 
-			borrow := prev.Greater(cur)
-			if borrow.ToBits() != 0 {
-				needZigZag = true
-			}
+			anyBorrow |= prev.Greater(cur).ToBits()
 
 			delta.StoreSlice(dst[curBase+off : curBase+off+4])
 		}
@@ -178,6 +158,7 @@ func deltaEncodePerLaneSSE2(dst, src []uint32) bool {
 
 	copy(dst[:utlLaneCount], src[:utlLaneCount])
 
+	needZigZag := anyBorrow != 0
 	if needZigZag {
 		zigzagEncodeSSE2(dst, len(src))
 	}
