@@ -42,7 +42,8 @@ func parseKaitaiBlock(t *testing.T, data []byte) kaitaiBlock {
 
 	b := kaitaiBlock{raw: raw}
 	b.count = int(raw & 0xFF)
-	b.bitWidth = int((raw >> 8) & 0x3F)
+	encodedBW := int((raw >> 8) & 0x0F)
+	b.bitWidth = encodedBW * 4
 	b.intType = int((raw >> 14) & 0x03)
 	b.hasDelta = (raw & 0x00400000) != 0
 	b.hasZigZag = (raw & 0x00800000) != 0
@@ -108,9 +109,13 @@ func TestFormatConformance_HeaderLayout(t *testing.T) {
 			gotCount := int(buf[0])
 			assert.Equal(t, tt.count&0xFF, gotCount, "count mismatch")
 
-			// Byte 1 bits 0-5: bitWidth (bits 8-13).
-			gotBW := int(buf[1]) & 0x3F
-			assert.Equal(t, tt.bitWidth, gotBW, "bit width mismatch")
+			// Byte 1 bits 0-3: encoded bitWidth step index (bits 8-11).
+			gotEncodedBW := int(buf[1]) & 0x0F
+			assert.Equal(t, tt.bitWidth/4, gotEncodedBW, "encoded bit width mismatch")
+
+			// Byte 1 bits 4-5: reserved (bits 12-13), must be zero.
+			gotReserved := int(buf[1]>>4) & 0x03
+			assert.Equal(t, 0, gotReserved, "bits 12-13 must be zero")
 
 			// Byte 1 bits 6-7: intType (bits 14-15).
 			gotType := int(buf[1]>>6) & 0x03
@@ -139,10 +144,12 @@ func TestFormatConformance_HeaderLayout(t *testing.T) {
 
 func TestFormatConformance_HeaderBitPositions(t *testing.T) {
 	// Verify exact bit positions match the Kaitai .ksy definition.
-	h := encodeHeader(0x80, 0x3F, 0xFF, headerTypeUint32Flag|headerDeltaFlag|headerZigZagFlag)
+	// Use step bitwidth 32 (encoded as 8), count 128 (0x80), excCount 255.
+	h := encodeHeader(0x80, 32, 0xFF, headerTypeUint32Flag|headerDeltaFlag|headerZigZagFlag)
 
 	assert.Equal(t, 0x80, int(h&0xFF), "count at bits 0-7")
-	assert.Equal(t, 0x3F, int((h>>8)&0x3F), "bitWidth at bits 8-13")
+	assert.Equal(t, 8, int((h>>8)&0x0F), "encoded bitWidth step index at bits 8-11")
+	assert.Equal(t, 0, int((h>>12)&0x03), "bits 12-13 must be zero")
 	assert.Equal(t, IntTypeUint32, int((h>>14)&0x03), "intType at bits 14-15")
 	assert.True(t, h&headerDeltaFlag != 0, "delta at bit 22")
 	assert.True(t, h&headerZigZagFlag != 0, "zigzag at bit 23")
@@ -239,7 +246,7 @@ func TestFormatConformance_ExceptionTableLayout_Bitmap(t *testing.T) {
 }
 
 func TestFormatConformance_BlockLengthMatchesActual(t *testing.T) {
-	for bw := 0; bw <= 32; bw++ {
+	for _, bw := range stepBitWidths {
 		values := make([]uint32, 128)
 		mask := uint32((1 << bw) - 1)
 		if bw == 32 {
@@ -281,7 +288,7 @@ func TestFormatConformance_BlockLengthMatchesActual_WithExceptions(t *testing.T)
 }
 
 func TestFormatConformance_BlockLengthMatchesActual_WithDelta(t *testing.T) {
-	for bw := 0; bw <= 32; bw++ {
+	for _, bw := range stepBitWidths {
 		values := make([]uint32, 128)
 		mask := uint32((1 << bw) - 1)
 		if bw == 32 {
@@ -442,8 +449,8 @@ func TestKaitai_BitmapExceptions(t *testing.T) {
 	}
 }
 
-func TestKaitai_PayloadSizeAllBitWidths(t *testing.T) {
-	for bw := 0; bw <= 32; bw++ {
+func TestKaitai_PayloadSizeAllStepBitWidths(t *testing.T) {
+	for _, bw := range stepBitWidths {
 		values := make([]uint32, 128)
 		mask := uint32((1 << bw) - 1)
 		if bw == 32 {

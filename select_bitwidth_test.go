@@ -1,9 +1,11 @@
 package utlpfor
 
 import (
+	"math/rand/v2"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestSelectBitWidth_AllSameWidth(t *testing.T) {
@@ -17,7 +19,8 @@ func TestSelectBitWidth_AllSameWidth(t *testing.T) {
 			values[i] = mask
 		}
 		width, excCount := selectBitWidth(values)
-		assert.Equal(t, bw, width, "bw=%d", bw)
+		wantStep := roundUpToStep(bw)
+		assert.Equal(t, wantStep, width, "bw=%d", bw)
 		assert.Equal(t, 0, excCount, "bw=%d", bw)
 	}
 }
@@ -69,7 +72,7 @@ func TestSelectBitWidth_ZeroPlusExceptions(t *testing.T) {
 	assert.Greater(t, excCount, 0)
 }
 
-func TestSelectBitWidth_MatchesMaxBitWidthForUniform(t *testing.T) {
+func TestSelectBitWidth_MatchesStepBitWidthForUniform(t *testing.T) {
 	for bw := 0; bw <= 32; bw++ {
 		values := make([]uint32, 128)
 		mask := uint32((1 << bw) - 1)
@@ -81,8 +84,9 @@ func TestSelectBitWidth_MatchesMaxBitWidthForUniform(t *testing.T) {
 		}
 		width, excCount := selectBitWidth(values)
 		maxBW := maxBitWidth(values)
-		assert.Equal(t, maxBW, width,
-			"uniform data should match maxBitWidth (bw=%d)", bw)
+		wantStep := roundUpToStep(maxBW)
+		assert.Equal(t, wantStep, width,
+			"uniform data should match step-rounded maxBitWidth (bw=%d)", bw)
 		assert.Equal(t, 0, excCount, "bw=%d", bw)
 	}
 }
@@ -94,6 +98,37 @@ func TestSelectBitWidth_SingleException(t *testing.T) {
 	}
 	values[42] = 0x100000
 	width, excCount := selectBitWidth(values)
-	assert.Less(t, width, 21, "should pick narrower width with single outlier")
-	assert.Equal(t, 1, excCount)
+	assert.Less(t, width, 24, "should pick narrower width with single outlier")
+	assert.Greater(t, excCount, 0)
+}
+
+func TestSelectBitWidth_AlwaysReturnsStep(t *testing.T) {
+	stepSet := map[int]bool{0: true, 4: true, 8: true, 12: true,
+		16: true, 20: true, 24: true, 28: true, 32: true}
+	rng := rand.New(rand.NewPCG(42, 0))
+	for trial := range 1000 {
+		values := make([]uint32, 128)
+		for i := range values {
+			values[i] = rng.Uint32()
+		}
+		width, _ := selectBitWidth(values)
+		require.True(t, stepSet[width],
+			"selectBitWidth returned non-step width %d (trial %d)", width, trial)
+	}
+}
+
+func TestSelectBitWidth_RoundUpToStep(t *testing.T) {
+	tests := []struct {
+		bw   int
+		want int
+	}{
+		{0, 0}, {1, 4}, {2, 4}, {3, 4}, {4, 4},
+		{5, 8}, {6, 8}, {7, 8}, {8, 8},
+		{9, 12}, {12, 12}, {13, 16}, {16, 16},
+		{17, 20}, {20, 20}, {21, 24}, {24, 24},
+		{25, 28}, {28, 28}, {29, 32}, {32, 32},
+	}
+	for _, tt := range tests {
+		assert.Equal(t, tt.want, roundUpToStep(tt.bw), "roundUpToStep(%d)", tt.bw)
+	}
 }

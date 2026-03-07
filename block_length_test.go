@@ -21,9 +21,12 @@ func makeValidBlock(count, bitWidth int, _ bool) []byte {
 // makeValidBlockWithExceptions creates a block buffer with exception metadata.
 func makeValidBlockWithExceptions(count, bitWidth, excCount int) []byte {
 	payloadBytes := utlPayloadBytesLUT[bitWidth]
-	excIndexSize := min(excCount, excBitmapThreshold)
+	excIdxSize := excCount
+	if excCount > excBitmapThreshold {
+		excIdxSize = 16
+	}
 	svbLen := excCount * 2
-	total := headerBytes + svbLenBytes + payloadBytes + excIndexSize + svbLen
+	total := headerBytes + svbLenBytes + payloadBytes + excIdxSize + svbLen
 	buf := make([]byte, total)
 	h := encodeHeader(count, bitWidth, excCount, headerTypeUint32Flag)
 	bo.PutUint32(buf, h)
@@ -39,9 +42,7 @@ func TestBlockLength_ValidNoExceptions(t *testing.T) {
 		wantLen  int
 	}{
 		{"bw0", 128, 0, 4},
-		{"bw1", 128, 1, 4 + 64},
 		{"bw4", 128, 4, 4 + 64},
-		{"bw5", 128, 5, 4 + 128},
 		{"bw8", 128, 8, 4 + 128},
 		{"bw16", 128, 16, 4 + 256},
 		{"bw32", 128, 32, 4 + 512},
@@ -57,8 +58,8 @@ func TestBlockLength_ValidNoExceptions(t *testing.T) {
 	}
 }
 
-func TestBlockLength_AllBitWidths(t *testing.T) {
-	for bw := 0; bw <= 32; bw++ {
+func TestBlockLength_AllStepBitWidths(t *testing.T) {
+	for _, bw := range stepBitWidths {
 		t.Run(fmt.Sprintf("bw%d", bw), func(t *testing.T) {
 			buf := makeValidBlock(128, bw, false)
 			got, err := BlockLength(buf)

@@ -11,7 +11,8 @@ doc: |
 
   Header layout (32-bit little-endian):
     bits  0- 7: count (number of values, 0-128)
-    bits  8-13: bit_width (0-32, packed value width)
+    bits  8-11: bw_step_index (0-8, step bitwidth / 4)
+    bits 12-13: reserved (must be 0)
     bits 14-15: int_type (0=uint8, 1=uint16, 2=uint32, 3=uint64)
     bits 16-17: reserved (must be 0)
     bit  18:    SPECIAL flag (reserved, silently ignored)
@@ -21,6 +22,10 @@ doc: |
     bit  22:    delta flag
     bit  23:    zigzag flag
     bits 24-31: exc_count (0 = no exceptions, 1-128 = exception count)
+
+  Step bitwidths: The encoded bw_step_index maps to the actual bitwidth
+  as bit_width = bw_step_index * 4. Valid step bitwidths are:
+  0, 4, 8, 12, 16, 20, 24, 28, 32 (step indices 0-8).
 
   Exception index format depends on exc_count:
     exc_count <= 16: sorted byte positions (exc_count bytes)
@@ -68,9 +73,14 @@ types:
       count:
         value: raw & 0xFF
         doc: Number of values in the block (0-128).
+      bw_step_index:
+        value: (raw >> 8) & 0x0F
+        doc: |
+          Step bitwidth index (0-8). Actual bit width = bw_step_index * 4.
+          Valid encoded values are 0-8; values 9-15 are reserved.
       bit_width:
-        value: (raw >> 8) & 0x3F
-        doc: Bit width of packed values (0-32).
+        value: ((raw >> 8) & 0x0F) * 4
+        doc: Actual bit width of packed values (0, 4, 8, ..., 32).
       int_type:
         value: (raw >> 14) & 0x03
         doc: Integer type (0=uint8, 1=uint16, 2=uint32, 3=uint64).
@@ -92,7 +102,7 @@ types:
           ((bit_width + 3) / 4) * 64
         doc: |
           Payload size in bytes. Increases in 64-byte super-word steps:
-          bw 1-4 = 64, bw 5-8 = 128, ..., bw 29-32 = 512.
+          bw 4 = 64, bw 8 = 128, ..., bw 32 = 512.
 
   sorted_positions:
     seq:

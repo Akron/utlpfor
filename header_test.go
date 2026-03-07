@@ -52,11 +52,11 @@ func TestEncodeDecodeHeader_NoExceptionsExcCountZero(t *testing.T) {
 	assert.Equal(t, 0, excCount)
 }
 
-func TestEncodeDecodeHeader_AllBitWidths(t *testing.T) {
-	for bw := 0; bw <= 32; bw++ {
+func TestEncodeDecodeHeader_AllStepBitWidths(t *testing.T) {
+	for _, bw := range stepBitWidths {
 		h := encodeHeader(128, bw, 0, headerTypeUint32Flag)
 		_, gotBW, _, _, _, _, _, _ := decodeHeader(h)
-		assert.Equal(t, bw, gotBW, "bit width %d", bw)
+		assert.Equal(t, bw, gotBW, "step bit width %d", bw)
 	}
 }
 
@@ -77,7 +77,7 @@ func TestDecodeHeader_ZigzagWithoutDelta(t *testing.T) {
 }
 
 func TestEncodeDecodeHeader_Uint16Type(t *testing.T) {
-	h := encodeHeader(64, 10, 0, headerTypeUint16Flag)
+	h := encodeHeader(64, 8, 0, headerTypeUint16Flag)
 	_, _, intType, _, _, _, _, _ := decodeHeader(h)
 	assert.Equal(t, IntTypeUint16, intType)
 }
@@ -176,4 +176,33 @@ func TestUtlPayloadBytesLUT(t *testing.T) {
 		assert.Equal(t, expected, utlPayloadBytesLUT[bw],
 			"payload size mismatch for bw=%d", bw)
 	}
+}
+
+func TestEncodeDecodeHeader_4BitBitwidthRoundTrip(t *testing.T) {
+	for _, bw := range stepBitWidths {
+		for _, ec := range []int{0, 1, 16, 128} {
+			h := encodeHeader(128, bw, ec, headerTypeUint32Flag)
+			gotCount, gotBW, gotType, gotEC, _, _, _, _ := decodeHeader(h)
+			assert.Equal(t, 128, gotCount, "count for bw=%d ec=%d", bw, ec)
+			assert.Equal(t, bw, gotBW, "bitWidth for bw=%d ec=%d", bw, ec)
+			assert.Equal(t, IntTypeUint32, gotType, "intType for bw=%d ec=%d", bw, ec)
+			assert.Equal(t, ec, gotEC, "excCount for bw=%d ec=%d", bw, ec)
+		}
+	}
+}
+
+func TestEncodeDecodeHeader_Bits12_13_AreZero(t *testing.T) {
+	for _, bw := range stepBitWidths {
+		h := encodeHeader(128, bw, 0, headerTypeUint32Flag)
+		bits1213 := (h >> 12) & 0x03
+		assert.Equal(t, uint32(0), bits1213,
+			"bits 12-13 must be zero for bw=%d", bw)
+	}
+}
+
+func TestEncodeDecodeHeader_IntTypeStaysAtBits14_15(t *testing.T) {
+	h := encodeHeader(128, 8, 0, headerTypeUint32Flag)
+	gotType := int((h >> 14) & 0x03)
+	assert.Equal(t, IntTypeUint32, gotType,
+		"intType must be at bits 14-15")
 }

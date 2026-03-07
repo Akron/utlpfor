@@ -13,14 +13,17 @@ const (
 
 	headerBytes      = 4
 	headerCountBits  = 8
-	headerWidthBits  = 6
+	headerWidthBits  = 4
 	headerCountMask  = (1 << headerCountBits) - 1
 	headerWidthMask  = (1 << headerWidthBits) - 1
 	headerWidthShift = headerCountBits
 
+	// Bits 12-13 are reserved (freed by shrinking bitwidth from 6 to 4 bits).
+	// They must be zero in the current implementation.
+
 	headerTypeBits  = 2
 	headerTypeMask  = (1 << headerTypeBits) - 1
-	headerTypeShift = headerWidthShift + headerWidthBits
+	headerTypeShift = 14
 
 	// Integer type constants for bits 14-15.
 	IntTypeUint8  = 0
@@ -87,19 +90,24 @@ var utlPayloadBytesLUT = [33]int{
 }
 
 // encodeHeader packs count, bitWidth, excCount, and flags into a 32-bit header.
+// The bitWidth must be a step bitwidth (0, 4, 8, 12, 16, 20, 24, 28, 32).
+// It is stored as a 4-bit step index: encodedValue = bitWidth / 4.
 func encodeHeader(count, bitWidth, excCount int, flags uint32) uint32 {
+	encodedBW := bitWidth / 4
 	h := uint32(count&headerCountMask) |
-		(uint32(bitWidth&headerWidthMask) << headerWidthShift) |
+		(uint32(encodedBW&headerWidthMask) << headerWidthShift) |
 		flags
 	h |= uint32(excCount&headerExcCountMask) << headerExcCountShift
 	return h
 }
 
 // decodeHeader extracts fields from a 32-bit header word.
+// The 4-bit bitwidth field is decoded as: bitWidth = encodedValue * 4.
 func decodeHeader(header uint32) (count, bitWidth, intType, excCount int,
 	hasExceptions, hasDelta, hasZigZag, hasFOR bool) {
 	count = int(header & headerCountMask)
-	bitWidth = int((header >> headerWidthShift) & headerWidthMask)
+	encodedBW := int((header >> headerWidthShift) & headerWidthMask)
+	bitWidth = encodedBW * 4
 	intType = int((header >> headerTypeShift) & headerTypeMask)
 	excCount = int((header >> headerExcCountShift) & headerExcCountMask)
 	hasExceptions = excCount > 0
