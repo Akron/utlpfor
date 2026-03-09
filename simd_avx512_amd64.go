@@ -169,13 +169,17 @@ func packUint32AVX512(flag byte, dst []byte, values []uint32) ([]byte, error) {
 	hasExceptions := excCount > 0
 
 	var padded [blockSize]uint32
-	copy(padded[:], workValues)
+	packInput := workValues
+	if len(workValues) < blockSize {
+		copy(padded[:], workValues)
+		packInput = padded[:]
+	}
 
 	if !hasExceptions {
 		totalLen := headerBytes + payloadBytes
 		dst = ensureLen(dst, totalLen)
 		bo.PutUint32(dst, encodeHeader(len(values), bitWidth, 0, headerFlags))
-		packLanesUTLAVX512(dst[headerBytes:headerBytes+payloadBytes], padded[:], bitWidth)
+		packLanesUTLAVX512(dst[headerBytes:headerBytes+payloadBytes], packInput, bitWidth)
 		archsimd.ClearAVXUpperBits()
 		return dst[:totalLen], nil
 	}
@@ -200,7 +204,7 @@ func packUint32AVX512(flag byte, dst []byte, values []uint32) ([]byte, error) {
 	bo.PutUint32(dst, encodeHeader(len(values), bitWidth, excCount, headerFlags))
 	bo.PutUint16(dst[headerBytes:], uint16(svbLen))
 
-	packLanesUTLAVX512(dst[pOff:pOff+payloadBytes], padded[:], bitWidth)
+	packLanesUTLAVX512(dst[pOff:pOff+payloadBytes], packInput, bitWidth)
 	archsimd.ClearAVXUpperBits()
 	writeExceptionsDirect(dst[pOff+payloadBytes:], positions[:], bitmap[:], excCount, svbData)
 

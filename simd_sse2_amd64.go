@@ -303,13 +303,17 @@ func packUint32SSE2(flag byte, dst []byte, values []uint32) ([]byte, error) {
 	hasExceptions := excCount > 0
 
 	var padded [blockSize]uint32
-	copy(padded[:], workValues)
+	packInput := workValues
+	if len(workValues) < blockSize {
+		copy(padded[:], workValues)
+		packInput = padded[:]
+	}
 
 	if !hasExceptions {
 		totalLen := headerBytes + payloadBytes
 		dst = ensureLen(dst, totalLen)
 		bo.PutUint32(dst, encodeHeader(len(values), bitWidth, 0, headerFlags))
-		packLanesUTLSSE2(dst[headerBytes:headerBytes+payloadBytes], padded[:], bitWidth)
+		packLanesUTLSSE2(dst[headerBytes:headerBytes+payloadBytes], packInput, bitWidth)
 		return dst[:totalLen], nil
 	}
 
@@ -333,7 +337,7 @@ func packUint32SSE2(flag byte, dst []byte, values []uint32) ([]byte, error) {
 	bo.PutUint32(dst, encodeHeader(len(values), bitWidth, excCount, headerFlags))
 	bo.PutUint16(dst[headerBytes:], uint16(svbLen))
 
-	packLanesUTLSSE2(dst[pOff:pOff+payloadBytes], padded[:], bitWidth)
+	packLanesUTLSSE2(dst[pOff:pOff+payloadBytes], packInput, bitWidth)
 	writeExceptionsDirect(dst[pOff+payloadBytes:], positions[:], bitmap[:], excCount, svbData)
 
 	return dst[:totalLen], nil
