@@ -13,19 +13,16 @@ const (
 
 	headerBytes      = 4
 	headerCountBits  = 8
-	headerWidthBits  = 4
+	headerWidthBits  = 5
 	headerCountMask  = (1 << headerCountBits) - 1
 	headerWidthMask  = (1 << headerWidthBits) - 1
 	headerWidthShift = headerCountBits
 
-	// Bits 12-13 are reserved (freed by shrinking bitwidth from 6 to 4 bits).
-	// They must be zero in the current implementation.
-
 	headerTypeBits  = 2
 	headerTypeMask  = (1 << headerTypeBits) - 1
-	headerTypeShift = 14
+	headerTypeShift = 13
 
-	// Integer type constants for bits 14-15.
+	// Integer type constants for bits 13-14.
 	IntTypeUint8  = 0
 	IntTypeUint16 = 1
 	IntTypeUint32 = 2
@@ -33,6 +30,10 @@ const (
 
 	headerTypeUint16Flag = uint32(IntTypeUint16) << headerTypeShift
 	headerTypeUint32Flag = uint32(IntTypeUint32) << headerTypeShift
+
+	// Bits 15-17: reserved (3 contiguous bits for future extensions).
+	// Must be 0 in current implementation.
+	headerReservedBitsMask = uint32(0x7 << 15)
 
 	// Bit 18: SPECIAL flag -- modifies interpretation of other header fields
 	// in specific combinations (e.g. full-block all-exceptions in 256-mode).
@@ -69,10 +70,10 @@ const (
 	// headerFORBytes is the byte size of the FOR base value.
 	headerFORBytes = 4
 
-	// headerReservedMask covers bits 19-21 (extension bits).
+	// headerReservedMask covers bits 15-17 and 19-21 (reserved + extension bits).
 	// In the current implementation, all these must be zero.
 	// Bit 18 (SPECIAL) is intentionally excluded -- it is silently ignored.
-	headerReservedMask = headerCombineFlag | headerBlock256Flag | headerFORFlag
+	headerReservedMask = headerReservedBitsMask | headerCombineFlag | headerBlock256Flag | headerFORFlag
 )
 
 // utlPayloadBytesLUT maps bit width (0-32) to UTL payload size in bytes.
@@ -91,7 +92,7 @@ var utlPayloadBytesLUT = [33]int{
 
 // encodeHeader packs count, bitWidth, excCount, and flags into a 32-bit header.
 // The bitWidth must be a step bitwidth (0, 4, 8, 12, 16, 20, 24, 28, 32).
-// It is stored as a 4-bit step index: encodedValue = bitWidth / 4.
+// It is stored as a 5-bit step index: encodedValue = bitWidth / 4.
 func encodeHeader(count, bitWidth, excCount int, flags uint32) uint32 {
 	encodedBW := bitWidth / 4
 	h := uint32(count&headerCountMask) |
@@ -102,7 +103,7 @@ func encodeHeader(count, bitWidth, excCount int, flags uint32) uint32 {
 }
 
 // decodeHeader extracts fields from a 32-bit header word.
-// The 4-bit bitwidth field is decoded as: bitWidth = encodedValue * 4.
+// The 5-bit bitwidth field is decoded as: bitWidth = encodedValue * 4.
 func decodeHeader(header uint32) (count, bitWidth, intType, excCount int,
 	hasExceptions, hasDelta, hasZigZag, hasFOR bool) {
 	count = int(header & headerCountMask)

@@ -85,7 +85,7 @@ func TestEncodeDecodeHeader_Uint16Type(t *testing.T) {
 func TestDecodeHeader_ReservedBitsZero(t *testing.T) {
 	h := encodeHeader(128, 8, 0, headerTypeUint32Flag)
 	reserved := h & headerReservedMask
-	assert.Equal(t, uint32(0), reserved, "bits 19-21 must be zero in current impl")
+	assert.Equal(t, uint32(0), reserved, "bits 15-17 and 19-21 must be zero in current impl")
 }
 
 func TestDecodeHeader_FORFlag(t *testing.T) {
@@ -191,18 +191,27 @@ func TestEncodeDecodeHeader_4BitBitwidthRoundTrip(t *testing.T) {
 	}
 }
 
-func TestEncodeDecodeHeader_Bits12_13_AreZero(t *testing.T) {
+func TestEncodeDecodeHeader_Bit12_ZeroIn128Mode(t *testing.T) {
 	for _, bw := range stepBitWidths {
 		h := encodeHeader(128, bw, 0, headerTypeUint32Flag)
-		bits1213 := (h >> 12) & 0x03
-		assert.Equal(t, uint32(0), bits1213,
-			"bits 12-13 must be zero for bw=%d", bw)
+		bit12 := (h >> 12) & 0x01
+		assert.Equal(t, uint32(0), bit12,
+			"bit 12 (5th bw bit) must be zero in 128-block mode for bw=%d", bw)
 	}
 }
 
-func TestEncodeDecodeHeader_IntTypeStaysAtBits14_15(t *testing.T) {
+func TestEncodeDecodeHeader_IntTypeAtBits13_14(t *testing.T) {
 	h := encodeHeader(128, 8, 0, headerTypeUint32Flag)
-	gotType := int((h >> 14) & 0x03)
+	gotType := int((h >> headerTypeShift) & headerTypeMask)
 	assert.Equal(t, IntTypeUint32, gotType,
-		"intType must be at bits 14-15")
+		"intType must be at bits 13-14")
+}
+
+func TestEncodeDecodeHeader_ReservedBits15_17_AreZero(t *testing.T) {
+	for _, bw := range stepBitWidths {
+		h := encodeHeader(128, bw, 0, headerTypeUint32Flag)
+		bits1517 := (h >> 15) & 0x07
+		assert.Equal(t, uint32(0), bits1517,
+			"bits 15-17 must be zero for bw=%d", bw)
+	}
 }

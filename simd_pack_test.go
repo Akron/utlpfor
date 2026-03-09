@@ -460,6 +460,80 @@ func BenchmarkKernelUnpackAVX2_ConstBW8(b *testing.B) {
 	}
 }
 
+func BenchmarkKernelUnpackAVX2_Direct(b *testing.B) {
+	for _, bw := range []int{8, 16} {
+		b.Run(fmt.Sprintf("bw%d", bw), func(b *testing.B) {
+			values := make([]uint32, blockSize)
+			mask := uint32((1 << bw) - 1)
+			for i := range values {
+				values[i] = uint32(i*7) & mask
+			}
+			payloadLen := utlPayloadBytesLUT[bw]
+			payload := make([]byte, payloadLen)
+			packLanesUTLScalar(payload, values, bw)
+			dst := make([]uint32, blockSize)
+
+			b.ReportAllocs()
+			b.SetBytes(int64(blockSize * 4))
+			b.ResetTimer()
+			switch bw {
+			case 8:
+				for i := 0; i < b.N; i++ {
+					unpackAVX2BW8(&dst[0], &payload[0])
+				}
+			case 16:
+				for i := 0; i < b.N; i++ {
+					unpackAVX2BW16(&dst[0], &payload[0])
+				}
+			}
+		})
+	}
+}
+
+func BenchmarkKernelUnpackAVX512(b *testing.B) {
+	for _, bw := range []int{8, 16} {
+		b.Run(fmt.Sprintf("bw%d", bw), func(b *testing.B) {
+			values := make([]uint32, blockSize)
+			mask := uint32((1 << bw) - 1)
+			for i := range values {
+				values[i] = uint32(i*7) & mask
+			}
+			payloadLen := utlPayloadBytesLUT[bw]
+			payload := make([]byte, payloadLen)
+			packLanesUTLScalar(payload, values, bw)
+			dst := make([]uint32, blockSize)
+
+			b.ReportAllocs()
+			b.SetBytes(int64(blockSize * 4))
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				unpackLanesUTLAVX512(dst, payload, blockSize, bw)
+			}
+		})
+	}
+}
+
+func BenchmarkKernelPackAVX512(b *testing.B) {
+	for _, bw := range []int{8, 16} {
+		b.Run(fmt.Sprintf("bw%d", bw), func(b *testing.B) {
+			values := make([]uint32, blockSize)
+			mask := uint32((1 << bw) - 1)
+			for i := range values {
+				values[i] = uint32(i*7) & mask
+			}
+			payloadLen := utlPayloadBytesLUT[bw]
+			dst := make([]byte, payloadLen)
+
+			b.ReportAllocs()
+			b.SetBytes(int64(blockSize * 4))
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				packLanesUTLAVX512(dst, values, bw)
+			}
+		})
+	}
+}
+
 func TestPackUnpack_SIMDEdgeBitWidths(t *testing.T) {
 	for _, bw := range []int{0, 1, 31, 32} {
 		t.Run(fmt.Sprintf("bw%d", bw), func(t *testing.T) {

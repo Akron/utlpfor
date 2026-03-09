@@ -11,10 +11,9 @@ doc: |
 
   Header layout (32-bit little-endian):
     bits  0- 7: count (number of values, 0-128)
-    bits  8-11: bw_step_index (0-8, step bitwidth / 4)
-    bits 12-13: reserved (must be 0)
-    bits 14-15: int_type (0=uint8, 1=uint16, 2=uint32, 3=uint64)
-    bits 16-17: reserved (must be 0)
+    bits  8-12: bw_step_index (0-8 for 128-block, step bitwidth / 4)
+    bits 13-14: int_type (0=uint8, 1=uint16, 2=uint32, 3=uint64)
+    bits 15-17: reserved (3 contiguous bits, must be 0)
     bit  18:    SPECIAL flag (reserved, silently ignored)
     bit  19:    E2 combine-with-next (reserved, must be 0)
     bit  20:    E1 block-length mode (reserved, must be 0)
@@ -74,16 +73,17 @@ types:
         value: raw & 0xFF
         doc: Number of values in the block (0-128).
       bw_step_index:
-        value: (raw >> 8) & 0x0F
+        value: (raw >> 8) & 0x1F
         doc: |
-          Step bitwidth index (0-8). Actual bit width = bw_step_index * 4.
-          Valid encoded values are 0-8; values 9-15 are reserved.
+          Step bitwidth index (5 bits). For 128-block mode: 0-8, actual
+          bit width = bw_step_index * 4. Bit 12 must be 0 in 128-block mode.
+          The 5th bit is reserved for the 256-block extension.
       bit_width:
-        value: ((raw >> 8) & 0x0F) * 4
+        value: ((raw >> 8) & 0x1F) * 4
         doc: Actual bit width of packed values (0, 4, 8, ..., 32).
       int_type:
-        value: (raw >> 14) & 0x03
-        doc: Integer type (0=uint8, 1=uint16, 2=uint32, 3=uint64).
+        value: (raw >> 13) & 0x03
+        doc: Integer type at bits 13-14 (0=uint8, 1=uint16, 2=uint32, 3=uint64).
       has_delta:
         value: (raw & 0x00400000) != 0
         doc: Delta encoding flag (bit 22).

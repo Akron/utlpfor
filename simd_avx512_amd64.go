@@ -8,13 +8,37 @@ import (
 )
 
 // unpackLanesUTLAVX512 unpacks UTL payload using AVX-512 (Uint32x16).
-// Implements FastLanes Algorithm 2 with 512-bit vectors (1 load per super-word).
-// TODO-PERF: per-bitwidth specialization may enable inlining (current cost exceeds budget).
+// Dispatches to per-bitwidth specialized native archsimd functions.
 func unpackLanesUTLAVX512(dst []uint32, payload []byte, count, bitWidth int) {
 	if bitWidth == 0 {
 		clear(dst[:count])
 		return
 	}
+	switch bitWidth {
+	case 4:
+		unpackAVX512BW4(&dst[0], &payload[0])
+	case 8:
+		unpackAVX512BW8(&dst[0], &payload[0])
+	case 12:
+		unpackAVX512BW12(&dst[0], &payload[0])
+	case 16:
+		unpackAVX512BW16(&dst[0], &payload[0])
+	case 20:
+		unpackAVX512BW20(&dst[0], &payload[0])
+	case 24:
+		unpackAVX512BW24(&dst[0], &payload[0])
+	case 28:
+		unpackAVX512BW28(&dst[0], &payload[0])
+	case 32:
+		unpackAVX512BW32(&dst[0], &payload[0])
+	default:
+		unpackLanesUTLAVX512Generic(dst, payload, count, bitWidth)
+	}
+}
+
+// unpackLanesUTLAVX512Generic is the generic loop-based AVX-512 unpacker.
+// Used as fallback for non-step bitwidths (should not be reached in practice).
+func unpackLanesUTLAVX512Generic(dst []uint32, payload []byte, count, bitWidth int) {
 	mask := archsimd.BroadcastUint32x16(uint32((1 << bitWidth) - 1))
 	if bitWidth == 32 {
 		mask = archsimd.BroadcastUint32x16(0xFFFFFFFF)
@@ -45,13 +69,40 @@ func unpackLanesUTLAVX512(dst []uint32, payload []byte, count, bitWidth int) {
 }
 
 // packLanesUTLAVX512 packs values into UTL payload using AVX-512 (Uint32x16).
-// Implements FastLanes Algorithm 1 with 512-bit vectors (1 load/store per super-word).
-// Uses a load-OR-store pattern to avoid persistent accumulator register spilling.
-// TODO-PERF: per-bitwidth specialization may enable inlining (current cost exceeds budget).
+// Dispatches to per-bitwidth specialized native archsimd functions.
+// Caller must ensure values has at least blockSize elements (zero-padded).
 func packLanesUTLAVX512(dst []byte, values []uint32, bitWidth int) {
 	if bitWidth == 0 {
 		return
 	}
+	if bitWidth != 32 {
+		clear(dst)
+	}
+	switch bitWidth {
+	case 4:
+		packAVX512BW4(&dst[0], &values[0])
+	case 8:
+		packAVX512BW8(&dst[0], &values[0])
+	case 12:
+		packAVX512BW12(&dst[0], &values[0])
+	case 16:
+		packAVX512BW16(&dst[0], &values[0])
+	case 20:
+		packAVX512BW20(&dst[0], &values[0])
+	case 24:
+		packAVX512BW24(&dst[0], &values[0])
+	case 28:
+		packAVX512BW28(&dst[0], &values[0])
+	case 32:
+		packAVX512BW32(&dst[0], &values[0])
+	default:
+		packLanesUTLAVX512Generic(dst, values, bitWidth)
+	}
+}
+
+// packLanesUTLAVX512Generic is the generic loop-based AVX-512 packer.
+// Used as fallback for non-step bitwidths (should not be reached in practice).
+func packLanesUTLAVX512Generic(dst []byte, values []uint32, bitWidth int) {
 	if bitWidth == 32 {
 		for v := 0; v < utlValuesPerLane; v++ {
 			inBase := v * utlLaneCount

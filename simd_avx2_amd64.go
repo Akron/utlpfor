@@ -9,12 +9,37 @@ import (
 )
 
 // unpackLanesUTLAVX2 unpacks UTL payload using AVX2 (Uint32x8).
-// Implements FastLanes Algorithm 2 with 256-bit vectors (2 loads per super-word).
+// Dispatches to per-bitwidth specialized functions for step bitwidths.
 func unpackLanesUTLAVX2(dst []uint32, payload []byte, count, bitWidth int) {
 	if bitWidth == 0 {
 		clear(dst[:count])
 		return
 	}
+	switch bitWidth {
+	case 4:
+		unpackAVX2BW4(&dst[0], &payload[0])
+	case 8:
+		unpackAVX2BW8(&dst[0], &payload[0])
+	case 12:
+		unpackAVX2BW12(&dst[0], &payload[0])
+	case 16:
+		unpackAVX2BW16(&dst[0], &payload[0])
+	case 20:
+		unpackAVX2BW20(&dst[0], &payload[0])
+	case 24:
+		unpackAVX2BW24(&dst[0], &payload[0])
+	case 28:
+		unpackAVX2BW28(&dst[0], &payload[0])
+	case 32:
+		unpackAVX2BW32(&dst[0], &payload[0])
+	default:
+		unpackLanesUTLAVX2Generic(dst, payload, count, bitWidth)
+	}
+}
+
+// unpackLanesUTLAVX2Generic is the generic loop-based AVX2 unpacker.
+// Used as fallback for non-step bitwidths (should not be reached in practice).
+func unpackLanesUTLAVX2Generic(dst []uint32, payload []byte, count, bitWidth int) {
 	mask := archsimd.BroadcastUint32x8(uint32((1 << bitWidth) - 1))
 	if bitWidth == 32 {
 		mask = archsimd.BroadcastUint32x8(0xFFFFFFFF)
@@ -54,12 +79,40 @@ func unpackLanesUTLAVX2(dst []uint32, payload []byte, count, bitWidth int) {
 }
 
 // packLanesUTLAVX2 packs values into UTL payload using AVX2 (Uint32x8).
-// Implements FastLanes Algorithm 1 with 256-bit vectors.
-// Uses a load-OR-store pattern to avoid register spilling.
+// Dispatches to per-bitwidth specialized native archsimd functions.
+// Caller must ensure values has at least blockSize elements (zero-padded).
 func packLanesUTLAVX2(dst []byte, values []uint32, bitWidth int) {
 	if bitWidth == 0 {
 		return
 	}
+	if bitWidth != 32 {
+		clear(dst)
+	}
+	switch bitWidth {
+	case 4:
+		packAVX2BW4(&dst[0], &values[0])
+	case 8:
+		packAVX2BW8(&dst[0], &values[0])
+	case 12:
+		packAVX2BW12(&dst[0], &values[0])
+	case 16:
+		packAVX2BW16(&dst[0], &values[0])
+	case 20:
+		packAVX2BW20(&dst[0], &values[0])
+	case 24:
+		packAVX2BW24(&dst[0], &values[0])
+	case 28:
+		packAVX2BW28(&dst[0], &values[0])
+	case 32:
+		packAVX2BW32(&dst[0], &values[0])
+	default:
+		packLanesUTLAVX2Generic(dst, values, bitWidth)
+	}
+}
+
+// packLanesUTLAVX2Generic is the generic loop-based AVX2 packer.
+// Used as fallback for non-step bitwidths (should not be reached in practice).
+func packLanesUTLAVX2Generic(dst []byte, values []uint32, bitWidth int) {
 	if bitWidth == 32 {
 		for v := 0; v < utlValuesPerLane; v++ {
 			inBase := v * utlLaneCount
@@ -73,8 +126,6 @@ func packLanesUTLAVX2(dst []byte, values []uint32, bitWidth int) {
 	}
 
 	mask := archsimd.BroadcastUint32x8(uint32((1 << bitWidth) - 1))
-
-	clear(dst)
 
 	bitOffset := 0
 	for v := 0; v < utlValuesPerLane; v++ {

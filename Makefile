@@ -1,5 +1,6 @@
 .PHONY: test test-simd bench bench-simd bench-save-scalar bench-save-simd bench-compare \
-       compare-with-fastpfor fuzz fuzz-simd fuzz-regression fuzz-regression-simd
+       compare-with-fastpfor fuzz fuzz-simd fuzz-regression fuzz-regression-simd \
+       generate-native generate
 
 FUZZTIME ?= 30s
 BENCHCOUNT ?= 10
@@ -75,6 +76,13 @@ compare-with-fastpfor:
 		> $(CURDIR)/benchmarks/utlpfor-comparable.txt
 	@echo "--- Comparison (fastpfor-go vs utlpfor) ---"
 	@benchstat $(CURDIR)/benchmarks/fastpfor-comparable.txt $(CURDIR)/benchmarks/utlpfor-comparable.txt
+
+# --- Code Generation ---
+
+generate-native:
+	go run ./internal/gen | gofmt > simd_spec_amd64.go
+
+generate: generate-native
 
 # --- Fuzzing ---
 

@@ -16,4 +16,6 @@
 // is required.
 //
 // Reader/SlimReader APIs are intentionally not provided in this package.
+//
+//go:generate bash -c "go run ./internal/gen | gofmt > simd_spec_amd64.go"
 package utlpfor

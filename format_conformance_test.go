@@ -42,9 +42,9 @@ func parseKaitaiBlock(t *testing.T, data []byte) kaitaiBlock {
 
 	b := kaitaiBlock{raw: raw}
 	b.count = int(raw & 0xFF)
-	encodedBW := int((raw >> 8) & 0x0F)
+	encodedBW := int((raw >> 8) & 0x1F)
 	b.bitWidth = encodedBW * 4
-	b.intType = int((raw >> 14) & 0x03)
+	b.intType = int((raw >> 13) & 0x03)
 	b.hasDelta = (raw & 0x00400000) != 0
 	b.hasZigZag = (raw & 0x00800000) != 0
 	b.excCount = int((raw >> 24) & 0xFF)
@@ -105,21 +105,21 @@ func TestFormatConformance_HeaderLayout(t *testing.T) {
 			buf := make([]byte, 4)
 			bo.PutUint32(buf, h)
 
-			// Byte 0: count (bits 0-7).
-			gotCount := int(buf[0])
-			assert.Equal(t, tt.count&0xFF, gotCount, "count mismatch")
+		// Byte 0: count (bits 0-7).
+		gotCount := int(buf[0])
+		assert.Equal(t, tt.count&0xFF, gotCount, "count mismatch")
 
-			// Byte 1 bits 0-3: encoded bitWidth step index (bits 8-11).
-			gotEncodedBW := int(buf[1]) & 0x0F
-			assert.Equal(t, tt.bitWidth/4, gotEncodedBW, "encoded bit width mismatch")
+		// Bits 8-12: encoded bitWidth step index (5 bits).
+		gotEncodedBW := int((h >> 8) & 0x1F)
+		assert.Equal(t, tt.bitWidth/4, gotEncodedBW, "encoded bit width mismatch")
 
-			// Byte 1 bits 4-5: reserved (bits 12-13), must be zero.
-			gotReserved := int(buf[1]>>4) & 0x03
-			assert.Equal(t, 0, gotReserved, "bits 12-13 must be zero")
+		// Bits 13-14: intType (2 bits).
+		gotType := int((h >> 13) & 0x03)
+		assert.Equal(t, IntTypeUint32, gotType, "int type mismatch")
 
-			// Byte 1 bits 6-7: intType (bits 14-15).
-			gotType := int(buf[1]>>6) & 0x03
-			assert.Equal(t, IntTypeUint32, gotType, "int type mismatch")
+		// Bits 15-17: reserved, must be zero.
+		gotReserved := int((h >> 15) & 0x07)
+		assert.Equal(t, 0, gotReserved, "bits 15-17 must be zero")
 
 			// Byte 2 bit 6: delta flag (bit 22).
 			gotDelta := buf[2]&(1<<6) != 0
@@ -148,9 +148,9 @@ func TestFormatConformance_HeaderBitPositions(t *testing.T) {
 	h := encodeHeader(0x80, 32, 0xFF, headerTypeUint32Flag|headerDeltaFlag|headerZigZagFlag)
 
 	assert.Equal(t, 0x80, int(h&0xFF), "count at bits 0-7")
-	assert.Equal(t, 8, int((h>>8)&0x0F), "encoded bitWidth step index at bits 8-11")
-	assert.Equal(t, 0, int((h>>12)&0x03), "bits 12-13 must be zero")
-	assert.Equal(t, IntTypeUint32, int((h>>14)&0x03), "intType at bits 14-15")
+	assert.Equal(t, 8, int((h>>8)&0x1F), "encoded bitWidth step index at bits 8-12")
+	assert.Equal(t, IntTypeUint32, int((h>>13)&0x03), "intType at bits 13-14")
+	assert.Equal(t, 0, int((h>>15)&0x07), "bits 15-17 must be zero")
 	assert.True(t, h&headerDeltaFlag != 0, "delta at bit 22")
 	assert.True(t, h&headerZigZagFlag != 0, "zigzag at bit 23")
 	assert.Equal(t, 0xFF, int((h>>24)&0xFF), "excCount at bits 24-31")
@@ -367,7 +367,7 @@ func TestFormatConformance_ReservedBitsZero(t *testing.T) {
 		header := bo.Uint32(packed)
 		reserved := header & headerReservedMask
 		assert.Equal(t, uint32(0), reserved,
-			"bits 19-21 must be zero in current implementation (flag=%d)", flag)
+			"reserved bits must be zero in current implementation (flag=%d)", flag)
 	}
 }
 
@@ -485,7 +485,7 @@ func TestKaitai_ReservedBitsZero(t *testing.T) {
 		b := parseKaitaiBlock(t, packed)
 		reserved := b.raw & headerReservedMask
 		assert.Equal(t, uint32(0), reserved,
-			"kaitai: reserved bits 19-21 must be zero (flag=%d)", flag)
+			"kaitai: reserved bits must be zero (flag=%d)", flag)
 	}
 }
 

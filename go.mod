@@ -1,6 +1,6 @@
 module github.com/Akron/utlpfor
 
-go 1.26
+go 1.26.1
 
 require (
 	// test-only: not transitive dependencies when this module is imported

@@ -9,12 +9,37 @@ import (
 )
 
 // unpackLanesUTLSSE2 unpacks UTL payload using SSE2 (Uint32x4).
-// Implements FastLanes Algorithm 2 with 128-bit vectors (4 loads per super-word).
+// Dispatches to per-bitwidth specialized functions for step bitwidths.
 func unpackLanesUTLSSE2(dst []uint32, payload []byte, count, bitWidth int) {
 	if bitWidth == 0 {
 		clear(dst[:count])
 		return
 	}
+	switch bitWidth {
+	case 4:
+		unpackSSE2BW4(&dst[0], &payload[0])
+	case 8:
+		unpackSSE2BW8(&dst[0], &payload[0])
+	case 12:
+		unpackSSE2BW12(&dst[0], &payload[0])
+	case 16:
+		unpackSSE2BW16(&dst[0], &payload[0])
+	case 20:
+		unpackSSE2BW20(&dst[0], &payload[0])
+	case 24:
+		unpackSSE2BW24(&dst[0], &payload[0])
+	case 28:
+		unpackSSE2BW28(&dst[0], &payload[0])
+	case 32:
+		unpackSSE2BW32(&dst[0], &payload[0])
+	default:
+		unpackLanesUTLSSE2Generic(dst, payload, count, bitWidth)
+	}
+}
+
+// unpackLanesUTLSSE2Generic is the generic loop-based SSE2 unpacker.
+// Used as fallback for non-step bitwidths.
+func unpackLanesUTLSSE2Generic(dst []uint32, payload []byte, count, bitWidth int) {
 	mask := archsimd.BroadcastUint32x4(uint32((1 << bitWidth) - 1))
 	if bitWidth == 32 {
 		mask = archsimd.BroadcastUint32x4(0xFFFFFFFF)
@@ -48,12 +73,40 @@ func unpackLanesUTLSSE2(dst []uint32, payload []byte, count, bitWidth int) {
 }
 
 // packLanesUTLSSE2 packs values into UTL payload using SSE2 (Uint32x4).
-// Implements FastLanes Algorithm 1 with 128-bit vectors.
-// Uses a load-OR-store pattern to avoid register spilling.
+// Dispatches to per-bitwidth specialized functions for step bitwidths.
+// Caller must ensure values has at least blockSize elements (zero-padded).
 func packLanesUTLSSE2(dst []byte, values []uint32, bitWidth int) {
 	if bitWidth == 0 {
 		return
 	}
+	if bitWidth != 32 {
+		clear(dst)
+	}
+	switch bitWidth {
+	case 4:
+		packSSE2BW4(&dst[0], &values[0])
+	case 8:
+		packSSE2BW8(&dst[0], &values[0])
+	case 12:
+		packSSE2BW12(&dst[0], &values[0])
+	case 16:
+		packSSE2BW16(&dst[0], &values[0])
+	case 20:
+		packSSE2BW20(&dst[0], &values[0])
+	case 24:
+		packSSE2BW24(&dst[0], &values[0])
+	case 28:
+		packSSE2BW28(&dst[0], &values[0])
+	case 32:
+		packSSE2BW32(&dst[0], &values[0])
+	default:
+		packLanesUTLSSE2Generic(dst, values, bitWidth)
+	}
+}
+
+// packLanesUTLSSE2Generic is the generic loop-based SSE2 packer.
+// Used as fallback for non-step bitwidths.
+func packLanesUTLSSE2Generic(dst []byte, values []uint32, bitWidth int) {
 	if bitWidth == 32 {
 		for v := 0; v < utlValuesPerLane; v++ {
 			for group := 0; group < 4; group++ {
