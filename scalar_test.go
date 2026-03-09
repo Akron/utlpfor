@@ -1,0 +1,267 @@
+package utlpfor
+
+import (
+	"fmt"
+	"math/rand"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+// --- Differential Tests: 64-bit Scalar vs Naive Scalar ---
+
+func TestPackScalar64MatchesNaive_AllBitWidths(t *testing.T) {
+	for bw := 1; bw <= 32; bw++ {
+		t.Run(fmt.Sprintf("bw%d", bw), func(t *testing.T) {
+			values := make([]uint32, blockSize)
+			mask := uint32((1 << bw) - 1)
+			if bw == 32 {
+				mask = 0xFFFFFFFF
+			}
+			for i := range values {
+				values[i] = uint32(i*7+3) & mask
+			}
+
+			payloadLen := utlPayloadBytesLUT[bw]
+			naiveOut := make([]byte, payloadLen)
+			newOut := make([]byte, payloadLen)
+
+			packLanesUTLScalarNaive(naiveOut, values, bw)
+			packLanesUTLScalar(newOut, values, bw)
+
+			assert.Equal(t, naiveOut, newOut, "64-bit scalar pack differs from naive at bw=%d", bw)
+		})
+	}
+}
+
+func TestUnpackScalar64MatchesNaive_AllBitWidths(t *testing.T) {
+	for bw := 1; bw <= 32; bw++ {
+		t.Run(fmt.Sprintf("bw%d", bw), func(t *testing.T) {
+			values := make([]uint32, blockSize)
+			mask := uint32((1 << bw) - 1)
+			if bw == 32 {
+				mask = 0xFFFFFFFF
+			}
+			for i := range values {
+				values[i] = uint32(i*7+3) & mask
+			}
+
+			payloadLen := utlPayloadBytesLUT[bw]
+			payload := make([]byte, payloadLen)
+			packLanesUTLScalarNaive(payload, values, bw)
+
+			naiveDst := make([]uint32, blockSize)
+			newDst := make([]uint32, blockSize)
+
+			unpackLanesUTLScalarNaive(naiveDst, payload, blockSize, bw)
+			unpackLanesUTLScalar(newDst, payload, blockSize, bw)
+
+			assert.Equal(t, naiveDst, newDst, "64-bit scalar unpack differs from naive at bw=%d", bw)
+		})
+	}
+}
+
+func TestPackUnpackScalar64RoundTrip_Random(t *testing.T) {
+	rng := rand.New(rand.NewSource(42))
+	for seed := int64(0); seed < 1000; seed++ {
+		rng.Seed(seed)
+		count := rng.Intn(blockSize) + 1
+		values := make([]uint32, count)
+		for i := range values {
+			values[i] = rng.Uint32()
+		}
+
+		packed, err := PackUint32(0, nil, values)
+		require.NoError(t, err, "seed=%d", seed)
+
+		unpacked, _, err := UnpackUint32(nil, make([]uint32, blockSize), packed)
+		require.NoError(t, err, "seed=%d", seed)
+		assert.Equal(t, values, unpacked, "seed=%d count=%d", seed, count)
+	}
+}
+
+func TestPackScalar64_PartialBlock(t *testing.T) {
+	for _, count := range []int{1, 2, 3, 8, 15, 16, 17, 31, 32, 33, 63, 64, 65, 100, 127, 128} {
+		for _, bw := range []int{4, 8, 12, 16, 20, 24, 28, 32} {
+			t.Run(fmt.Sprintf("count%d_bw%d", count, bw), func(t *testing.T) {
+				values := make([]uint32, count)
+				mask := uint32((1 << bw) - 1)
+				if bw == 32 {
+					mask = 0xFFFFFFFF
+				}
+				for i := range values {
+					values[i] = uint32(i*13+5) & mask
+				}
+
+				packed, err := PackUint32(0, nil, values)
+				require.NoError(t, err)
+
+				unpacked, _, err := UnpackUint32(nil, make([]uint32, blockSize), packed)
+				require.NoError(t, err)
+				assert.Equal(t, values, unpacked)
+			})
+		}
+	}
+}
+
+func TestPackScalar64MatchesNaive_Random(t *testing.T) {
+	rng := rand.New(rand.NewSource(99))
+	for bw := 1; bw <= 32; bw++ {
+		t.Run(fmt.Sprintf("bw%d", bw), func(t *testing.T) {
+			mask := uint32((1 << bw) - 1)
+			if bw == 32 {
+				mask = 0xFFFFFFFF
+			}
+			for trial := 0; trial < 100; trial++ {
+				values := make([]uint32, blockSize)
+				for i := range values {
+					values[i] = rng.Uint32() & mask
+				}
+
+				payloadLen := utlPayloadBytesLUT[bw]
+				naiveOut := make([]byte, payloadLen)
+				newOut := make([]byte, payloadLen)
+
+				packLanesUTLScalarNaive(naiveOut, values, bw)
+				packLanesUTLScalar(newOut, values, bw)
+
+				assert.Equal(t, naiveOut, newOut,
+					"bw=%d trial=%d", bw, trial)
+			}
+		})
+	}
+}
+
+func TestUnpackScalar64MatchesNaive_Random(t *testing.T) {
+	rng := rand.New(rand.NewSource(77))
+	for bw := 1; bw <= 32; bw++ {
+		t.Run(fmt.Sprintf("bw%d", bw), func(t *testing.T) {
+			mask := uint32((1 << bw) - 1)
+			if bw == 32 {
+				mask = 0xFFFFFFFF
+			}
+			for trial := 0; trial < 100; trial++ {
+				values := make([]uint32, blockSize)
+				for i := range values {
+					values[i] = rng.Uint32() & mask
+				}
+
+				payloadLen := utlPayloadBytesLUT[bw]
+				payload := make([]byte, payloadLen)
+				packLanesUTLScalarNaive(payload, values, bw)
+
+				naiveDst := make([]uint32, blockSize)
+				newDst := make([]uint32, blockSize)
+
+				unpackLanesUTLScalarNaive(naiveDst, payload, blockSize, bw)
+				unpackLanesUTLScalar(newDst, payload, blockSize, bw)
+
+				assert.Equal(t, naiveDst, newDst,
+					"bw=%d trial=%d", bw, trial)
+			}
+		})
+	}
+}
+
+// --- Kernel Benchmarks: Naive vs 64-bit Scalar ---
+
+func BenchmarkKernelPackScalarNaive(b *testing.B) {
+	for _, bw := range []int{4, 8, 12, 16, 20, 24, 28, 32} {
+		b.Run(fmt.Sprintf("bw%d", bw), func(b *testing.B) {
+			values := make([]uint32, blockSize)
+			mask := uint32((1 << bw) - 1)
+			if bw == 32 {
+				mask = 0xFFFFFFFF
+			}
+			for i := range values {
+				values[i] = uint32(i*7) & mask
+			}
+			payloadLen := utlPayloadBytesLUT[bw]
+			dst := make([]byte, payloadLen)
+
+			b.ReportAllocs()
+			b.SetBytes(int64(blockSize * 4))
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				packLanesUTLScalarNaive(dst, values, bw)
+			}
+		})
+	}
+}
+
+func BenchmarkKernelUnpackScalarNaive(b *testing.B) {
+	for _, bw := range []int{4, 8, 12, 16, 20, 24, 28, 32} {
+		b.Run(fmt.Sprintf("bw%d", bw), func(b *testing.B) {
+			values := make([]uint32, blockSize)
+			mask := uint32((1 << bw) - 1)
+			if bw == 32 {
+				mask = 0xFFFFFFFF
+			}
+			for i := range values {
+				values[i] = uint32(i*7) & mask
+			}
+			payloadLen := utlPayloadBytesLUT[bw]
+			payload := make([]byte, payloadLen)
+			packLanesUTLScalarNaive(payload, values, bw)
+			dst := make([]uint32, blockSize)
+
+			b.ReportAllocs()
+			b.SetBytes(int64(blockSize * 4))
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				unpackLanesUTLScalarNaive(dst, payload, blockSize, bw)
+			}
+		})
+	}
+}
+
+func BenchmarkKernelPackScalar64(b *testing.B) {
+	for _, bw := range []int{4, 8, 12, 16, 20, 24, 28, 32} {
+		b.Run(fmt.Sprintf("bw%d", bw), func(b *testing.B) {
+			values := make([]uint32, blockSize)
+			mask := uint32((1 << bw) - 1)
+			if bw == 32 {
+				mask = 0xFFFFFFFF
+			}
+			for i := range values {
+				values[i] = uint32(i*7) & mask
+			}
+			payloadLen := utlPayloadBytesLUT[bw]
+			dst := make([]byte, payloadLen)
+
+			b.ReportAllocs()
+			b.SetBytes(int64(blockSize * 4))
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				packLanesUTLScalar(dst, values, bw)
+			}
+		})
+	}
+}
+
+func BenchmarkKernelUnpackScalar64(b *testing.B) {
+	for _, bw := range []int{4, 8, 12, 16, 20, 24, 28, 32} {
+		b.Run(fmt.Sprintf("bw%d", bw), func(b *testing.B) {
+			values := make([]uint32, blockSize)
+			mask := uint32((1 << bw) - 1)
+			if bw == 32 {
+				mask = 0xFFFFFFFF
+			}
+			for i := range values {
+				values[i] = uint32(i*7) & mask
+			}
+			payloadLen := utlPayloadBytesLUT[bw]
+			payload := make([]byte, payloadLen)
+			packLanesUTLScalar(payload, values, bw)
+			dst := make([]uint32, blockSize)
+
+			b.ReportAllocs()
+			b.SetBytes(int64(blockSize * 4))
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				unpackLanesUTLScalar(dst, payload, blockSize, bw)
+			}
+		})
+	}
+}

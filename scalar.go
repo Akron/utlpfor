@@ -1,18 +1,22 @@
 package utlpfor
 
-// packLanesUTLScalar packs values into UTL lane-interleaved format.
+// packLanesUTLScalar packs values into UTL lane-interleaved format using
+// 64-bit pair-lane processing. Two adjacent lanes are packed simultaneously
+// with a single uint64 store per super-word access, halving memory operations.
+// This is using the pattern described in the FastLanes paper.
 func packLanesUTLScalar(dst []byte, values []uint32, bitWidth int) {
 	if bitWidth == 0 {
 		return
 	}
-	// TODO-PERF: consider unrolling the lane loop
-	for lane := range utlLaneCount {
-		packLaneUTL(dst, values, lane, bitWidth)
+	for lanePair := 0; lanePair < utlLaneCount; lanePair += 2 {
+		packLanePairUTL64(dst, values, lanePair, bitWidth)
 	}
 }
 
-// packLaneUTL packs values for a single UTL lane.
-func packLaneUTL(dst []byte, values []uint32, lane, bitWidth int) {
+// packLanePairUTL64 packs values for two adjacent UTL lanes using a pair
+// of uint64 accumulators and uint64 stores.
+// This is using the pattern described in the FastLanes paper.
+func packLanePairUTL64(dst []byte, values []uint32, lane0, bitWidth int) {
 	var mask uint64
 	if bitWidth >= 32 {
 		mask = 0xFFFFFFFF
@@ -20,72 +24,94 @@ func packLaneUTL(dst []byte, values []uint32, lane, bitWidth int) {
 		mask = uint64((1 << bitWidth) - 1)
 	}
 
-	var acc uint64
+	var acc0, acc1 uint64
 	var bitsInAcc int
-	outByteIdx := lane * 4
+	outByteIdx := lane0 * 4
 
 	for v := range utlValuesPerLane {
-		seqIdx := lane + v*utlLaneCount
-		var val uint32
-		if seqIdx < len(values) {
-			val = values[seqIdx]
+		seqIdx0 := lane0 + v*utlLaneCount
+		seqIdx1 := lane0 + 1 + v*utlLaneCount
+		var val0, val1 uint32
+		if seqIdx0 < len(values) {
+			val0 = values[seqIdx0]
 		}
-		acc |= (uint64(val) & mask) << bitsInAcc
+		if seqIdx1 < len(values) {
+			val1 = values[seqIdx1]
+		}
+
+		acc0 |= (uint64(val0) & mask) << bitsInAcc
+		acc1 |= (uint64(val1) & mask) << bitsInAcc
 		bitsInAcc += bitWidth
+
 		for bitsInAcc >= 32 {
-			bo.PutUint32(dst[outByteIdx:], uint32(acc))
+			pair := uint64(uint32(acc0)) | (uint64(uint32(acc1)) << 32)
+			bo.PutUint64(dst[outByteIdx:], pair)
 			outByteIdx += utlSuperWordBytes
-			acc >>= 32
+			acc0 >>= 32
+			acc1 >>= 32
 			bitsInAcc -= 32
 		}
 	}
 	if bitsInAcc > 0 {
-		bo.PutUint32(dst[outByteIdx:], uint32(acc))
+		pair := uint64(uint32(acc0)) | (uint64(uint32(acc1)) << 32)
+		bo.PutUint64(dst[outByteIdx:], pair)
 	}
 }
 
-// unpackLanesUTLScalar unpacks UTL lane-interleaved payload into sequential values.
+// unpackLanesUTLScalar unpacks UTL lane-interleaved payload into sequential
+// values using 64-bit pair-lane processing. Two adjacent lanes are unpacked
+// simultaneously with a single uint64 load per super-word access.
+// This is using the pattern described in the FastLanes paper.
 func unpackLanesUTLScalar(dst []uint32, payload []byte, count, bitWidth int) {
 	if bitWidth == 0 {
 		clear(dst[:count])
 		return
 	}
-	// TODO-PERF: consider unrolling the lane loop
-	for lane := range utlLaneCount {
-		unpackLaneUTL(dst, payload, lane, bitWidth, count)
+	for lanePair := 0; lanePair < utlLaneCount; lanePair += 2 {
+		unpackLanePairUTL64(dst, payload, lanePair, bitWidth, count)
 	}
 }
 
-// unpackLaneUTL unpacks values for a single UTL lane.
-func unpackLaneUTL(dst []uint32, payload []byte, lane, bitWidth, count int) {
-	var mask uint32
+// unpackLanePairUTL64 unpacks values for two adjacent UTL lanes using a pair
+// of uint64 accumulators and uint64 loads.
+// This is using the pattern described in the FastLanes paper.
+func unpackLanePairUTL64(dst []uint32, payload []byte, lane0, bitWidth, count int) {
+	var mask32 uint32
 	if bitWidth >= 32 {
-		mask = 0xFFFFFFFF
+		mask32 = 0xFFFFFFFF
 	} else {
-		mask = (1 << bitWidth) - 1
+		mask32 = (1 << bitWidth) - 1
 	}
 
-	var acc uint64
+	var acc0, acc1 uint64
 	var bitsInAcc int
-	inByteIdx := lane * 4
+	inByteIdx := lane0 * 4
 
 	for v := range utlValuesPerLane {
 		for bitsInAcc < bitWidth {
-			if inByteIdx+4 > len(payload) {
+			if inByteIdx+8 > len(payload) {
 				bitsInAcc = bitWidth
 				break
 			}
-			acc |= uint64(bo.Uint32(payload[inByteIdx:])) << bitsInAcc
+			pair := bo.Uint64(payload[inByteIdx:])
+			acc0 |= uint64(uint32(pair)) << bitsInAcc
+			acc1 |= (pair >> 32) << bitsInAcc
 			inByteIdx += utlSuperWordBytes
 			bitsInAcc += 32
 		}
-		value := uint32(acc) & mask
-		acc >>= bitWidth
-		bitsInAcc -= bitWidth
-		seqIdx := lane + v*utlLaneCount
-		if seqIdx < count {
-			dst[seqIdx] = value
+
+		seqIdx0 := lane0 + v*utlLaneCount
+		seqIdx1 := lane0 + 1 + v*utlLaneCount
+		if seqIdx0 < count {
+			dst[seqIdx0] = uint32(acc0) & mask32
 		}
+		if seqIdx1 < count {
+			dst[seqIdx1] = uint32(acc1) & mask32
+		}
+
+		acc0 >>= bitWidth
+		acc1 >>= bitWidth
+		bitsInAcc -= bitWidth
 	}
 }
 
