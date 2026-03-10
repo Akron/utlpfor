@@ -500,6 +500,69 @@ func TestFORBaseRoundTrip(t *testing.T) {
 	}
 }
 
+func TestFindMinMax_SIMDMatchesScalar(t *testing.T) {
+	rng := rand.New(rand.NewSource(77))
+	for trial := range 50 {
+		values := make([]uint32, 128)
+		for i := range values {
+			values[i] = rng.Uint32()
+		}
+
+		scalarMin, scalarMax := findMinMaxScalar(values)
+		simdMin, simdMax := findMinMaxSIMD(values)
+
+		assert.Equal(t, scalarMin, simdMin, "min mismatch, trial %d", trial)
+		assert.Equal(t, scalarMax, simdMax, "max mismatch, trial %d", trial)
+	}
+}
+
+func TestFindMinMax_SIMDSmallSlice(t *testing.T) {
+	values := []uint32{100, 50, 200, 25}
+	min, max := findMinMaxSIMD(values)
+	assert.Equal(t, uint32(25), min)
+	assert.Equal(t, uint32(200), max)
+}
+
+func TestFORSubtract_SIMDMatchesScalar(t *testing.T) {
+	rng := rand.New(rand.NewSource(55))
+	for trial := range 50 {
+		base := rng.Uint32() >> 4
+		values := make([]uint32, 128)
+		for i := range values {
+			values[i] = base + uint32(rng.Intn(1000))
+		}
+
+		scalarResult := make([]uint32, 128)
+		forSubtractScalar(scalarResult, values, base)
+
+		simdResult := make([]uint32, 128)
+		forSubtractSIMD(simdResult, values, base)
+
+		assert.Equal(t, scalarResult, simdResult, "trial %d", trial)
+	}
+}
+
+func TestFORAdd_SIMDMatchesScalar(t *testing.T) {
+	rng := rand.New(rand.NewSource(66))
+	for trial := range 50 {
+		base := rng.Uint32() >> 4
+		values := make([]uint32, 128)
+		for i := range values {
+			values[i] = uint32(rng.Intn(1000))
+		}
+
+		scalarResult := make([]uint32, 128)
+		copy(scalarResult, values)
+		forAddScalar(scalarResult, 128, base)
+
+		simdResult := make([]uint32, 128)
+		copy(simdResult, values)
+		forAddSIMD(simdResult, 128, base)
+
+		assert.Equal(t, scalarResult, simdResult, "trial %d", trial)
+	}
+}
+
 func TestForSubtractAddScalar(t *testing.T) {
 	values := make([]uint32, 128)
 	for i := range values {

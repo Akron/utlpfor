@@ -287,7 +287,7 @@ func packUint32SSE2(flag byte, dst []byte, values []uint32) ([]byte, error) {
 	_, _, useFOR, baseValue, forW := selectBitWidthWithFOR(values)
 
 	if useFOR {
-		forSubtractScalar(values, values, baseValue)
+		forSubtractSIMD(values, values, baseValue)
 		headerFlags |= uint32(forW) << forWidthShift
 	}
 
@@ -429,7 +429,7 @@ func unpackUint32SSE2(dst []uint32, scratch []uint32, buf []byte) ([]uint32, int
 	}
 
 	if hasFOR {
-		forAddScalar(dst, count, forBase)
+		forAddSIMD(dst, count, forBase)
 	}
 
 	return dst, consumed, nil

@@ -153,7 +153,7 @@ func packUint32AVX512(flag byte, dst []byte, values []uint32) ([]byte, error) {
 	_, _, useFOR, baseValue, forW := selectBitWidthWithFOR(values)
 
 	if useFOR {
-		forSubtractScalar(values, values, baseValue)
+		forSubtractSIMD(values, values, baseValue)
 		headerFlags |= uint32(forW) << forWidthShift
 	}
 
@@ -299,7 +299,8 @@ func unpackUint32AVX512(dst []uint32, scratch []uint32, buf []byte) ([]uint32, i
 	}
 
 	if hasFOR {
-		forAddScalar(dst, count, forBase)
+		forAddSIMD(dst, count, forBase)
+		archsimd.ClearAVXUpperBits()
 	}
 
 	return dst, consumed, nil
