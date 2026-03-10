@@ -20,12 +20,16 @@ type kaitaiBlock struct {
 	count         int
 	bitWidth      int
 	intType       int
+	forWidth      int
+	hasFOR        bool
+	forBaseBytes  int
 	hasDelta      bool
 	hasZigZag     bool
 	excCount      int
 	hasExceptions bool
 	payloadSize   int
 	svbLength     uint16
+	forBase       []byte
 	payload       []byte
 	excIndex      []byte
 	svbData       []byte
@@ -45,6 +49,18 @@ func parseKaitaiBlock(t *testing.T, data []byte) kaitaiBlock {
 	encodedBW := int((raw >> 8) & 0x1F)
 	b.bitWidth = encodedBW * 4
 	b.intType = int((raw >> 13) & 0x03)
+	b.forWidth = int((raw >> 15) & 0x03)
+	b.hasFOR = b.forWidth != 0
+	switch b.forWidth {
+	case 1:
+		b.forBaseBytes = 1
+	case 2:
+		b.forBaseBytes = 2
+	case 3:
+		b.forBaseBytes = 4
+	default:
+		b.forBaseBytes = 0
+	}
 	b.hasDelta = (raw & 0x00400000) != 0
 	b.hasZigZag = (raw & 0x00800000) != 0
 	b.excCount = int((raw >> 24) & 0xFF)
@@ -60,6 +76,11 @@ func parseKaitaiBlock(t *testing.T, data []byte) kaitaiBlock {
 		svbLen, err := s.ReadU2le()
 		require.NoError(t, err, "kaitai: read svb_length u2le")
 		b.svbLength = svbLen
+	}
+
+	if b.hasFOR {
+		b.forBase, err = s.ReadBytes(b.forBaseBytes)
+		require.NoError(t, err, "kaitai: read for_base")
 	}
 
 	b.payload, err = s.ReadBytes(b.payloadSize)
@@ -117,9 +138,9 @@ func TestFormatConformance_HeaderLayout(t *testing.T) {
 		gotType := int((h >> 13) & 0x03)
 		assert.Equal(t, IntTypeUint32, gotType, "int type mismatch")
 
-		// Bits 15-17: reserved, must be zero.
-		gotReserved := int((h >> 15) & 0x07)
-		assert.Equal(t, 0, gotReserved, "bits 15-17 must be zero")
+		// Bits 17-18: reserved, must be zero.
+		gotReserved := int((h >> 17) & 0x03)
+		assert.Equal(t, 0, gotReserved, "bits 17-18 must be zero")
 
 			// Byte 2 bit 6: delta flag (bit 22).
 			gotDelta := buf[2]&(1<<6) != 0
@@ -150,7 +171,7 @@ func TestFormatConformance_HeaderBitPositions(t *testing.T) {
 	assert.Equal(t, 0x80, int(h&0xFF), "count at bits 0-7")
 	assert.Equal(t, 8, int((h>>8)&0x1F), "encoded bitWidth step index at bits 8-12")
 	assert.Equal(t, IntTypeUint32, int((h>>13)&0x03), "intType at bits 13-14")
-	assert.Equal(t, 0, int((h>>15)&0x07), "bits 15-17 must be zero")
+	assert.Equal(t, 0, int((h>>17)&0x03), "bits 17-18 must be zero")
 	assert.True(t, h&headerDeltaFlag != 0, "delta at bit 22")
 	assert.True(t, h&headerZigZagFlag != 0, "zigzag at bit 23")
 	assert.Equal(t, 0xFF, int((h>>24)&0xFF), "excCount at bits 24-31")
@@ -195,7 +216,7 @@ func TestFormatConformance_ExceptionTableLayout_SortedPositions(t *testing.T) {
 	require.NoError(t, err)
 
 	header := bo.Uint32(packed)
-	_, bw, _, excCount, hasExc, _, _, _ := decodeHeader(header)
+	_, bw, _, excCount, _, hasExc, _, _ := decodeHeader(header)
 	require.True(t, hasExc, "expected exceptions")
 	require.LessOrEqual(t, excCount, excBitmapThreshold,
 		"2 exceptions should use sorted-positions format")
@@ -225,7 +246,7 @@ func TestFormatConformance_ExceptionTableLayout_Bitmap(t *testing.T) {
 	require.NoError(t, err)
 
 	header := bo.Uint32(packed)
-	_, bw, _, excCount, hasExc, _, _, _ := decodeHeader(header)
+	_, bw, _, excCount, _, hasExc, _, _ := decodeHeader(header)
 	require.True(t, hasExc, "expected exceptions")
 
 	if excCount > excBitmapThreshold {
@@ -318,10 +339,10 @@ func TestFormatConformance_WireLayout_NoExceptions(t *testing.T) {
 	require.NoError(t, err)
 
 	header := bo.Uint32(packed)
-	_, bw, _, _, hasExc, _, _, _ := decodeHeader(header)
+	_, bw, _, _, _, hasExc, _, _ := decodeHeader(header)
 	require.False(t, hasExc)
 
-	// Layout: [header:4][payload:N]
+	// Layout: [header:4][payload:N] (no FOR for this data since min=0)
 	expectedLen := headerBytes + utlPayloadBytesLUT[bw]
 	assert.Equal(t, expectedLen, len(packed))
 }
@@ -338,7 +359,7 @@ func TestFormatConformance_WireLayout_WithExceptions(t *testing.T) {
 	require.NoError(t, err)
 
 	header := bo.Uint32(packed)
-	_, bw, _, excCount, hasExc, _, _, _ := decodeHeader(header)
+	_, bw, _, excCount, _, hasExc, _, _ := decodeHeader(header)
 	require.True(t, hasExc)
 
 	svbLen := int(bo.Uint16(packed[headerBytes:]))
@@ -539,9 +560,9 @@ func TestKaitai_WireLayoutMatchesBlockLength(t *testing.T) {
 			blockLen, err := BlockLength(packed)
 			require.NoError(t, err)
 
-			kaitaiLen := headerBytes + b.payloadSize
+			kaitaiLen := headerBytes + b.forBaseBytes + b.payloadSize
 			if b.hasExceptions {
-				kaitaiLen = headerBytes + svbLenBytes + b.payloadSize + len(b.excIndex) + int(b.svbLength)
+				kaitaiLen = headerBytes + svbLenBytes + b.forBaseBytes + b.payloadSize + len(b.excIndex) + int(b.svbLength)
 			}
 			assert.Equal(t, blockLen, kaitaiLen,
 				"kaitai-computed length must match BlockLength")

@@ -52,16 +52,6 @@ func TestSelectBitWidth_ExceptionsVsFullWidth(t *testing.T) {
 	assert.True(t, width >= 28, "all-large values should use high bit width")
 }
 
-func TestSelectBitWidth_UTLQuantizationAware(t *testing.T) {
-	values := make([]uint32, 128)
-	for i := range values {
-		values[i] = uint32(i) & 0xFF
-	}
-	values[0] = 0x100
-	width, excCount := selectBitWidth(values)
-	t.Logf("width=%d, excCount=%d", width, excCount)
-}
-
 func TestSelectBitWidth_ZeroPlusExceptions(t *testing.T) {
 	values := make([]uint32, 128)
 	values[10] = 0xFFFF

@@ -52,7 +52,8 @@ func getUint32Scalar(pos int, buf []byte) (uint32, error) {
 	}
 
 	header := bo.Uint32(buf)
-	count, bitWidth, intType, excCount, hasExceptions, hasDelta, hasZigZag, hasFOR := decodeHeader(header)
+	count, bitWidth, intType, excCount, forWidth, hasExceptions, hasDelta, hasZigZag := decodeHeader(header)
+	hasFOR := forWidth > 0
 
 	if err := validateIntType(intType); err != nil {
 		return 0, err
@@ -66,7 +67,13 @@ func getUint32Scalar(pos int, buf []byte) (uint32, error) {
 		return 0, ErrInvalidBuffer
 	}
 
-	pOff := payloadOffset(hasFOR, hasExceptions)
+	forBaseBytes := forBaseBytesLUT[forWidth]
+	var forBase uint32
+	if hasFOR {
+		forBase = readFORBase(buf, forWidth, hasExceptions)
+	}
+
+	pOff := payloadOffset(forBaseBytes, hasExceptions)
 	payloadBytes := utlPayloadBytesLUT[bitWidth]
 	if len(buf) < pOff+payloadBytes {
 		return 0, ErrInvalidBuffer
@@ -74,16 +81,24 @@ func getUint32Scalar(pos int, buf []byte) (uint32, error) {
 
 	payload := buf[pOff : pOff+payloadBytes]
 
+	var value uint32
+	var err error
 	if !hasDelta {
-		return getValueDirect(pos, buf, payload, pOff+payloadBytes, bitWidth, count, excCount, hasExceptions, hasFOR)
+		value, err = getValueDirect(pos, buf, payload, pOff+payloadBytes, bitWidth, count, excCount, hasExceptions)
+	} else {
+		value, err = getValueWithDelta(pos, buf, payload, pOff+payloadBytes, bitWidth, count, excCount, hasExceptions, hasZigZag)
 	}
-	return getValueWithDelta(pos, buf, payload, pOff+payloadBytes, bitWidth, count, excCount, hasExceptions, hasZigZag, hasFOR)
+	if err != nil {
+		return 0, err
+	}
+	return value + forBase, nil
 }
 
 // getValueDirect extracts a single value without delta decoding.
+// The caller is responsible for adding the FOR base value.
 // TODO-PERF: decodes ALL exception high bits just to return one value at excIdx.
-// Phase 10a's svbDecodeOne will enable targeted single-value decode.
-func getValueDirect(pos int, buf []byte, payload []byte, excStart, bitWidth, count, excCount int, hasExceptions, hasFOR bool) (uint32, error) {
+// svbDecodeOne will enable targeted single-value decode.
+func getValueDirect(pos int, buf []byte, payload []byte, excStart, bitWidth, count, excCount int, hasExceptions bool) (uint32, error) {
 	var value uint32
 	if bitWidth > 0 {
 		value = extractPackedValueUTL(pos, payload, bitWidth)
@@ -93,7 +108,7 @@ func getValueDirect(pos int, buf []byte, payload []byte, excStart, bitWidth, cou
 		excIdx := findExceptionIndex(buf, excStart, excCount, pos)
 		if excIdx >= 0 {
 			var decodeBuf [blockSize]uint32
-			if _, err := decodeExceptionHighBitsInto(decodeBuf[:], buf, excStart, excCount, hasFOR); err != nil {
+			if _, err := decodeExceptionHighBitsInto(decodeBuf[:], buf, excStart, excCount); err != nil {
 				return 0, err
 			}
 			value |= decodeBuf[excIdx] << bitWidth
@@ -105,13 +120,14 @@ func getValueDirect(pos int, buf []byte, payload []byte, excStart, bitWidth, cou
 
 // getValueWithDelta extracts a value with per-lane delta decoding.
 // Reconstructs the entire lane (up to posInLane) to compute the prefix sum.
-func getValueWithDelta(pos int, buf []byte, payload []byte, excStart, bitWidth, count, excCount int, hasExceptions, hasZigZag, hasFOR bool) (uint32, error) {
+// The caller is responsible for adding the FOR base value.
+func getValueWithDelta(pos int, buf []byte, payload []byte, excStart, bitWidth, count, excCount int, hasExceptions, hasZigZag bool) (uint32, error) {
 	lane := pos % utlLaneCount
 	posInLane := pos / utlLaneCount
 
 	var allHighBits [blockSize]uint32
 	if hasExceptions {
-		if _, err := decodeExceptionHighBitsInto(allHighBits[:], buf, excStart, excCount, hasFOR); err != nil {
+		if _, err := decodeExceptionHighBitsInto(allHighBits[:], buf, excStart, excCount); err != nil {
 			return 0, err
 		}
 	}

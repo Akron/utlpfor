@@ -21,13 +21,14 @@ func FuzzPackUnpackUint32RoundTrip(f *testing.F) {
 			return
 		}
 
+		original := slices.Clone(values)
 		packed, err := PackUint32(0, nil, values)
 		require.NoError(t, err)
 
 		unpacked, consumed, err := UnpackUint32(nil, make([]uint32, blockSize), packed)
 		require.NoError(t, err)
 		require.Equal(t, len(packed), consumed)
-		require.Equal(t, values, unpacked)
+		require.Equal(t, original, unpacked)
 	})
 }
 
@@ -137,11 +138,6 @@ func FuzzCompressionRatio(f *testing.F) {
 			return
 		}
 
-		packed, err := PackUint32(0, nil, values)
-		if err != nil {
-			return
-		}
-
 		maxBW := 0
 		for _, v := range values {
 			bw := bits.Len32(v)
@@ -149,10 +145,12 @@ func FuzzCompressionRatio(f *testing.F) {
 				maxBW = bw
 			}
 		}
-		// UTL uses 64-byte super-words, so the minimum payload is 64 bytes.
-		// Only check compression when the theoretical packed size (header +
-		// payload) is strictly smaller than the raw size. This avoids false
-		// failures for small blocks or high bit widths near 32.
+
+		packed, err := PackUint32(0, nil, values)
+		if err != nil {
+			return
+		}
+
 		theoreticalPacked := headerBytes + utlPayloadBytesLUT[maxBW]
 		rawSize := len(values) * 4
 		if maxBW < 32 && theoreticalPacked < rawSize {

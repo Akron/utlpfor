@@ -88,12 +88,13 @@ func TestUnpackUint32_DstReuseAcrossCalls(t *testing.T) {
 		for i := range values {
 			values[i] = uint32(trial*blockSize + i)
 		}
+		original := slices.Clone(values)
 		packed, err := PackUint32(0, nil, values)
 		require.NoError(t, err)
 
 		var uErr error
 		dst, _, uErr = UnpackUint32(dst, scratch, packed)
 		require.NoError(t, uErr)
-		assert.Equal(t, values, dst)
+		assert.Equal(t, original, dst)
 	}
 }

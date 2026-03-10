@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math/rand"
 	"simd/archsimd"
+	"slices"
 	"testing"
 	"unsafe"
 
@@ -99,13 +100,14 @@ func TestPackUnpack_SIMDScalarDifferential_Random(t *testing.T) {
 		for i := range values {
 			values[i] = rng.Uint32()
 		}
+		original := slices.Clone(values)
 
 		packed, err := PackUint32(0, nil, values)
 		require.NoError(t, err, "seed=%d", seed)
 
 		unpacked, _, err := UnpackUint32(nil, make([]uint32, blockSize), packed)
 		require.NoError(t, err, "seed=%d", seed)
-		assert.Equal(t, values, unpacked, "seed=%d", seed)
+		assert.Equal(t, original, unpacked, "seed=%d", seed)
 	}
 }
 

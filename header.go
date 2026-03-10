@@ -31,14 +31,17 @@ const (
 	headerTypeUint16Flag = uint32(IntTypeUint16) << headerTypeShift
 	headerTypeUint32Flag = uint32(IntTypeUint32) << headerTypeShift
 
-	// Bits 15-17: reserved (3 contiguous bits for future extensions).
-	// Must be 0 in current implementation.
-	headerReservedBitsMask = uint32(0x7 << 15)
+	// Bits 15-16: 2-bit FOR width field.
+	forWidthShift = 15
+	forWidthMask  = 0x3
+	forWidthNone  = 0
+	forWidthU8    = 1
+	forWidthU16   = 2
+	forWidthU32   = 3
 
-	// Bit 18: SPECIAL flag -- modifies interpretation of other header fields
-	// in specific combinations (e.g. full-block all-exceptions in 256-mode).
-	// Silently ignored in current implementation.
-	headerSpecialFlag = uint32(1 << 18)
+	// Bits 17-18: reserved (2 contiguous bits for future extensions).
+	// Must be 0 in current implementation.
+	headerReservedBitsMask = uint32(0x3 << 17)
 
 	// Bit 19: combine-with-next (uint64 double-block extension).
 	// Must be 0 in current implementation.
@@ -48,9 +51,10 @@ const (
 	// Must be 0 in current implementation.
 	headerBlock256Flag = uint32(1 << 20)
 
-	// Bit 21: FOR flag (frame-of-reference).
-	// Must be 0 in current implementation.
-	headerFORFlag = uint32(1 << 21)
+	// Bit 21: SPECIAL flag -- modifies interpretation of other header fields
+	// in specific combinations (e.g. full-block all-exceptions in 256-mode).
+	// Silently ignored in current implementation.
+	headerSpecialFlag = uint32(1 << 21)
 
 	// Bit 22: delta flag.
 	headerDeltaFlag = uint32(1 << 22)
@@ -67,14 +71,14 @@ const (
 	// svbLenBytes is the byte size of the StreamVByte length field.
 	svbLenBytes = 2
 
-	// headerFORBytes is the byte size of the FOR base value.
-	headerFORBytes = 4
-
-	// headerReservedMask covers bits 15-17 and 19-21 (reserved + extension bits).
+	// headerReservedMask covers bits 17-18 and 19-20 (reserved + extension bits).
 	// In the current implementation, all these must be zero.
-	// Bit 18 (SPECIAL) is intentionally excluded -- it is silently ignored.
-	headerReservedMask = headerReservedBitsMask | headerCombineFlag | headerBlock256Flag | headerFORFlag
+	// Bit 21 (SPECIAL) is intentionally excluded -- it is silently ignored.
+	headerReservedMask = headerReservedBitsMask | headerCombineFlag | headerBlock256Flag
 )
+
+// forBaseBytesLUT maps FOR width code (0-3) to the number of base bytes.
+var forBaseBytesLUT = [4]int{0, 1, 2, 4}
 
 // utlPayloadBytesLUT maps bit width (0-32) to UTL payload size in bytes.
 // Formula: ceil(8 * bitWidth / 32) * 64 = ceil(bitWidth/4) * 64.
@@ -104,29 +108,29 @@ func encodeHeader(count, bitWidth, excCount int, flags uint32) uint32 {
 
 // decodeHeader extracts fields from a 32-bit header word.
 // The 5-bit bitwidth field is decoded as: bitWidth = encodedValue * 4.
-func decodeHeader(header uint32) (count, bitWidth, intType, excCount int,
-	hasExceptions, hasDelta, hasZigZag, hasFOR bool) {
+// forWidth is the 2-bit FOR width field (bits 15-16): 0=none, 1=u8, 2=u16, 3=u32.
+func decodeHeader(header uint32) (count, bitWidth, intType, excCount, forWidth int,
+	hasExceptions, hasDelta, hasZigZag bool) {
 	count = int(header & headerCountMask)
 	encodedBW := int((header >> headerWidthShift) & headerWidthMask)
 	bitWidth = encodedBW * 4
 	intType = int((header >> headerTypeShift) & headerTypeMask)
+	forWidth = int((header >> forWidthShift) & forWidthMask)
 	excCount = int((header >> headerExcCountShift) & headerExcCountMask)
 	hasExceptions = excCount > 0
 	hasDelta = header&headerDeltaFlag != 0
 	hasZigZag = header&headerZigZagFlag != 0
-	hasFOR = header&headerFORFlag != 0
 	return
 }
 
 // payloadOffset returns the byte offset where the UTL payload begins.
-func payloadOffset(hasFOR, hasExceptions bool) int {
+// forBaseBytes is the number of bytes for the FOR base value (0, 1, 2, or 4).
+func payloadOffset(forBaseBytes int, hasExceptions bool) int {
 	offset := headerBytes
-	if hasFOR {
-		offset += headerFORBytes
-	}
 	if hasExceptions {
 		offset += svbLenBytes
 	}
+	offset += forBaseBytes
 	return offset
 }
 
@@ -140,4 +144,3 @@ func validateIntType(intType int) error {
 		return ErrUnsupportedType
 	}
 }
-

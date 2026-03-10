@@ -2,6 +2,7 @@ package utlpfor
 
 import (
 	"fmt"
+	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -19,11 +20,12 @@ func TestPackUint32_RoundTrip_AllBitWidths(t *testing.T) {
 			for i := range values {
 				values[i] = uint32(i*7+3) & mask
 			}
+			original := slices.Clone(values)
 			packed, err := PackUint32(0, nil, values)
 			require.NoError(t, err)
 			unpacked, _, err := UnpackUint32(nil, make([]uint32, 128), packed)
 			require.NoError(t, err)
-			assert.Equal(t, values, unpacked)
+			assert.Equal(t, original, unpacked)
 		})
 	}
 }
@@ -35,11 +37,12 @@ func TestPackUint32_PartialBlock(t *testing.T) {
 			for i := range values {
 				values[i] = uint32(i)
 			}
+			original := slices.Clone(values)
 			packed, err := PackUint32(0, nil, values)
 			require.NoError(t, err)
 			unpacked, _, err := UnpackUint32(nil, make([]uint32, 128), packed)
 			require.NoError(t, err)
-			assert.Equal(t, values, unpacked)
+			assert.Equal(t, original, unpacked)
 		})
 	}
 }
@@ -58,11 +61,12 @@ func TestPackUint32_AllMax(t *testing.T) {
 	for i := range values {
 		values[i] = 0xFFFFFFFF
 	}
+	original := append([]uint32(nil), values...)
 	packed, err := PackUint32(0, nil, values)
 	require.NoError(t, err)
 	unpacked, _, err := UnpackUint32(nil, make([]uint32, 128), packed)
 	require.NoError(t, err)
-	assert.Equal(t, values, unpacked)
+	assert.Equal(t, original, unpacked)
 }
 
 func TestPackUint32_DstGrowth(t *testing.T) {

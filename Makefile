@@ -1,4 +1,5 @@
-.PHONY: test test-simd bench bench-simd bench-save-scalar bench-save-simd bench-compare \
+.PHONY: test test-simd test-force-scalar test-force-sse2 test-force-avx2 test-force-avx512 \
+       bench bench-simd bench-save-scalar bench-save-simd bench-compare \
        compare-with-fastpfor fuzz fuzz-simd fuzz-regression fuzz-regression-simd \
        generate-native generate
 
@@ -29,6 +30,18 @@ test:
 
 test-simd:
 	GOEXPERIMENT=simd go test ./... -count=1
+
+test-force-scalar:
+	GOEXPERIMENT=simd UTL_SIMD_LEVEL=scalar go test ./... -count=1
+
+test-force-sse2:
+	GOEXPERIMENT=simd UTL_SIMD_LEVEL=sse2 go test ./... -count=1
+
+test-force-avx2:
+	GOEXPERIMENT=simd UTL_SIMD_LEVEL=avx2 go test ./... -count=1
+
+test-force-avx512:
+	GOEXPERIMENT=simd UTL_SIMD_LEVEL=avx512 go test ./... -count=1
 
 # --- Benchmarks ---
 

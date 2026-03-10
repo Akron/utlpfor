@@ -3,6 +3,7 @@ package utlpfor
 import (
 	"fmt"
 	"math/rand"
+	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -64,20 +65,21 @@ func TestUnpackScalar64MatchesNaive_AllBitWidths(t *testing.T) {
 
 func TestPackUnpackScalar64RoundTrip_Random(t *testing.T) {
 	rng := rand.New(rand.NewSource(42))
-	for seed := int64(0); seed < 1000; seed++ {
+	for seed := range int64(1000) {
 		rng.Seed(seed)
 		count := rng.Intn(blockSize) + 1
 		values := make([]uint32, count)
 		for i := range values {
 			values[i] = rng.Uint32()
 		}
+		original := slices.Clone(values)
 
 		packed, err := PackUint32(0, nil, values)
 		require.NoError(t, err, "seed=%d", seed)
 
 		unpacked, _, err := UnpackUint32(nil, make([]uint32, blockSize), packed)
 		require.NoError(t, err, "seed=%d", seed)
-		assert.Equal(t, values, unpacked, "seed=%d count=%d", seed, count)
+		assert.Equal(t, original, unpacked, "seed=%d count=%d", seed, count)
 	}
 }
 
@@ -93,13 +95,14 @@ func TestPackScalar64_PartialBlock(t *testing.T) {
 				for i := range values {
 					values[i] = uint32(i*13+5) & mask
 				}
+				original := slices.Clone(values)
 
 				packed, err := PackUint32(0, nil, values)
 				require.NoError(t, err)
 
 				unpacked, _, err := UnpackUint32(nil, make([]uint32, blockSize), packed)
 				require.NoError(t, err)
-				assert.Equal(t, values, unpacked)
+				assert.Equal(t, original, unpacked)
 			})
 		}
 	}
@@ -113,7 +116,7 @@ func TestPackScalar64MatchesNaive_Random(t *testing.T) {
 			if bw == 32 {
 				mask = 0xFFFFFFFF
 			}
-			for trial := 0; trial < 100; trial++ {
+			for trial := range 100 {
 				values := make([]uint32, blockSize)
 				for i := range values {
 					values[i] = rng.Uint32() & mask
@@ -141,7 +144,7 @@ func TestUnpackScalar64MatchesNaive_Random(t *testing.T) {
 			if bw == 32 {
 				mask = 0xFFFFFFFF
 			}
-			for trial := 0; trial < 100; trial++ {
+			for trial := range 100 {
 				values := make([]uint32, blockSize)
 				for i := range values {
 					values[i] = rng.Uint32() & mask

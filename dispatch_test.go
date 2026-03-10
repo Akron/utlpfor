@@ -1,11 +1,38 @@
 package utlpfor
 
 import (
+	"os"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestMain(m *testing.M) {
+	if env := os.Getenv("UTL_SIMD_LEVEL"); env != "" {
+		detected := simdLevel
+		switch env {
+		case "scalar":
+			simdLevel = simdLevelScalar
+		case "sse2":
+			if detected < simdLevelSSE2 {
+				os.Exit(0)
+			}
+			simdLevel = simdLevelSSE2
+		case "avx2":
+			if detected < simdLevelAVX2 {
+				os.Exit(0)
+			}
+			simdLevel = simdLevelAVX2
+		case "avx512":
+			if detected < simdLevelAVX512 {
+				os.Exit(0)
+			}
+			simdLevel = simdLevelAVX512
+		}
+	}
+	os.Exit(m.Run())
+}
 
 func simdLevelName(level int) string {
 	switch level {

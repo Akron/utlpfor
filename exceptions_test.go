@@ -3,6 +3,7 @@ package utlpfor
 import (
 	"fmt"
 	"math/rand/v2"
+	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -30,11 +31,12 @@ func TestPackUnpack_AllExceptions(t *testing.T) {
 	for i := range values {
 		values[i] = uint32(0x10000000 + i)
 	}
+	original := slices.Clone(values)
 	packed, err := PackUint32(0, nil, values)
 	require.NoError(t, err)
 	unpacked, _, err := UnpackUint32(nil, make([]uint32, 128), packed)
 	require.NoError(t, err)
-	assert.Equal(t, values, unpacked)
+	assert.Equal(t, original, unpacked)
 }
 
 func TestPackUnpack_NoExceptions(t *testing.T) {
@@ -153,11 +155,12 @@ func TestPackUnpack_RandomVectors(t *testing.T) {
 		for i := range values {
 			values[i] = rng.Uint32()
 		}
+		original := slices.Clone(values)
 		packed, err := PackUint32(0, nil, values)
 		require.NoError(t, err, "trial %d", trial)
 		unpacked, _, err := UnpackUint32(nil, make([]uint32, 128), packed)
 		require.NoError(t, err, "trial %d", trial)
-		assert.Equal(t, values, unpacked, "trial %d", trial)
+		assert.Equal(t, original, unpacked, "trial %d", trial)
 	}
 }
 

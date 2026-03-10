@@ -275,14 +275,21 @@ func deltaDecodePerLaneWithOverflowSSE2(dst, deltas []uint32, useZigZag bool) in
 }
 
 // packUint32SSE2 is the full SSE2 packing pipeline.
-// Uses SSE2 for bit-packing and delta/zigzag; scalar for exceptions.
+// Uses SSE2 for bit-packing and delta/zigzag; scalar for exceptions and FOR.
 func packUint32SSE2(flag byte, dst []byte, values []uint32) ([]byte, error) {
 	if len(values) == 0 || len(values) > blockSize {
 		return nil, ErrInvalidBuffer
 	}
 
 	headerFlags := headerTypeUint32Flag
-	workValues := values
+
+	// Decide FOR on original values.
+	_, _, useFOR, baseValue, forW := selectBitWidthWithFOR(values)
+
+	if useFOR {
+		forSubtractScalar(values, values, baseValue)
+		headerFlags |= uint32(forW) << forWidthShift
+	}
 
 	if flag&Delta != 0 {
 		var needZZ bool
@@ -295,32 +302,36 @@ func packUint32SSE2(flag byte, dst []byte, values []uint32) ([]byte, error) {
 			headerFlags |= headerZigZagFlag
 		}
 		headerFlags |= headerDeltaFlag
-		workValues = values
 	}
 
-	bitWidth, excCount := selectBitWidth(workValues)
+	bitWidth, excCount := selectBitWidth(values)
 	payloadBytes := utlPayloadBytesLUT[bitWidth]
 	hasExceptions := excCount > 0
+	forBaseBytes := forBaseBytesLUT[forW]
 
 	var padded [blockSize]uint32
-	packInput := workValues
-	if len(workValues) < blockSize {
-		copy(padded[:], workValues)
+	packInput := values
+	if len(values) < blockSize {
+		copy(padded[:], values)
 		packInput = padded[:]
 	}
 
 	if !hasExceptions {
-		totalLen := headerBytes + payloadBytes
+		pOff := payloadOffset(forBaseBytes, false)
+		totalLen := pOff + payloadBytes
 		dst = ensureLen(dst, totalLen)
 		bo.PutUint32(dst, encodeHeader(len(values), bitWidth, 0, headerFlags))
-		packLanesUTLSSE2(dst[headerBytes:headerBytes+payloadBytes], packInput, bitWidth)
+		if useFOR {
+			writeFORBase(dst, baseValue, forW, false)
+		}
+		packLanesUTLSSE2(dst[pOff:pOff+payloadBytes], packInput, bitWidth)
 		return dst[:totalLen], nil
 	}
 
 	var positions [blockSize]byte
 	var bitmap [16]byte
 	var highBits [blockSize]uint32
-	collectExceptionsDirect(workValues, bitWidth, positions[:], bitmap[:], highBits[:])
+	collectExceptionsDirect(values, bitWidth, positions[:], bitmap[:], highBits[:])
 
 	svbData := encodeExceptionHighBits(highBits[:excCount])
 	svbLen := len(svbData)
@@ -330,12 +341,15 @@ func packUint32SSE2(flag byte, dst []byte, values []uint32) ([]byte, error) {
 		excIdxSize = 16
 	}
 
-	pOff := payloadOffset(false, true)
+	pOff := payloadOffset(forBaseBytes, true)
 	totalLen := pOff + payloadBytes + excIdxSize + svbLen
 
 	dst = ensureLen(dst, totalLen)
 	bo.PutUint32(dst, encodeHeader(len(values), bitWidth, excCount, headerFlags))
 	bo.PutUint16(dst[headerBytes:], uint16(svbLen))
+	if useFOR {
+		writeFORBase(dst, baseValue, forW, true)
+	}
 
 	packLanesUTLSSE2(dst[pOff:pOff+payloadBytes], packInput, bitWidth)
 	writeExceptionsDirect(dst[pOff+payloadBytes:], positions[:], bitmap[:], excCount, svbData)
@@ -344,14 +358,15 @@ func packUint32SSE2(flag byte, dst []byte, values []uint32) ([]byte, error) {
 }
 
 // unpackUint32SSE2 is the full SSE2 unpacking pipeline.
-// Uses SSE2 for bit-unpacking and delta/zigzag; scalar for exceptions.
+// Uses SSE2 for bit-unpacking and delta/zigzag; scalar for exceptions and FOR.
 func unpackUint32SSE2(dst []uint32, scratch []uint32, buf []byte) ([]uint32, int, error) {
 	if len(buf) < headerBytes {
 		return nil, 0, ErrInvalidBuffer
 	}
 
 	header := bo.Uint32(buf)
-	count, bitWidth, intType, excCount, hasExceptions, hasDelta, hasZigZag, hasFOR := decodeHeader(header)
+	count, bitWidth, intType, excCount, forWidth, hasExceptions, hasDelta, hasZigZag := decodeHeader(header)
+	hasFOR := forWidth > 0
 
 	if err := validateIntType(intType); err != nil {
 		return nil, 0, err
@@ -367,7 +382,13 @@ func unpackUint32SSE2(dst []uint32, scratch []uint32, buf []byte) ([]uint32, int
 		return nil, 0, ErrInvalidBuffer
 	}
 
-	pOff := payloadOffset(hasFOR, hasExceptions)
+	forBaseBytes := forBaseBytesLUT[forWidth]
+	var forBase uint32
+	if hasFOR {
+		forBase = readFORBase(buf, forWidth, hasExceptions)
+	}
+
+	pOff := payloadOffset(forBaseBytes, hasExceptions)
 	payloadBytes := utlPayloadBytesLUT[bitWidth]
 
 	if len(buf) < pOff+payloadBytes {
@@ -389,7 +410,7 @@ func unpackUint32SSE2(dst []uint32, scratch []uint32, buf []byte) ([]uint32, int
 	if hasExceptions {
 		excStart := pOff + payloadBytes
 		var err error
-		consumed, err = applyExceptions(dst, buf, excStart, count, bitWidth, excCount, hasFOR, scratch)
+		consumed, err = applyExceptions(dst, buf, excStart, count, bitWidth, excCount, scratch)
 		if err != nil {
 			return nil, 0, err
 		}
@@ -405,6 +426,10 @@ func unpackUint32SSE2(dst []uint32, scratch []uint32, buf []byte) ([]uint32, int
 		if overflowPos > 0 {
 			return nil, 0, &ErrOverflow{Position: overflowPos}
 		}
+	}
+
+	if hasFOR {
+		forAddScalar(dst, count, forBase)
 	}
 
 	return dst, consumed, nil

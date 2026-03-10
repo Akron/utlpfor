@@ -13,11 +13,11 @@ doc: |
     bits  0- 7: count (number of values, 0-128)
     bits  8-12: bw_step_index (0-8 for 128-block, step bitwidth / 4)
     bits 13-14: int_type (0=uint8, 1=uint16, 2=uint32, 3=uint64)
-    bits 15-17: reserved (3 contiguous bits, must be 0)
-    bit  18:    SPECIAL flag (reserved, silently ignored)
+    bits 15-16: for_width (00=no FOR, 01=uint8 1B, 10=uint16 2B, 11=uint32 4B)
+    bits 17-18: reserved (2 contiguous bits, must be 0)
     bit  19:    E2 combine-with-next (reserved, must be 0)
     bit  20:    E1 block-length mode (reserved, must be 0)
-    bit  21:    FOR flag (reserved, must be 0 in base mode)
+    bit  21:    SPECIAL flag (reserved, silently ignored)
     bit  22:    delta flag
     bit  23:    zigzag flag
     bits 24-31: exc_count (0 = no exceptions, 1-128 = exception count)
@@ -32,8 +32,10 @@ doc: |
 
   Exception high bits are encoded using StreamVByte.
 
-  Wire layout without exceptions: [header:4][payload:N]
-  Wire layout with exceptions:    [header:4][svb_length:2][payload:N][exc_index][svb_data]
+  Wire layout (no exc, no FOR):    [header:4][payload:N]
+  Wire layout (no exc, FOR):       [header:4][for_base:1|2|4][payload:N]
+  Wire layout (exc, no FOR):       [header:4][svb_length:2][payload:N][exc_index][svb_data]
+  Wire layout (exc, FOR):          [header:4][svb_length:2][for_base:1|2|4][payload:N][exc_index][svb_data]
 
 seq:
   - id: header
@@ -41,7 +43,13 @@ seq:
   - id: svb_length
     type: u2
     if: header.has_exceptions
-    doc: StreamVByte encoded data length in bytes (uint16 LE).
+    doc: StreamVByte encoded data length in bytes (uint16 LE). Always at offset 4.
+  - id: for_base
+    size: header.for_base_bytes
+    if: header.has_for
+    doc: |
+      FOR base value (minimum of original values). Width depends on
+      for_width: 1 byte (uint8), 2 bytes (uint16 LE), or 4 bytes (uint32 LE).
   - id: payload
     size: header.payload_size
     doc: |
@@ -84,6 +92,19 @@ types:
       int_type:
         value: (raw >> 13) & 0x03
         doc: Integer type at bits 13-14 (0=uint8, 1=uint16, 2=uint32, 3=uint64).
+      for_width:
+        value: (raw >> 15) & 0x03
+        doc: |
+          FOR width at bits 15-16 (00=no FOR, 01=uint8 1B, 10=uint16 2B, 11=uint32 4B).
+      has_for:
+        value: ((raw >> 15) & 0x03) != 0
+        doc: True when frame-of-reference compression is active.
+      for_base_bytes:
+        value: >-
+          ((raw >> 15) & 0x03) == 0 ? 0 :
+          ((raw >> 15) & 0x03) == 1 ? 1 :
+          ((raw >> 15) & 0x03) == 2 ? 2 : 4
+        doc: Number of bytes used for the FOR base value (0, 1, 2, or 4).
       has_delta:
         value: (raw & 0x00400000) != 0
         doc: Delta encoding flag (bit 22).

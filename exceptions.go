@@ -15,22 +15,19 @@ func excIndexSize(excCount int) int {
 }
 
 // readSVBLen reads the StreamVByte data length from the block buffer.
-func readSVBLen(buf []byte, hasFOR bool) (int, error) {
-	offset := headerBytes
-	if hasFOR {
-		offset += headerFORBytes
-	}
-	if len(buf) < offset+svbLenBytes {
+// svbLen is always at offset 4 (immediately after the header), regardless of FOR.
+func readSVBLen(buf []byte) (int, error) {
+	if len(buf) < headerBytes+svbLenBytes {
 		return 0, ErrInvalidBuffer
 	}
-	return int(bo.Uint16(buf[offset:])), nil
+	return int(bo.Uint16(buf[headerBytes:])), nil
 }
 
 // decodeExceptionHighBitsInto decodes all SVB exception high bits into dst.
 // excStart is the byte offset where the exception index begins (after payload).
 // Returns the offset past the SVB data and any error.
-func decodeExceptionHighBitsInto(dst []uint32, buf []byte, excStart, excCount int, hasFOR bool) (int, error) {
-	svbLen, err := readSVBLen(buf, hasFOR)
+func decodeExceptionHighBitsInto(dst []uint32, buf []byte, excStart, excCount int) (int, error) {
+	svbLen, err := readSVBLen(buf)
 	if err != nil {
 		return 0, err
 	}
@@ -102,7 +99,7 @@ func encodeExceptionHighBits(highBits []uint32) []byte {
 // excStart is the byte offset where the exception index begins (after payload).
 // scratch is used as a decode buffer (must have capacity >= excCount).
 // Returns the total number of bytes consumed and any error.
-func applyExceptions(dst []uint32, buf []byte, excStart, count, bitWidth, excCount int, hasFOR bool, scratch []uint32) (int, error) {
+func applyExceptions(dst []uint32, buf []byte, excStart, count, bitWidth, excCount int, scratch []uint32) (int, error) {
 	// TODO-PERF: scratch should always be large enough
 	var decodeBuf []uint32
 	if len(scratch) >= excCount {
@@ -111,7 +108,7 @@ func applyExceptions(dst []uint32, buf []byte, excStart, count, bitWidth, excCou
 		decodeBuf = make([]uint32, excCount)
 	}
 
-	consumed, err := decodeExceptionHighBitsInto(decodeBuf, buf, excStart, excCount, hasFOR)
+	consumed, err := decodeExceptionHighBitsInto(decodeBuf, buf, excStart, excCount)
 	if err != nil {
 		return 0, err
 	}

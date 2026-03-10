@@ -1,7 +1,7 @@
 package utlpfor
 
 // BlockLength returns the total byte length of the encoded block
-// starting at the beginning of buf. Only the first 4-10 bytes of the
+// starting at the beginning of buf. Only the first 4-6 bytes of the
 // buffer are read, enabling efficient block skipping in MMAP-backed files.
 func BlockLength(buf []byte) (int, error) {
 	if len(buf) < headerBytes {
@@ -9,7 +9,7 @@ func BlockLength(buf []byte) (int, error) {
 	}
 
 	header := bo.Uint32(buf)
-	count, bitWidth, _, excCount, hasExceptions, _, _, hasFOR := decodeHeader(header)
+	count, bitWidth, _, excCount, forWidth, hasExceptions, _, _ := decodeHeader(header)
 
 	if count > blockSize {
 		return 0, ErrInvalidBlockLength
@@ -18,17 +18,18 @@ func BlockLength(buf []byte) (int, error) {
 		return 0, ErrInvalidBuffer
 	}
 
-	pOff := payloadOffset(hasFOR, hasExceptions)
-	base := pOff + utlPayloadBytesLUT[bitWidth]
+	forBaseBytes := forBaseBytesLUT[forWidth]
+	base := payloadOffset(forBaseBytes, hasExceptions) + utlPayloadBytesLUT[bitWidth]
 
 	if !hasExceptions {
 		return base, nil
 	}
 
-	svbLen, err := readSVBLen(buf, hasFOR)
-	if err != nil {
-		return 0, err
+	// svbLen is always at offset 4 (after header), before FOR base.
+	if len(buf) < headerBytes+svbLenBytes {
+		return 0, ErrInvalidBuffer
 	}
+	svbLen := int(bo.Uint16(buf[headerBytes:]))
 
 	return base + excIndexSize(excCount) + svbLen, nil
 }

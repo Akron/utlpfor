@@ -122,7 +122,14 @@ func packUint32Scalar(flag byte, dst []byte, values []uint32) ([]byte, error) {
 	}
 
 	headerFlags := headerTypeUint32Flag
-	workValues := values
+
+	// Decide FOR on the original (pre-delta) values.
+	_, _, useFOR, baseValue, forW := selectBitWidthWithFOR(values)
+
+	if useFOR {
+		forSubtractScalar(values, values, baseValue)
+		headerFlags |= uint32(forW) << forWidthShift
+	}
 
 	if flag&Delta != 0 {
 		needZZ := deltaEncodePerLaneScalar(values, values)
@@ -130,42 +137,49 @@ func packUint32Scalar(flag byte, dst []byte, values []uint32) ([]byte, error) {
 			headerFlags |= headerZigZagFlag
 		}
 		headerFlags |= headerDeltaFlag
-		workValues = values
 	}
 
-	bitWidth, excCount := selectBitWidth(workValues)
+	bitWidth, excCount := selectBitWidth(values)
 	payloadBytes := utlPayloadBytesLUT[bitWidth]
 	hasExceptions := excCount > 0
+	forBaseBytes := forBaseBytesLUT[forW]
 
 	if !hasExceptions {
-		totalLen := headerBytes + payloadBytes
+		pOff := payloadOffset(forBaseBytes, false)
+		totalLen := pOff + payloadBytes
 		dst = ensureLen(dst, totalLen)
 		bo.PutUint32(dst, encodeHeader(len(values), bitWidth, 0, headerFlags))
-		packLanesUTLScalar(dst[headerBytes:headerBytes+payloadBytes], workValues, bitWidth)
+		if useFOR {
+			writeFORBase(dst, baseValue, forW, false)
+		}
+		packLanesUTLScalar(dst[pOff:pOff+payloadBytes], values, bitWidth)
 		return dst[:totalLen], nil
 	}
 
 	var positions [blockSize]byte
 	var bitmap [16]byte
 	var highBits [blockSize]uint32
-	collectExceptionsDirect(workValues, bitWidth, positions[:], bitmap[:], highBits[:])
+	collectExceptionsDirect(values, bitWidth, positions[:], bitmap[:], highBits[:])
 
 	svbData := encodeExceptionHighBits(highBits[:excCount])
 	svbLen := len(svbData)
 
-	excIndexSize := excCount
+	excIdxSize := excCount
 	if excCount > excBitmapThreshold {
-		excIndexSize = 16
+		excIdxSize = 16
 	}
 
-	pOff := payloadOffset(false, true)
-	totalLen := pOff + payloadBytes + excIndexSize + svbLen
+	pOff := payloadOffset(forBaseBytes, true)
+	totalLen := pOff + payloadBytes + excIdxSize + svbLen
 
 	dst = ensureLen(dst, totalLen)
 	bo.PutUint32(dst, encodeHeader(len(values), bitWidth, excCount, headerFlags))
 	bo.PutUint16(dst[headerBytes:], uint16(svbLen))
+	if useFOR {
+		writeFORBase(dst, baseValue, forW, true)
+	}
 
-	packLanesUTLScalar(dst[pOff:pOff+payloadBytes], workValues, bitWidth)
+	packLanesUTLScalar(dst[pOff:pOff+payloadBytes], values, bitWidth)
 	writeExceptionsDirect(dst[pOff+payloadBytes:], positions[:], bitmap[:], excCount, svbData)
 
 	return dst[:totalLen], nil
@@ -178,7 +192,8 @@ func unpackUint32Scalar(dst []uint32, scratch []uint32, buf []byte) ([]uint32, i
 	}
 
 	header := bo.Uint32(buf)
-	count, bitWidth, intType, excCount, hasExceptions, hasDelta, hasZigZag, hasFOR := decodeHeader(header)
+	count, bitWidth, intType, excCount, forWidth, hasExceptions, hasDelta, hasZigZag := decodeHeader(header)
+	hasFOR := forWidth > 0
 
 	if err := validateIntType(intType); err != nil {
 		return nil, 0, err
@@ -187,34 +202,42 @@ func unpackUint32Scalar(dst []uint32, scratch []uint32, buf []byte) ([]uint32, i
 	if count == 0 {
 		return dst[:0], headerBytes, nil
 	}
-	if count > blockSize {
-		return nil, 0, ErrInvalidBlockLength
-	}
-	if bitWidth > 32 {
+	if uint(count) > blockSize || uint(bitWidth) > 32 {
+		if count > blockSize {
+			return nil, 0, ErrInvalidBlockLength
+		}
 		return nil, 0, ErrInvalidBuffer
 	}
 
-	pOff := payloadOffset(hasFOR, hasExceptions)
+	forBaseBytes := forBaseBytesLUT[forWidth]
+	var forBase uint32
+	if hasFOR {
+		forBase = readFORBase(buf, forWidth, hasExceptions)
+	}
+
+	pOff := payloadOffset(forBaseBytes, hasExceptions)
 	payloadBytes := utlPayloadBytesLUT[bitWidth]
 
 	if len(buf) < pOff+payloadBytes {
 		return nil, 0, ErrInvalidBuffer
 	}
 
-	if cap(dst) < count {
-		dst = make([]uint32, count)
+	if cap(dst) < blockSize {
+		dst = make([]uint32, blockSize)
 	}
-	dst = dst[:count]
+	dst = dst[:blockSize]
 
 	payload := buf[pOff : pOff+payloadBytes]
-	unpackLanesUTLScalar(dst, payload, count, bitWidth)
+	unpackLanesUTLScalar(dst, payload, blockSize, bitWidth)
+
+	dst = dst[:count]
 
 	consumed := pOff + payloadBytes
 
 	if hasExceptions {
 		excStart := pOff + payloadBytes
 		var err error
-		consumed, err = applyExceptions(dst, buf, excStart, count, bitWidth, excCount, hasFOR, scratch)
+		consumed, err = applyExceptions(dst, buf, excStart, count, bitWidth, excCount, scratch)
 		if err != nil {
 			return nil, 0, err
 		}
@@ -225,6 +248,10 @@ func unpackUint32Scalar(dst []uint32, scratch []uint32, buf []byte) ([]uint32, i
 		if overflowPos > 0 {
 			return nil, 0, &ErrOverflow{Position: overflowPos}
 		}
+	}
+
+	if hasFOR {
+		forAddScalar(dst, count, forBase)
 	}
 
 	return dst, consumed, nil
