@@ -1,0 +1,305 @@
+package utlpfor
+
+import (
+	"fmt"
+	"slices"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+// benchSink prevents dead-code elimination of benchmark results.
+var benchSink uint32
+
+// matrixConfig defines one benchmark configuration in the matrix.
+type matrixConfig struct {
+	method   string // "pac", "unp", "get", "len"
+	bitWidth int    // 4, 16, 28
+	excCount int    // 0, 8, 16, 32
+	forWidth int    // 0, 1, 2, 4 (byte count: 0=none, 1=uint8, 2=uint16, 4=uint32)
+	useDelta bool
+	useZZ    bool
+}
+
+// name returns the fixed-width benchmark name for this configuration.
+func (c matrixConfig) name() string {
+	forStr := fmt.Sprintf("%dfor", c.forWidth)
+	deltaStr, zzStr := "-delta", "-zz"
+	if c.useDelta {
+		deltaStr = "+delta"
+	}
+	if c.useZZ {
+		zzStr = "+zz"
+	}
+	return fmt.Sprintf("%s_%02dbit_%02dexc_%s_%s_%s",
+		c.method, c.bitWidth, c.excCount,
+		forStr, deltaStr, zzStr)
+}
+
+// forBaseForWidth returns a FOR base value that produces the requested
+// FOR byte width (0=none, 1=uint8, 2=uint16, 4=uint32).
+func forBaseForWidth(fw int) uint32 {
+	switch fw {
+	case 1:
+		return 100
+	case 2:
+		return 10000
+	case 4:
+		return 1_000_000
+	default:
+		return 0
+	}
+}
+
+// generateMatrixData creates 128 uint32 values targeting a specific
+// combination of bitwidth, exception count, FOR width, and delta/zigzag.
+// Returns (values, flag byte).
+func generateMatrixData(cfg matrixConfig) ([]uint32, byte) {
+	values := make([]uint32, blockSize)
+	bw := cfg.bitWidth
+	forBase := forBaseForWidth(cfg.forWidth)
+
+	if cfg.useDelta && cfg.useZZ {
+		var baseR, step uint32
+		switch {
+		case bw <= 4:
+			baseR, step = 2, 3
+		case bw <= 16:
+			baseR, step = 100, 200
+		default:
+			baseR, step = 10000, 20000
+		}
+		for i := range values {
+			posInLane := i / utlLaneCount
+			if posInLane%2 == 0 {
+				values[i] = forBase + baseR
+			} else {
+				values[i] = forBase + baseR + step
+			}
+		}
+	} else if cfg.useDelta && !cfg.useZZ {
+		step := uint32(1)
+		if bw >= 16 {
+			step = 10
+		}
+		if bw >= 28 {
+			step = 100
+		}
+		for i := range values {
+			posInLane := i / utlLaneCount
+			values[i] = forBase + uint32(posInLane)*step
+		}
+	} else {
+		mask := uint32((1 << bw) - 1)
+		if bw >= 32 {
+			mask = 0xFFFFFFFF
+		}
+		for i := range values {
+			values[i] = forBase + uint32(i*3)&mask
+		}
+	}
+
+	if cfg.excCount > 0 {
+		// Use moderate exception values so FOR can still be beneficial.
+		// The residual after FOR subtraction needs more than bitWidth bits
+		// but is not astronomically large (unlike 0x10000000).
+		excResidual := uint32(1 << min(bw+4, 31))
+		step := max(blockSize/cfg.excCount, 1)
+		for e := 0; e < cfg.excCount && e < blockSize; e++ {
+			idx := e * step
+			if idx >= blockSize {
+				idx = blockSize - 1
+			}
+			values[idx] = forBase + excResidual + uint32(e)
+		}
+	}
+
+	var flag byte
+	if cfg.useDelta {
+		flag = Delta
+	}
+	return values, flag
+}
+
+// lenMatrixConfigs returns a reduced set of benchmark configs for
+// BlockLength. BlockLength only reads the header (4 bytes) and
+// optionally svbLen (2 bytes), so most dimensions are irrelevant.
+// The meaningful code paths are: no-exceptions vs with-exceptions
+// (sorted positions vs bitmap), and with/without FOR.
+func lenMatrixConfigs() []matrixConfig {
+	return []matrixConfig{
+		{method: "len", bitWidth: 16, excCount: 0, forWidth: 0},
+		{method: "len", bitWidth: 16, excCount: 8, forWidth: 0},
+		{method: "len", bitWidth: 16, excCount: 32, forWidth: 0},
+		{method: "len", bitWidth: 16, excCount: 8, forWidth: 2},
+	}
+}
+
+// allMatrixConfigs generates all benchmark configurations.
+// pac, unp, get: full matrix (144 each). len: reduced set (4 configs).
+func allMatrixConfigs() []matrixConfig {
+	fullMethods := []string{"pac", "unp", "get"}
+	bitWidths := []int{4, 16, 28}
+	excCounts := []int{0, 8, 16, 32}
+	forWidths := []int{0, 1, 2, 4}
+
+	type deltaZZ struct{ delta, zz bool }
+	deltaOpts := []deltaZZ{
+		{false, false},
+		{true, false},
+		{true, true},
+	}
+
+	var configs []matrixConfig
+	for _, m := range fullMethods {
+		for _, bw := range bitWidths {
+			for _, exc := range excCounts {
+				for _, fw := range forWidths {
+					for _, dz := range deltaOpts {
+						configs = append(configs, matrixConfig{
+							method:   m,
+							bitWidth: bw,
+							excCount: exc,
+							forWidth: fw,
+							useDelta: dz.delta,
+							useZZ:    dz.zz,
+						})
+					}
+				}
+			}
+		}
+	}
+	configs = append(configs, lenMatrixConfigs()...)
+	return configs
+}
+
+func BenchmarkMatrix(b *testing.B) {
+	for _, cfg := range allMatrixConfigs() {
+		b.Run(cfg.name(), func(b *testing.B) {
+			values, flag := generateMatrixData(cfg)
+			original := slices.Clone(values)
+
+			switch cfg.method {
+			case "pac":
+				dst := make([]byte, 0, 1024)
+				b.ReportAllocs()
+				b.SetBytes(int64(blockSize * 4))
+				b.ResetTimer()
+				for i := 0; i < b.N; i++ {
+					copy(values, original)
+					dst, _ = PackUint32(flag, dst[:0], values)
+				}
+
+			case "unp":
+				work := slices.Clone(original)
+				packed, err := PackUint32(flag, nil, work)
+				if err != nil {
+					b.Fatalf("pack failed: %v", err)
+				}
+				dst := make([]uint32, blockSize)
+				scratch := make([]uint32, blockSize)
+				b.ReportAllocs()
+				b.SetBytes(int64(blockSize * 4))
+				b.ResetTimer()
+				for i := 0; i < b.N; i++ {
+					UnpackUint32(dst, scratch, packed)
+				}
+
+			case "get":
+				work := slices.Clone(original)
+				packed, err := PackUint32(flag, nil, work)
+				if err != nil {
+					b.Fatalf("pack failed: %v", err)
+				}
+				var sink uint32
+				b.ReportAllocs()
+				b.SetBytes(int64(blockSize * 4))
+				b.ResetTimer()
+				for i := 0; i < b.N; i++ {
+					for pos := 0; pos < blockSize; pos++ {
+						v, _ := GetUint32(pos, packed)
+						sink += v
+					}
+				}
+				benchSink = sink
+
+			case "len":
+				work := slices.Clone(original)
+				packed, err := PackUint32(flag, nil, work)
+				if err != nil {
+					b.Fatalf("pack failed: %v", err)
+				}
+				b.ReportAllocs()
+				b.ResetTimer()
+				for i := 0; i < b.N; i++ {
+					BlockLength(packed)
+				}
+			}
+		})
+	}
+}
+
+// TestMatrixDataGeneration validates that the data generator produces
+// packed blocks with the expected header flags.
+func TestMatrixDataGeneration(t *testing.T) {
+	bitWidths := []int{4, 16, 28}
+	excCounts := []int{0, 8, 16, 32}
+	forWidths := []int{0, 1, 2, 4}
+
+	for _, bw := range bitWidths {
+		for _, exc := range excCounts {
+			for _, fw := range forWidths {
+				for _, useDelta := range []bool{false, true} {
+					for _, useZZ := range []bool{false, true} {
+						if useZZ && !useDelta {
+							continue
+						}
+						cfg := matrixConfig{
+							method:   "pac",
+							bitWidth: bw,
+							excCount: exc,
+							forWidth: fw,
+							useDelta: useDelta,
+							useZZ:    useZZ,
+						}
+						t.Run(cfg.name(), func(t *testing.T) {
+							values, flag := generateMatrixData(cfg)
+							work := slices.Clone(values)
+							packed, err := PackUint32(flag, nil, work)
+							require.NoError(t, err)
+							require.GreaterOrEqual(t, len(packed), headerBytes)
+
+							header := bo.Uint32(packed)
+							_, _, _, hExc, hFORWidth, _, hDelta, hZZ := decodeHeader(header)
+
+							if useDelta {
+								assert.True(t, hDelta, "expected delta flag")
+							}
+
+							if fw > 0 {
+								if hFORWidth == 0 {
+									t.Logf("note: target forWidth=%d bytes, but FOR was not selected", fw)
+								}
+							} else {
+								if hFORWidth > 0 {
+									t.Logf("note: no FOR requested, but cost model selected forWidth=%d", hFORWidth)
+								}
+							}
+
+							if useZZ {
+								assert.True(t, hZZ,
+									"zigzag expected but not triggered; saw-like data did not produce negative deltas")
+							}
+
+							if hExc != exc {
+								t.Logf("note: target exc=%d, actual=%d "+
+									"(cost model chose differently)", exc, hExc)
+							}
+						})
+					}
+				}
+			}
+		}
+	}
+}

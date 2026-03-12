@@ -1,6 +1,7 @@
 .PHONY: test test-simd test-force-scalar test-force-sse2 test-force-avx2 test-force-avx512 \
        bench bench-simd bench-save-scalar bench-save-simd bench-compare \
-       compare-with-fastpfor fuzz fuzz-simd fuzz-regression fuzz-regression-simd \
+       compare-with-fastpfor bench-matrix bench-matrix-table bench-matrix-compare \
+       fuzz fuzz-simd fuzz-regression fuzz-regression-simd \
        generate-native generate
 
 FUZZTIME ?= 30s
@@ -89,6 +90,47 @@ compare-with-fastpfor:
 		> $(CURDIR)/benchmarks/utlpfor-comparable.txt
 	@echo "--- Comparison (fastpfor-go vs utlpfor) ---"
 	@benchstat $(CURDIR)/benchmarks/fastpfor-comparable.txt $(CURDIR)/benchmarks/utlpfor-comparable.txt
+
+# --- Benchmark Matrix ---
+
+MATRIX_BENCH ?= BenchmarkMatrix/
+MATRIX_COUNT ?= 5
+
+bench-matrix:
+	@command -v go >/dev/null 2>&1 || { echo "Go not found"; exit 1; }
+	@mkdir -p benchmarks
+	@COMMIT=$$(git rev-parse --short HEAD); \
+	echo "# Benchmarks at commit $$COMMIT"; \
+	for level in scalar sse2 avx2 avx512; do \
+		echo "=== Running $$level benchmarks ==="; \
+		{ echo "# git commit: $$COMMIT"; \
+		  GOEXPERIMENT=simd UTL_SIMD_LEVEL=$$level $(TASKSET) go test \
+		    -bench='$(MATRIX_BENCH)' -benchmem -count=$(MATRIX_COUNT) \
+		    -run='^$$' -timeout=300s ./... 2>&1; \
+		} > benchmarks/matrix-$$level.txt || true; \
+	done
+	@echo "=== Formatting table ==="
+	@go run ./internal/benchfmt \
+		benchmarks/matrix-scalar.txt \
+		benchmarks/matrix-sse2.txt \
+		benchmarks/matrix-avx2.txt \
+		benchmarks/matrix-avx512.txt
+
+bench-matrix-table:
+	@go run ./internal/benchfmt \
+		benchmarks/matrix-scalar.txt \
+		benchmarks/matrix-sse2.txt \
+		benchmarks/matrix-avx2.txt \
+		benchmarks/matrix-avx512.txt
+
+bench-matrix-compare:
+	@command -v benchstat >/dev/null 2>&1 || \
+		{ echo "Install benchstat: go install golang.org/x/perf/cmd/benchstat@latest"; exit 1; }
+	@if [ -z "$(OLD)" ] || [ -z "$(NEW)" ]; then \
+		echo "Usage: make bench-matrix-compare OLD=benchmarks/matrix-avx2-old.txt NEW=benchmarks/matrix-avx2.txt"; \
+		exit 1; \
+	fi
+	benchstat $(OLD) $(NEW)
 
 # --- Code Generation ---
 
