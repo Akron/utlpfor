@@ -71,9 +71,9 @@ func TestTotalBlockCost(t *testing.T) {
 		{"bw8_no_exc_u8for", 8, 0, 1, 4 + 1 + 128},
 		{"bw8_no_exc_u16for", 8, 0, 2, 4 + 2 + 128},
 		{"bw8_no_exc_u32for", 8, 0, 4, 4 + 4 + 128},
-		{"bw8_5exc_no_for", 8, 5, 0, 4 + 2 + 128 + 5 + 5*2},
-		{"bw8_5exc_u32for", 8, 5, 4, 4 + 2 + 4 + 128 + 5 + 5*2},
-		{"bw8_20exc_bitmap", 8, 20, 0, 4 + 2 + 128 + 16 + 20*2},
+		{"bw8_5exc_no_for", 8, 5, 0, 4 + 2 + 128 + 5 + (5*23+5)/10},
+		{"bw8_5exc_u32for", 8, 5, 4, 4 + 2 + 4 + 128 + 5 + (5*23+5)/10},
+		{"bw8_20exc_bitmap", 8, 20, 0, 4 + 2 + 128 + 16 + (20*23+5)/10},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -111,12 +111,10 @@ func TestSelectBitWidthWithFOR_ClusteredData(t *testing.T) {
 	for i := range values {
 		values[i] = 1000000 + uint32(i%100)
 	}
-	width, excCount, useFOR, baseValue, forWidth := selectBitWidthWithFOR(values)
+	useFOR, baseValue, forWidth := selectBitWidthWithFOR(values)
 	assert.True(t, useFOR, "FOR should be selected for clustered data")
 	assert.Equal(t, uint32(1000000), baseValue)
-	assert.Less(t, width, 20, "bit width should be small after FOR-subtract")
 	assert.Equal(t, forWidthU32, forWidth, "base >= 65536 -> uint32 FOR")
-	_ = excCount
 }
 
 func TestSelectBitWidthWithFOR_ClusteredSmallBase(t *testing.T) {
@@ -124,7 +122,7 @@ func TestSelectBitWidthWithFOR_ClusteredSmallBase(t *testing.T) {
 	for i := range values {
 		values[i] = 200 + uint32(i%10)
 	}
-	_, _, useFOR, baseValue, forWidth := selectBitWidthWithFOR(values)
+	useFOR, baseValue, forWidth := selectBitWidthWithFOR(values)
 	if useFOR {
 		assert.Equal(t, uint32(200), baseValue)
 		assert.Equal(t, forWidthU8, forWidth, "base < 256 -> uint8 FOR")
@@ -136,7 +134,7 @@ func TestSelectBitWidthWithFOR_ClusteredMediumBase(t *testing.T) {
 	for i := range values {
 		values[i] = 50000 + uint32(i%10)
 	}
-	_, _, useFOR, baseValue, forWidth := selectBitWidthWithFOR(values)
+	useFOR, baseValue, forWidth := selectBitWidthWithFOR(values)
 	if useFOR {
 		assert.Equal(t, uint32(50000), baseValue)
 		assert.Equal(t, forWidthU16, forWidth, "256 <= base < 65536 -> uint16 FOR")
@@ -148,7 +146,7 @@ func TestSelectBitWidthWithFOR_MinIsZero(t *testing.T) {
 	for i := range values {
 		values[i] = uint32(i)
 	}
-	_, _, useFOR, baseValue, _ := selectBitWidthWithFOR(values)
+	useFOR, baseValue, _ := selectBitWidthWithFOR(values)
 	assert.False(t, useFOR, "FOR should not be used when min=0")
 	assert.Equal(t, uint32(0), baseValue)
 }
@@ -158,7 +156,7 @@ func TestSelectBitWidthWithFOR_NotBeneficial(t *testing.T) {
 	for i := range values {
 		values[i] = uint32(i * 100000)
 	}
-	_, _, useFOR, _, _ := selectBitWidthWithFOR(values)
+	useFOR, _, _ := selectBitWidthWithFOR(values)
 	assert.False(t, useFOR,
 		"FOR should not be used when range is wide")
 }
@@ -168,11 +166,9 @@ func TestSelectBitWidthWithFOR_AllSameValue(t *testing.T) {
 	for i := range values {
 		values[i] = 999999
 	}
-	width, excCount, useFOR, baseValue, forWidth := selectBitWidthWithFOR(values)
+	useFOR, baseValue, forWidth := selectBitWidthWithFOR(values)
 	assert.True(t, useFOR, "FOR should be selected for constant data with min>0")
 	assert.Equal(t, uint32(999999), baseValue)
-	assert.Equal(t, 0, width, "bit width should be 0 after FOR-subtract")
-	assert.Equal(t, 0, excCount)
 	assert.Equal(t, forWidthU32, forWidth)
 }
 
@@ -494,7 +490,8 @@ func TestFORBaseRoundTrip(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			buf := make([]byte, 16)
 			writeFORBase(buf, tt.base, tt.forWidth, tt.hasExceptions)
-			got := readFORBase(buf, tt.forWidth, tt.hasExceptions)
+			forBaseOffset := payloadOffset(0, tt.hasExceptions)
+			got := readFORBase(buf, forBaseOffset, tt.forWidth)
 			assert.Equal(t, tt.base, got)
 		})
 	}
@@ -509,7 +506,7 @@ func TestFindMinMax_SIMDMatchesScalar(t *testing.T) {
 		}
 
 		scalarMin, scalarMax := findMinMaxScalar(values)
-		simdMin, simdMax := findMinMaxSIMD(values)
+		simdMin, simdMax := findMinMaxSIMDtest(values)
 
 		assert.Equal(t, scalarMin, simdMin, "min mismatch, trial %d", trial)
 		assert.Equal(t, scalarMax, simdMax, "max mismatch, trial %d", trial)
@@ -518,7 +515,7 @@ func TestFindMinMax_SIMDMatchesScalar(t *testing.T) {
 
 func TestFindMinMax_SIMDSmallSlice(t *testing.T) {
 	values := []uint32{100, 50, 200, 25}
-	min, max := findMinMaxSIMD(values)
+	min, max := findMinMaxSIMDtest(values)
 	assert.Equal(t, uint32(25), min)
 	assert.Equal(t, uint32(200), max)
 }
@@ -536,7 +533,7 @@ func TestFORSubtract_SIMDMatchesScalar(t *testing.T) {
 		forSubtractScalar(scalarResult, values, base)
 
 		simdResult := make([]uint32, 128)
-		forSubtractSIMD(simdResult, values, base)
+		forSubtractSIMDtest(simdResult, values, base)
 
 		assert.Equal(t, scalarResult, simdResult, "trial %d", trial)
 	}
@@ -557,7 +554,7 @@ func TestFORAdd_SIMDMatchesScalar(t *testing.T) {
 
 		simdResult := make([]uint32, 128)
 		copy(simdResult, values)
-		forAddSIMD(simdResult, 128, base)
+		forAddSIMDtest(simdResult, 128, base)
 
 		assert.Equal(t, scalarResult, simdResult, "trial %d", trial)
 	}

@@ -123,8 +123,7 @@ func packUint32Scalar(flag byte, dst []byte, values []uint32) ([]byte, error) {
 
 	headerFlags := headerTypeUint32Flag
 
-	// Decide FOR on the original (pre-delta) values.
-	_, _, useFOR, baseValue, forW := selectBitWidthWithFOR(values)
+	useFOR, baseValue, forW := selectBitWidthWithFOR(values)
 
 	if useFOR {
 		forSubtractScalar(values, values, baseValue)
@@ -199,23 +198,23 @@ func unpackUint32Scalar(dst []uint32, scratch []uint32, buf []byte) ([]uint32, i
 		return nil, 0, err
 	}
 
-	if count == 0 {
-		return dst[:0], headerBytes, nil
-	}
-	if uint(count) > blockSize || uint(bitWidth) > 32 {
+	if uint(count-1) >= blockSize || uint(bitWidth) > 32 {
+		if count == 0 {
+			return dst[:0], headerBytes, nil
+		}
 		if count > blockSize {
 			return nil, 0, ErrInvalidBlockLength
 		}
 		return nil, 0, ErrInvalidBuffer
 	}
 
-	forBaseBytes := forBaseBytesLUT[forWidth]
+	pOff := payloadOffset(0, hasExceptions)
 	var forBase uint32
 	if hasFOR {
-		forBase = readFORBase(buf, forWidth, hasExceptions)
+		forBase = readFORBase(buf, pOff, forWidth)
+		pOff += forBaseBytesLUT[forWidth]
 	}
 
-	pOff := payloadOffset(forBaseBytes, hasExceptions)
 	payloadBytes := utlPayloadBytesLUT[bitWidth]
 
 	if len(buf) < pOff+payloadBytes {

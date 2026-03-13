@@ -2,17 +2,17 @@
 
 package utlpfor
 
-// forSubtractSIMD delegates to scalar on non-SIMD builds.
-func forSubtractSIMD(dst, src []uint32, baseValue uint32) {
+// forSubtractSIMDtest delegates to scalar on non-SIMD builds.
+func forSubtractSIMDtest(dst, src []uint32, baseValue uint32) {
 	forSubtractScalar(dst, src, baseValue)
 }
 
-// forAddSIMD delegates to scalar on non-SIMD builds.
-func forAddSIMD(output []uint32, count int, baseValue uint32) {
+// forAddSIMDtest delegates to scalar on non-SIMD builds.
+func forAddSIMDtest(output []uint32, count int, baseValue uint32) {
 	forAddScalar(output, count, baseValue)
 }
 
-// findMinMaxSIMD delegates to scalar on non-SIMD builds.
-func findMinMaxSIMD(values []uint32) (uint32, uint32) {
+// findMinMaxSIMDtest delegates to scalar on non-SIMD builds.
+func findMinMaxSIMDtest(values []uint32) (uint32, uint32) {
 	return findMinMaxScalar(values)
 }

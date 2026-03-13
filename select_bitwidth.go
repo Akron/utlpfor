@@ -8,16 +8,6 @@ import "math/bits"
 // while representing fewer values (more exceptions, no savings).
 var stepBitWidths = [9]int{0, 4, 8, 12, 16, 20, 24, 28, 32}
 
-// maxBitWidth returns the minimum number of bits needed to represent
-// the largest value in the slice.
-func maxBitWidth(values []uint32) int {
-	var ored uint32
-	for _, v := range values {
-		ored |= v
-	}
-	return bits.Len32(ored)
-}
-
 // roundUpToStep rounds a raw bitwidth up to the nearest step bitwidth.
 func roundUpToStep(bw int) int {
 	if bw <= 0 {
@@ -27,65 +17,77 @@ func roundUpToStep(bw int) int {
 }
 
 // selectBitWidth finds the optimal step bitwidth that minimizes total block size.
-// Only the 9 step bitwidths (0, 4, 8, ..., 32) are evaluated because
-// non-step bitwidths produce identical payload sizes as the next step up.
-// Returns the chosen width and the number of exceptions at that width.
+// Uses a single pass over values to build a 9-bin step histogram and track the
+// OR of all values (for branchless maxStepIdx computation). Exception counts at
+// each candidate are computed via running suffix sums over the 9 bins.
 func selectBitWidth(values []uint32) (width int, excCount int) {
+	var hist [9]int
 	var orAll uint32
 	for _, v := range values {
 		orAll |= v
+		hist[(bits.Len32(v)+3)>>2]++
 	}
-	maxWidth := bits.Len32(orAll)
+	maxStepIdx := int((bits.Len32(orAll) + 3) >> 2)
+	width, excCount, _ = chooseBestFromHist(hist, maxStepIdx)
+	return
+}
 
-	maxStepIdx := min((maxWidth+3)/4, 8)
+// chooseBestFromHist evaluates step candidates using a 9-bin histogram
+// and returns the optimal bitwidth, exception count, and estimated block cost.
+// maxStepIdx is the highest histogram bin with nonzero count.
+func chooseBestFromHist(hist [9]int, maxStepIdx int) (bestWidth, bestExcCount, bestCost int) {
 	maxStep := stepBitWidths[maxStepIdx]
+	bestWidth = maxStep
+	bestCost = headerBytes + utlPayloadBytesLUT[maxStep]
 
-	bestWidth := maxStep
-	bestSize := headerBytes + utlPayloadBytesLUT[maxStep]
-	bestExcCount := 0
-
-	var freqs [33]int
-	for _, v := range values {
-		freqs[bits.Len32(v)]++
+	excAbove := 0
+	for si := maxStepIdx - 1; si >= 0; si-- {
+		excAbove += hist[si+1]
+		w := stepBitWidths[si]
+		cost := headerBytes + utlPayloadBytesLUT[w] + estimateExceptionCost(excAbove, maxStep-w)
+		if cost < bestCost {
+			bestCost = cost
+			bestWidth = w
+			bestExcCount = excAbove
+		}
 	}
+	return
+}
+
+// chooseBestFromExcCounts evaluates step candidates using cumulative exception
+// counts (from SIMD threshold comparisons). excCounts[si] = number of values
+// exceeding the threshold for step width stepBitWidths[si]. This is equivalent
+// to chooseBestFromHist but bypasses the histogram entirely.
+func chooseBestFromExcCounts(excCounts [9]int) (bestWidth, bestExcCount, bestCost int) {
+	maxStepIdx := 8
+	for si := range 9 {
+		if excCounts[si] == 0 {
+			maxStepIdx = si
+			break
+		}
+	}
+	maxStep := stepBitWidths[maxStepIdx]
+	bestWidth = maxStep
+	bestCost = headerBytes + utlPayloadBytesLUT[maxStep]
 
 	for si := maxStepIdx - 1; si >= 0; si-- {
+		ec := excCounts[si]
 		w := stepBitWidths[si]
-		excCountCum := 0
-		for bw := w + 1; bw <= maxStep; bw++ {
-			excCountCum += freqs[bw]
-		}
-		if excCountCum == 0 {
-			continue
-		}
-
-		payloadCost := utlPayloadBytesLUT[w]
-		excOverhead := estimateExceptionCost(excCountCum, maxStep-w)
-		totalCost := headerBytes + payloadCost + excOverhead
-		if totalCost < bestSize {
-			bestSize = totalCost
+		cost := headerBytes + utlPayloadBytesLUT[w] + estimateExceptionCost(ec, maxStep-w)
+		if cost < bestCost {
+			bestCost = cost
 			bestWidth = w
-			bestExcCount = excCountCum
+			bestExcCount = ec
 		}
 	}
-	return bestWidth, bestExcCount
+	return
 }
 
 // estimateExceptionCost estimates the byte overhead of storing exceptions.
-// The cost includes svbLen (2 bytes), exception index (positions or bitmap),
-// and StreamVByte data size estimated from the maximum high-bit width.
+// Branchless: uses min() for the position-vs-bitmap index cost decision.
+// Precondition: excCount > 0 (guaranteed by chooseBestFromHist caller).
 func estimateExceptionCost(excCount, maxHighBitWidth int) int {
-	if excCount == 0 {
-		return 0
-	}
-	var indexCost int
-	if excCount <= excBitmapThreshold {
-		indexCost = excCount
-	} else {
-		indexCost = 16
-	}
-	bytesPerValue := min(max((maxHighBitWidth+7)/8, 1), 4)
-	controlBytes := (excCount + 3) / 4
-	svbEstimate := controlBytes + excCount*bytesPerValue
-	return svbLenBytes + indexCost + svbEstimate
+	bytesPerValue := min(max((maxHighBitWidth+7)>>3, 1), 4)
+	controlBytes := (excCount + 3) >> 2
+	return svbLenBytes + min(excCount, excBitmapThreshold) + controlBytes + excCount*bytesPerValue
 }

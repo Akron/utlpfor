@@ -283,11 +283,10 @@ func packUint32SSE2(flag byte, dst []byte, values []uint32) ([]byte, error) {
 
 	headerFlags := headerTypeUint32Flag
 
-	// Decide FOR on original values.
-	_, _, useFOR, baseValue, forW := selectBitWidthWithFOR(values)
+	useFOR, baseValue, forW := selectBitWidthWithFORSSE2(values)
 
 	if useFOR {
-		forSubtractSIMD(values, values, baseValue)
+		forSubtractSSE2(values, values, baseValue)
 		headerFlags |= uint32(forW) << forWidthShift
 	}
 
@@ -304,7 +303,7 @@ func packUint32SSE2(flag byte, dst []byte, values []uint32) ([]byte, error) {
 		headerFlags |= headerDeltaFlag
 	}
 
-	bitWidth, excCount := selectBitWidth(values)
+	bitWidth, excCount := selectBitWidthSSE2(values)
 	payloadBytes := utlPayloadBytesLUT[bitWidth]
 	hasExceptions := excCount > 0
 	forBaseBytes := forBaseBytesLUT[forW]
@@ -372,23 +371,23 @@ func unpackUint32SSE2(dst []uint32, scratch []uint32, buf []byte) ([]uint32, int
 		return nil, 0, err
 	}
 
-	if count == 0 {
-		return dst[:0], headerBytes, nil
-	}
-	if count > blockSize {
-		return nil, 0, ErrInvalidBlockLength
-	}
-	if bitWidth > 32 {
+	if uint(count-1) >= blockSize || uint(bitWidth) > 32 {
+		if count == 0 {
+			return dst[:0], headerBytes, nil
+		}
+		if count > blockSize {
+			return nil, 0, ErrInvalidBlockLength
+		}
 		return nil, 0, ErrInvalidBuffer
 	}
 
-	forBaseBytes := forBaseBytesLUT[forWidth]
+	pOff := payloadOffset(0, hasExceptions)
 	var forBase uint32
 	if hasFOR {
-		forBase = readFORBase(buf, forWidth, hasExceptions)
+		forBase = readFORBase(buf, pOff, forWidth)
+		pOff += forBaseBytesLUT[forWidth]
 	}
 
-	pOff := payloadOffset(forBaseBytes, hasExceptions)
 	payloadBytes := utlPayloadBytesLUT[bitWidth]
 
 	if len(buf) < pOff+payloadBytes {
@@ -429,10 +428,147 @@ func unpackUint32SSE2(dst []uint32, scratch []uint32, buf []byte) ([]uint32, int
 	}
 
 	if hasFOR {
-		forAddSIMD(dst, count, forBase)
+		forAddSSE2(dst, count, forBase)
 	}
 
 	return dst, consumed, nil
+}
+
+// selectBitWidthSSE2 computes the optimal step bitwidth using SIMD threshold
+// comparisons. Instead of computing bits.Len32 per value and incrementing a
+// histogram bin (scatter-add), this approach compares all values against each
+// step threshold simultaneously. The 8 thresholds are split into two groups
+// of 4 to avoid register pressure (5 SIMD registers per pass: 4 thresholds
+// + 1 value vector). AVX-512 uses a single pass (9 of 32 ZMM registers).
+func selectBitWidthSSE2(values []uint32) (width int, excCount int) {
+	width, excCount, _ = chooseBestFromExcCounts(buildExcCountsSSE2(values))
+	return
+}
+
+// selectBitWidthWithFORSSE2 uses SIMD-accelerated findMinMax and SIMD
+// threshold comparisons for the standard histogram. The two-level rejection
+// strategy (min==0, forMaxStep >= rawMaxStep/stdWidth) is preserved.
+func selectBitWidthWithFORSSE2(values []uint32) (useFOR bool, baseValue uint32, forWidth int) {
+	minVal, maxVal := findMinMaxSSE2(values)
+	if minVal == 0 {
+		return false, 0, forWidthNone
+	}
+	forMaxStep := roundUpToStep(bits.Len32(maxVal - minVal))
+	rawMaxStep := roundUpToStep(bits.Len32(maxVal))
+	if forMaxStep >= rawMaxStep {
+		return false, 0, forWidthNone
+	}
+
+	stdWidth, _, _ := chooseBestFromExcCounts(buildExcCountsSSE2(values))
+	if forMaxStep >= stdWidth {
+		return false, 0, forWidthNone
+	}
+	return true, minVal, selectFORWidth(minVal)
+}
+
+// buildExcCountsSSE2 computes cumulative exception counts using SSE2
+// threshold comparisons in a single pass.
+func buildExcCountsSSE2(values []uint32) (exc [9]int) {
+	tA0 := archsimd.BroadcastUint32x4(0)
+	tA1 := archsimd.BroadcastUint32x4(0xF)
+	tA2 := archsimd.BroadcastUint32x4(0xFF)
+	tA3 := archsimd.BroadcastUint32x4(0xFFF)
+	tB0 := archsimd.BroadcastUint32x4(0xFFFF)
+	tB1 := archsimd.BroadcastUint32x4(0xFFFFF)
+	tB2 := archsimd.BroadcastUint32x4(0xFFFFFF)
+	tB3 := archsimd.BroadcastUint32x4(0xFFFFFFF)
+
+	i := 0
+	for ; i+4 <= len(values); i += 4 {
+		v := archsimd.LoadUint32x4Slice(values[i:])
+		exc[0] += bits.OnesCount8(v.Greater(tA0).ToBits())
+		exc[1] += bits.OnesCount8(v.Greater(tA1).ToBits())
+		exc[2] += bits.OnesCount8(v.Greater(tA2).ToBits())
+		exc[3] += bits.OnesCount8(v.Greater(tA3).ToBits())
+		exc[4] += bits.OnesCount8(v.Greater(tB0).ToBits())
+		exc[5] += bits.OnesCount8(v.Greater(tB1).ToBits())
+		exc[6] += bits.OnesCount8(v.Greater(tB2).ToBits())
+		exc[7] += bits.OnesCount8(v.Greater(tB3).ToBits())
+	}
+	for ; i < len(values); i++ {
+		v := values[i]
+		// Branchless scalar tail: each comparison contributes 0 or 1 to the cumulative exception counters.
+		exc[0] += gtCountU32(v, 0)
+		exc[1] += gtCountU32(v, 0xF)
+		exc[2] += gtCountU32(v, 0xFF)
+		exc[3] += gtCountU32(v, 0xFFF)
+		exc[4] += gtCountU32(v, 0xFFFF)
+		exc[5] += gtCountU32(v, 0xFFFFF)
+		exc[6] += gtCountU32(v, 0xFFFFFF)
+		exc[7] += gtCountU32(v, 0xFFFFFFF)
+	}
+	return
+}
+
+// findMinMaxSSE2 computes min/max using SSE2 4-wide operations.
+func findMinMaxSSE2(values []uint32) (uint32, uint32) {
+	if len(values) < 4 {
+		return findMinMaxScalar(values)
+	}
+	minVec := archsimd.LoadUint32x4Slice(values[:4])
+	maxVec := minVec
+	i := 4
+	for ; i+4 <= len(values); i += 4 {
+		chunk := archsimd.LoadUint32x4Slice(values[i:])
+		minVec = minVec.Min(chunk)
+		maxVec = maxVec.Max(chunk)
+	}
+	var minLanes, maxLanes [4]uint32
+	minVec.Store(&minLanes)
+	maxVec.Store(&maxLanes)
+	minResult, maxResult := minLanes[0], maxLanes[0]
+	for _, v := range minLanes[1:] {
+		if v < minResult {
+			minResult = v
+		}
+	}
+	for _, v := range maxLanes[1:] {
+		if v > maxResult {
+			maxResult = v
+		}
+	}
+	for ; i < len(values); i++ {
+		if values[i] < minResult {
+			minResult = values[i]
+		}
+		if values[i] > maxResult {
+			maxResult = values[i]
+		}
+	}
+	return minResult, maxResult
+}
+
+// forSubtractSSE2 subtracts baseValue from each element using SSE2.
+func forSubtractSSE2(dst, src []uint32, baseValue uint32) {
+	baseVec := archsimd.BroadcastUint32x4(baseValue)
+	i := 0
+	for ; i+4 <= len(src); i += 4 {
+		v := archsimd.LoadUint32x4Slice(src[i:])
+		v = v.Sub(baseVec)
+		v.StoreSlice(dst[i:])
+	}
+	for ; i < len(src); i++ {
+		dst[i] = src[i] - baseValue
+	}
+}
+
+// forAddSSE2 adds baseValue to each of the first count elements using SSE2.
+func forAddSSE2(output []uint32, count int, baseValue uint32) {
+	baseVec := archsimd.BroadcastUint32x4(baseValue)
+	i := 0
+	for ; i+4 <= count; i += 4 {
+		v := archsimd.LoadUint32x4Slice(output[i:])
+		v = v.Add(baseVec)
+		v.StoreSlice(output[i:])
+	}
+	for ; i < count; i++ {
+		output[i] += baseValue
+	}
 }
 
 // getUint32SSE2 delegates to scalar for random access.

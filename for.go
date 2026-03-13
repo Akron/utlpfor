@@ -12,13 +12,9 @@ func selectFORWidth(minVal uint32) int {
 	return forWidthByByteCount[(bits.Len32(minVal)+7)>>3]
 }
 
-// readFORBase reads the variable-width FOR base value from the block buffer.
-// The base is located after the header (and after svbLen if exceptions are present).
-func readFORBase(buf []byte, forWidth int, hasExceptions bool) uint32 {
-	offset := headerBytes
-	if hasExceptions {
-		offset += svbLenBytes
-	}
+// readFORBase reads the variable-width FOR base value from the block buffer
+// at the provided offset.
+func readFORBase(buf []byte, offset, forWidth int) uint32 {
 	switch forWidth {
 	case forWidthU8:
 		return uint32(buf[offset])
@@ -48,21 +44,23 @@ func writeFORBase(buf []byte, forBase uint32, forWidth int, hasExceptions bool) 
 	}
 }
 
+// svbAvgBytesPerExcNumer and svbAvgBytesPerExcDenom express the average
+// StreamVByte bytes per exception as a rational number (23/10 = 2.3).
+// This accounts for ~0.25 bytes control overhead plus ~2 bytes average
+// data per value. Tune these constants based on profiling real workloads.
+const (
+	svbAvgBytesPerExcNumer = 23
+	svbAvgBytesPerExcDenom = 10
+)
+
 // totalBlockCost estimates the byte size of an encoded block given packing parameters.
-// Used by selectBitWidthWithFOR to compare FOR vs non-FOR costs.
+// Branchless: uses min() for the position-vs-bitmap decision and a hasExc flag
+// to avoid branching on exception presence.
 func totalBlockCost(bitWidth, excCount, forBaseBytes int) int {
-	cost := headerBytes + utlPayloadBytesLUT[bitWidth] + forBaseBytes
-	if excCount > 0 {
-		cost += svbLenBytes
-		if excCount > excBitmapThreshold {
-			cost += 16
-		} else {
-			cost += excCount
-		}
-		// Approximate SVB data: 2 bytes per exception value is a rough estimate.
-		cost += excCount * 2
-	}
-	return cost
+	hasExc := min(excCount, 1)
+	svbDataEstimate := (excCount*svbAvgBytesPerExcNumer + svbAvgBytesPerExcDenom/2) / svbAvgBytesPerExcDenom
+	return headerBytes + utlPayloadBytesLUT[bitWidth] + forBaseBytes +
+		hasExc*svbLenBytes + min(excCount, excBitmapThreshold) + svbDataEstimate
 }
 
 // findMinMaxScalar computes the minimum and maximum of a uint32 slice.
@@ -79,101 +77,51 @@ func findMinMaxScalar(values []uint32) (min, max uint32) {
 	return
 }
 
-// findMinScalar returns the minimum value in a uint32 slice.
-func findMinScalar(values []uint32) uint32 {
-	minVal := values[0]
-	for _, v := range values[1:] {
-		if v < minVal {
-			minVal = v
-		}
-	}
-	return minVal
-}
-
-// findMaxScalar returns the maximum value in a uint32 slice.
-func findMaxScalar(values []uint32) uint32 {
-	maxVal := values[0]
-	for _, v := range values[1:] {
-		if v > maxVal {
-			maxVal = v
-		}
-	}
-	return maxVal
-}
-
-// selectBitWidthWithFOR decides whether FOR compression is beneficial and returns
-// the optimal packing parameters.
-// It computes min/max first, then builds standard and FOR-reduced histograms in
-// a single follow-up pass and compares both cost models.
-func selectBitWidthWithFOR(values []uint32) (width, excCount int, useFOR bool, baseValue uint32, forWidth int) {
-	minVal, maxVal := findMinMaxScalar(values)
-	maxWidth := bits.Len32(maxVal)
-	maxStepIdx := min((maxWidth+3)/4, 8)
-	var freqs [33]int
-
+// decideFORFull determines whether FOR compression is beneficial given
+// pre-computed min/max values. Uses a two-level rejection strategy:
+//
+//  1. min==0 -> immediate reject (no FOR base to subtract)
+//  2. rawMaxStep comparison -> reject if FOR can't reduce the raw max step
+//  3. stdWidth comparison -> reject if FOR can't beat the histogram-optimal step
+//
+// When both checks pass, FOR is guaranteed to save >=60 bytes (one step = 64
+// bytes payload savings minus <=4 bytes FOR base overhead). The FOR histogram
+// (second data pass) is eliminated entirely -- only the standard histogram is
+// built, and only when the rawMaxStep pre-check passes.
+//
+// NOTE: This scalar implementation uses a separate findMinMax pass followed by
+// a scatter-add histogram. The SIMD path (selectBitWidthWithFORSIMD) uses
+// SIMD threshold comparisons instead, avoiding the scatter-add pattern.
+func decideFORFull(values []uint32, minVal, maxVal uint32) (useFOR bool, baseValue uint32, forWidth int) {
 	if minVal == 0 {
-		for _, v := range values {
-			freqs[bits.Len32(v)]++
-		}
-		stdWidth, stdExcCount, _ := chooseBestStepWidth(freqs, maxStepIdx)
-		return stdWidth, stdExcCount, false, 0, forWidthNone
+		return false, 0, forWidthNone
 	}
-
-	forMaxBW := bits.Len32(maxVal - minVal)
-	forMaxStepIdx := min((forMaxBW+3)/4, 8)
-
-	var forFreqs [33]int
+	forMaxStep := roundUpToStep(bits.Len32(maxVal - minVal))
+	rawMaxStep := roundUpToStep(bits.Len32(maxVal))
+	if forMaxStep >= rawMaxStep {
+		return false, 0, forWidthNone
+	}
+	// rawMaxStep check passed but may be inflated by outliers.
+	// Build histogram to get the actual optimal step (stdWidth).
+	var hist [9]int
+	var orAll uint32
 	for _, v := range values {
-		freqs[bits.Len32(v)]++
-		forFreqs[bits.Len32(v-minVal)]++
+		orAll |= v
+		hist[(bits.Len32(v)+3)>>2]++
 	}
-
-	stdWidth, stdExcCount, stdCost := chooseBestStepWidth(freqs, maxStepIdx)
-
-	forW := selectFORWidth(minVal)
-	forBaseBytes := forBaseBytesLUT[forW]
-
-	// Quick reject: if FOR-subtract doesn't cross a step boundary,
-	// it cannot reduce payload size, so the FOR overhead is pure loss.
-	if roundUpToStep(forMaxBW) >= stdWidth {
-		return stdWidth, stdExcCount, false, 0, forWidthNone
+	maxStepIdx := int((bits.Len32(orAll) + 3) >> 2)
+	stdWidth, _, _ := chooseBestFromHist(hist, maxStepIdx)
+	if forMaxStep >= stdWidth {
+		return false, 0, forWidthNone
 	}
-
-	forBestWidth, forBestExcCount, forBestCost := chooseBestStepWidth(forFreqs, forMaxStepIdx)
-	forBestCost += forBaseBytes
-
-	if forBestCost < stdCost {
-		return forBestWidth, forBestExcCount, true, minVal, forW
-	}
-	return stdWidth, stdExcCount, false, 0, forWidthNone
+	return true, minVal, selectFORWidth(minVal)
 }
 
-// chooseBestStepWidth computes the best step bitwidth for one histogram.
-func chooseBestStepWidth(freqs [33]int, maxStepIdx int) (bestWidth, bestExcCount, bestCost int) {
-	maxStep := stepBitWidths[maxStepIdx]
-	bestWidth = maxStep
-	bestCost = headerBytes + utlPayloadBytesLUT[maxStep]
-
-	var suffix [34]int
-	for bw := 32; bw >= 0; bw-- {
-		suffix[bw] = suffix[bw+1] + freqs[bw]
-	}
-
-	for si := maxStepIdx - 1; si >= 0; si-- {
-		w := stepBitWidths[si]
-		excCount := suffix[w+1]
-		if excCount == 0 {
-			continue
-		}
-		cost := headerBytes + utlPayloadBytesLUT[w] + estimateExceptionCost(excCount, maxStep-w)
-		if cost < bestCost {
-			bestCost = cost
-			bestWidth = w
-			bestExcCount = excCount
-		}
-	}
-
-	return bestWidth, bestExcCount, bestCost
+// selectBitWidthWithFOR decides whether FOR compression is beneficial.
+// Uses findMinMaxScalar for min/max, then the two-level rejection heuristic.
+func selectBitWidthWithFOR(values []uint32) (useFOR bool, baseValue uint32, forWidth int) {
+	minVal, maxVal := findMinMaxScalar(values)
+	return decideFORFull(values, minVal, maxVal)
 }
 
 // forSubtractScalar subtracts baseValue from each element: dst[i] = src[i] - baseValue.

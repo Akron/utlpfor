@@ -67,13 +67,13 @@ func getUint32Scalar(pos int, buf []byte) (uint32, error) {
 		return 0, ErrInvalidBuffer
 	}
 
-	forBaseBytes := forBaseBytesLUT[forWidth]
+	pOff := payloadOffset(0, hasExceptions)
 	var forBase uint32
 	if hasFOR {
-		forBase = readFORBase(buf, forWidth, hasExceptions)
+		forBase = readFORBase(buf, pOff, forWidth)
+		pOff += forBaseBytesLUT[forWidth]
 	}
 
-	pOff := payloadOffset(forBaseBytes, hasExceptions)
 	payloadBytes := utlPayloadBytesLUT[bitWidth]
 	if len(buf) < pOff+payloadBytes {
 		return 0, ErrInvalidBuffer
