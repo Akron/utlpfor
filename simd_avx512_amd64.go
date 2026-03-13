@@ -381,7 +381,7 @@ func buildExcCountsAVX512(values []uint32) (exc [9]int) {
 // findMinMaxAVX512 computes min/max using AVX-512 16-wide operations.
 func findMinMaxAVX512(values []uint32) (uint32, uint32) {
 	if len(values) < 16 {
-		return findMinMaxAVX512(values)
+		return findMinMaxScalar(values)
 	}
 	minVec := archsimd.LoadUint32x16Slice(values[:16])
 	maxVec := minVec
