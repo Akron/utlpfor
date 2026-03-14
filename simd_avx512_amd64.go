@@ -317,11 +317,89 @@ func selectBitWidthAVX512(values []uint32) (width int, excCount int) {
 	return
 }
 
-// selectBitWidthWithFORSSE2 uses SIMD-accelerated findMinMax and SIMD
-// threshold comparisons for the standard histogram. The two-level rejection
-// strategy (min==0, forMaxStep >= rawMaxStep/stdWidth) is preserved.
+// selectBitWidthWithFORAVX512 fuses min/max computation with all 8 threshold
+// comparisons in a single pass. AVX-512 has 32 ZMM registers, so 8 thresholds
+// + 2 min/max + 1 value = 11 persistent ZMM registers fit easily.
 func selectBitWidthWithFORAVX512(values []uint32) (useFOR bool, baseValue uint32, forWidth int) {
-	minVal, maxVal := findMinMaxAVX512(values)
+	n := len(values)
+
+	var exc [9]int
+	var minVal, maxVal uint32
+
+	if n >= 16 {
+		p := unsafe.Pointer(&values[0])
+		t0 := archsimd.BroadcastUint32x16(0)
+		t1 := archsimd.BroadcastUint32x16(0xF)
+		t2 := archsimd.BroadcastUint32x16(0xFF)
+		t3 := archsimd.BroadcastUint32x16(0xFFF)
+		t4 := archsimd.BroadcastUint32x16(0xFFFF)
+		t5 := archsimd.BroadcastUint32x16(0xFFFFF)
+		t6 := archsimd.BroadcastUint32x16(0xFFFFFF)
+		t7 := archsimd.BroadcastUint32x16(0xFFFFFFF)
+		minVec := archsimd.LoadUint32x16((*[16]uint32)(p))
+		maxVec := minVec
+
+		end := uintptr(n) * 4
+		for off := uintptr(0); off+64 <= end; off += 64 {
+			v := archsimd.LoadUint32x16((*[16]uint32)(unsafe.Pointer(uintptr(p) + off)))
+			minVec = minVec.Min(v)
+			maxVec = maxVec.Max(v)
+			exc[0] += bits.OnesCount16(v.Greater(t0).ToBits())
+			exc[1] += bits.OnesCount16(v.Greater(t1).ToBits())
+			exc[2] += bits.OnesCount16(v.Greater(t2).ToBits())
+			exc[3] += bits.OnesCount16(v.Greater(t3).ToBits())
+			exc[4] += bits.OnesCount16(v.Greater(t4).ToBits())
+			exc[5] += bits.OnesCount16(v.Greater(t5).ToBits())
+			exc[6] += bits.OnesCount16(v.Greater(t6).ToBits())
+			exc[7] += bits.OnesCount16(v.Greater(t7).ToBits())
+		}
+
+		var minLanes, maxLanes [16]uint32
+		minVec.Store(&minLanes)
+		maxVec.Store(&maxLanes)
+		minVal, maxVal = minLanes[0], maxLanes[0]
+		for _, v := range minLanes[1:] {
+			if v < minVal {
+				minVal = v
+			}
+		}
+		for _, v := range maxLanes[1:] {
+			if v > maxVal {
+				maxVal = v
+			}
+		}
+		tail := (n / 16) * 16
+		for i := tail; i < n; i++ {
+			v := values[i]
+			if v < minVal {
+				minVal = v
+			}
+			if v > maxVal {
+				maxVal = v
+			}
+			exc[0] += gtCountU32(v, 0)
+			exc[1] += gtCountU32(v, 0xF)
+			exc[2] += gtCountU32(v, 0xFF)
+			exc[3] += gtCountU32(v, 0xFFF)
+			exc[4] += gtCountU32(v, 0xFFFF)
+			exc[5] += gtCountU32(v, 0xFFFFF)
+			exc[6] += gtCountU32(v, 0xFFFFFF)
+			exc[7] += gtCountU32(v, 0xFFFFFFF)
+		}
+	} else {
+		minVal, maxVal = findMinMaxScalar(values)
+		for _, v := range values {
+			exc[0] += gtCountU32(v, 0)
+			exc[1] += gtCountU32(v, 0xF)
+			exc[2] += gtCountU32(v, 0xFF)
+			exc[3] += gtCountU32(v, 0xFFF)
+			exc[4] += gtCountU32(v, 0xFFFF)
+			exc[5] += gtCountU32(v, 0xFFFFF)
+			exc[6] += gtCountU32(v, 0xFFFFFF)
+			exc[7] += gtCountU32(v, 0xFFFFFFF)
+		}
+	}
+
 	if minVal == 0 {
 		return false, 0, forWidthNone
 	}
@@ -331,7 +409,7 @@ func selectBitWidthWithFORAVX512(values []uint32) (useFOR bool, baseValue uint32
 		return false, 0, forWidthNone
 	}
 
-	stdWidth, _, _ := chooseBestFromExcCounts(buildExcCountsAVX512(values))
+	stdWidth, _, _ := chooseBestFromExcCounts(exc)
 	if forMaxStep >= stdWidth {
 		return false, 0, forWidthNone
 	}
@@ -378,19 +456,34 @@ func buildExcCountsAVX512(values []uint32) (exc [9]int) {
 	return
 }
 
-// findMinMaxAVX512 computes min/max using AVX-512 16-wide operations.
+// findMinMaxAVX512 computes min/max using AVX-512 16-wide operations with 2
+// independent accumulator pairs for instruction-level parallelism.
+// Uses pointer-based loads to avoid per-iteration slice bounds checking.
+// Register budget: 4 accumulators + 2 chunk temps = 6 ZMM (of 32 available).
 func findMinMaxAVX512(values []uint32) (uint32, uint32) {
-	if len(values) < 16 {
+	n := len(values)
+	if n < 32 {
 		return findMinMaxScalar(values)
 	}
-	minVec := archsimd.LoadUint32x16Slice(values[:16])
-	maxVec := minVec
-	i := 16
-	for ; i+16 <= len(values); i += 16 {
-		chunk := archsimd.LoadUint32x16Slice(values[i:])
-		minVec = minVec.Min(chunk)
-		maxVec = maxVec.Max(chunk)
+
+	p := unsafe.Pointer(&values[0])
+	min0 := archsimd.LoadUint32x16((*[16]uint32)(p))
+	min1 := archsimd.LoadUint32x16((*[16]uint32)(unsafe.Pointer(uintptr(p) + 64)))
+	max0, max1 := min0, min1
+
+	end := uintptr(n) * 4
+	for off := uintptr(128); off+128 <= end; off += 128 {
+		c0 := archsimd.LoadUint32x16((*[16]uint32)(unsafe.Pointer(uintptr(p) + off)))
+		c1 := archsimd.LoadUint32x16((*[16]uint32)(unsafe.Pointer(uintptr(p) + off + 64)))
+		min0 = min0.Min(c0)
+		max0 = max0.Max(c0)
+		min1 = min1.Min(c1)
+		max1 = max1.Max(c1)
 	}
+
+	minVec := min0.Min(min1)
+	maxVec := max0.Max(max1)
+
 	var minLanes, maxLanes [16]uint32
 	minVec.Store(&minLanes)
 	maxVec.Store(&maxLanes)
@@ -405,7 +498,9 @@ func findMinMaxAVX512(values []uint32) (uint32, uint32) {
 			maxResult = v
 		}
 	}
-	for ; i < len(values); i++ {
+
+	tail := (n / 32) * 32
+	for i := tail; i < n; i++ {
 		if values[i] < minResult {
 			minResult = values[i]
 		}
