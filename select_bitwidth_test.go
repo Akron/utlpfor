@@ -170,6 +170,42 @@ func BenchmarkSelectBitWidthWithFOR_SIMD(b *testing.B) {
 	_ = useFOR
 }
 
+func BenchmarkFindMinMaxSSE2(b *testing.B) {
+	values := make([]uint32, 128)
+	for i := range values {
+		values[i] = 1000000 + uint32(i%100)
+	}
+	for b.Loop() {
+		findMinMaxSSE2(values)
+	}
+}
+
+func BenchmarkBuildExcCountsSSE2(b *testing.B) {
+	values := make([]uint32, 128)
+	for i := range values {
+		values[i] = uint32(i * 7)
+	}
+	for b.Loop() {
+		buildExcCountsSSE2(values)
+	}
+}
+
+func BenchmarkSelectBitWidthWithFOR_SSE2(b *testing.B) {
+	values := make([]uint32, 128)
+	for i := range values {
+		values[i] = 1000000 + uint32(i%100)
+	}
+	var useFOR bool
+	var bv uint32
+	var fw int
+	for b.Loop() {
+		useFOR, bv, fw = selectBitWidthWithFORSSE2(values)
+	}
+	_ = useFOR
+	_ = bv
+	_ = fw
+}
+
 // --- Unit Tests ---
 
 func TestSelectBitWidth_AllSameWidth(t *testing.T) {

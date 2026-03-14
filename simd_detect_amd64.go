@@ -6,14 +6,10 @@ import "simd/archsimd"
 
 // detectSIMDLevel probes CPU features and returns the best SIMD level.
 func detectSIMDLevel() int {
-	if archsimd.X86.AVX512VBMI() {
-		return simdLevelAVX512VBMI
-	}
-	if archsimd.X86.AVX512() {
-		return simdLevelAVX512
-	}
-	if archsimd.X86.AVX2() {
-		return simdLevelAVX2
-	}
-	return simdLevelSSE2
+	return selectSimdLevel(
+		archsimd.X86.AVX512VBMI(),
+		archsimd.X86.AVX512(),
+		archsimd.X86.AVX2(),
+		true, // amd64 baseline includes SSE2
+	)
 }

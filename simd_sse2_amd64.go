@@ -506,18 +506,24 @@ func buildExcCountsSSE2(values []uint32) (exc [9]int) {
 }
 
 // findMinMaxSSE2 computes min/max using SSE2 4-wide operations.
+// Uses pointer-based loads to avoid per-iteration slice bounds checking.
 func findMinMaxSSE2(values []uint32) (uint32, uint32) {
-	if len(values) < 4 {
+	n := len(values)
+	if n < 4 {
 		return findMinMaxScalar(values)
 	}
-	minVec := archsimd.LoadUint32x4Slice(values[:4])
+
+	p := unsafe.Pointer(&values[0])
+	minVec := archsimd.LoadUint32x4((*[4]uint32)(p))
 	maxVec := minVec
-	i := 4
-	for ; i+4 <= len(values); i += 4 {
-		chunk := archsimd.LoadUint32x4Slice(values[i:])
+
+	end := uintptr(n) * 4
+	for off := uintptr(16); off+16 <= end; off += 16 {
+		chunk := archsimd.LoadUint32x4((*[4]uint32)(unsafe.Pointer(uintptr(p) + off)))
 		minVec = minVec.Min(chunk)
 		maxVec = maxVec.Max(chunk)
 	}
+
 	var minLanes, maxLanes [4]uint32
 	minVec.Store(&minLanes)
 	maxVec.Store(&maxLanes)
@@ -532,7 +538,9 @@ func findMinMaxSSE2(values []uint32) (uint32, uint32) {
 			maxResult = v
 		}
 	}
-	for ; i < len(values); i++ {
+
+	tail := (n / 4) * 4
+	for i := tail; i < n; i++ {
 		if values[i] < minResult {
 			minResult = values[i]
 		}
