@@ -165,6 +165,7 @@ func zigzagEncodeAVX2(buf []uint32, n int) {
 		result := shifted.Xor(sign)
 		result.StoreSlice(buf[i : i+8])
 	}
+	// TODO-PERF: Use SSE for the tail initially
 	for i := (n / 8) * 8; i < n; i++ {
 		buf[i] = zigzagEncode32(int32(buf[i]))
 	}
@@ -183,6 +184,7 @@ func zigzagDecodeAVX2(dst, src []uint32) {
 		result := half.Xor(negSign)
 		result.StoreSlice(dst[i : i+8])
 	}
+	// TODO-PERF: Use SSE for the tail initially
 	for i := (len(src) / 8) * 8; i < len(src); i++ {
 		dst[i] = uint32(zigzagDecode32(src[i]))
 	}
@@ -490,48 +492,39 @@ func selectBitWidthWithFORAVX2(values []uint32) (useFOR bool, baseValue uint32, 
 }
 
 // buildExcCountsAVX2 computes cumulative exception counts using AVX2
-// threshold comparisons. Split into two passes to keep register pressure at
-// 5 YMM registers (4 thresholds + 1 value vector) per pass. Data fits in L1
-// cache (512 bytes), so the second pass is nearly free.
+// threshold comparisons in a single pass over the data. All 8 thresholds
+// are compared per iteration, requiring 9 YMM registers (8 thresholds +
+// 1 value vector) of 16 available -- matching the SSE2 single-pass
+// approach but with 8-wide operations.
 func buildExcCountsAVX2(values []uint32) (exc [9]int) {
-	tA0 := archsimd.BroadcastUint32x8(0)
-	tA1 := archsimd.BroadcastUint32x8(0xF)
-	tA2 := archsimd.BroadcastUint32x8(0xFF)
-	tA3 := archsimd.BroadcastUint32x8(0xFFF)
+	t0 := archsimd.BroadcastUint32x8(0)
+	t1 := archsimd.BroadcastUint32x8(0xF)
+	t2 := archsimd.BroadcastUint32x8(0xFF)
+	t3 := archsimd.BroadcastUint32x8(0xFFF)
+	t4 := archsimd.BroadcastUint32x8(0xFFFF)
+	t5 := archsimd.BroadcastUint32x8(0xFFFFF)
+	t6 := archsimd.BroadcastUint32x8(0xFFFFFF)
+	t7 := archsimd.BroadcastUint32x8(0xFFFFFFF)
 
 	i := 0
 	for ; i+8 <= len(values); i += 8 {
 		v := archsimd.LoadUint32x8Slice(values[i:])
-		exc[0] += bits.OnesCount8(v.Greater(tA0).ToBits())
-		exc[1] += bits.OnesCount8(v.Greater(tA1).ToBits())
-		exc[2] += bits.OnesCount8(v.Greater(tA2).ToBits())
-		exc[3] += bits.OnesCount8(v.Greater(tA3).ToBits())
+		exc[0] += bits.OnesCount8(v.Greater(t0).ToBits())
+		exc[1] += bits.OnesCount8(v.Greater(t1).ToBits())
+		exc[2] += bits.OnesCount8(v.Greater(t2).ToBits())
+		exc[3] += bits.OnesCount8(v.Greater(t3).ToBits())
+		exc[4] += bits.OnesCount8(v.Greater(t4).ToBits())
+		exc[5] += bits.OnesCount8(v.Greater(t5).ToBits())
+		exc[6] += bits.OnesCount8(v.Greater(t6).ToBits())
+		exc[7] += bits.OnesCount8(v.Greater(t7).ToBits())
 	}
+	// TODO-PERF: Use SSE for the tail initially
 	for ; i < len(values); i++ {
 		v := values[i]
-		// Branchless scalar tail: each comparison contributes 0 or 1 to the cumulative exception counters.
 		exc[0] += gtCountU32(v, 0)
 		exc[1] += gtCountU32(v, 0xF)
 		exc[2] += gtCountU32(v, 0xFF)
 		exc[3] += gtCountU32(v, 0xFFF)
-	}
-
-	tB0 := archsimd.BroadcastUint32x8(0xFFFF)
-	tB1 := archsimd.BroadcastUint32x8(0xFFFFF)
-	tB2 := archsimd.BroadcastUint32x8(0xFFFFFF)
-	tB3 := archsimd.BroadcastUint32x8(0xFFFFFFF)
-
-	i = 0
-	for ; i+8 <= len(values); i += 8 {
-		v := archsimd.LoadUint32x8Slice(values[i:])
-		exc[4] += bits.OnesCount8(v.Greater(tB0).ToBits())
-		exc[5] += bits.OnesCount8(v.Greater(tB1).ToBits())
-		exc[6] += bits.OnesCount8(v.Greater(tB2).ToBits())
-		exc[7] += bits.OnesCount8(v.Greater(tB3).ToBits())
-	}
-	for ; i < len(values); i++ {
-		v := values[i]
-		// Branchless scalar tail: each comparison contributes 0 or 1 to the cumulative exception counters.
 		exc[4] += gtCountU32(v, 0xFFFF)
 		exc[5] += gtCountU32(v, 0xFFFFF)
 		exc[6] += gtCountU32(v, 0xFFFFFF)
@@ -547,7 +540,7 @@ func buildExcCountsAVX2(values []uint32) (exc [9]int) {
 func findMinMaxAVX2(values []uint32) (uint32, uint32) {
 	n := len(values)
 	if n < 16 {
-		return findMinMaxScalar(values)
+		return findMinMaxSSE2(values)
 	}
 
 	p := unsafe.Pointer(&values[0])
@@ -583,6 +576,7 @@ func findMinMaxAVX2(values []uint32) (uint32, uint32) {
 		}
 	}
 
+	// TODO-PERF: Use SSE for the tail initially
 	tail := (n / 16) * 16
 	for i := tail; i < n; i++ {
 		if values[i] < minResult {

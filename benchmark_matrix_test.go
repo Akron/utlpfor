@@ -14,7 +14,7 @@ var benchSink uint32
 
 // matrixConfig defines one benchmark configuration in the matrix.
 type matrixConfig struct {
-	method   string // "pac", "unp", "get", "len"
+	method   string // "pac", "unp", "get", "mix", "len"
 	bitWidth int    // 4, 16, 28
 	excCount int    // 0, 8, 16, 32
 	forWidth int    // 0, 1, 2, 4 (byte count: 0=none, 1=uint8, 2=uint16, 4=uint32)
@@ -217,7 +217,7 @@ func BenchmarkMatrix(b *testing.B) {
 				b.SetBytes(int64(blockSize * 4))
 				b.ResetTimer()
 				for i := 0; i < b.N; i++ {
-					for pos := 0; pos < blockSize; pos++ {
+					for pos := range blockSize {
 						v, _ := GetUint32(pos, packed)
 						sink += v
 					}
@@ -235,6 +235,141 @@ func BenchmarkMatrix(b *testing.B) {
 				for i := 0; i < b.N; i++ {
 					BlockLength(packed)
 				}
+			}
+		})
+	}
+}
+
+// quickCompareConfigs returns ~20 representative benchmark configurations
+// for rapid cross-SIMD-level comparison. Covers pack and unpack across
+// different bitwidths, exception counts, FOR widths, and delta/zigzag.
+// Includes lightweight random-access probes and mixed pipeline cases.
+func quickCompareConfigs() []matrixConfig {
+	return []matrixConfig{
+		// Pure pack: varying bitwidth, no frills
+		{method: "pac", bitWidth: 4, excCount: 0, forWidth: 0, useDelta: false, useZZ: false},
+		{method: "pac", bitWidth: 16, excCount: 0, forWidth: 0, useDelta: false, useZZ: false},
+		{method: "pac", bitWidth: 28, excCount: 0, forWidth: 0, useDelta: false, useZZ: false},
+		// Pack with delta
+		{method: "pac", bitWidth: 4, excCount: 0, forWidth: 0, useDelta: true, useZZ: false},
+		// Pack with delta + zigzag
+		{method: "pac", bitWidth: 4, excCount: 0, forWidth: 0, useDelta: true, useZZ: true},
+		// Pack with exceptions
+		{method: "pac", bitWidth: 4, excCount: 8, forWidth: 0, useDelta: false, useZZ: false},
+		{method: "pac", bitWidth: 16, excCount: 32, forWidth: 0, useDelta: false, useZZ: false},
+		// Pack with FOR
+		{method: "pac", bitWidth: 16, excCount: 0, forWidth: 2, useDelta: false, useZZ: false},
+		// Full pipeline: exceptions + FOR + delta + zigzag
+		{method: "pac", bitWidth: 4, excCount: 8, forWidth: 1, useDelta: true, useZZ: false},
+		{method: "pac", bitWidth: 16, excCount: 16, forWidth: 4, useDelta: true, useZZ: true},
+
+		// Pure unpack: varying bitwidth
+		{method: "unp", bitWidth: 4, excCount: 0, forWidth: 0, useDelta: false, useZZ: false},
+		{method: "unp", bitWidth: 16, excCount: 0, forWidth: 0, useDelta: false, useZZ: false},
+		{method: "unp", bitWidth: 28, excCount: 0, forWidth: 0, useDelta: false, useZZ: false},
+		// Unpack with delta
+		{method: "unp", bitWidth: 4, excCount: 0, forWidth: 0, useDelta: true, useZZ: false},
+		// Unpack with delta + zigzag
+		{method: "unp", bitWidth: 4, excCount: 0, forWidth: 0, useDelta: true, useZZ: true},
+		// Unpack with exceptions
+		{method: "unp", bitWidth: 4, excCount: 8, forWidth: 0, useDelta: false, useZZ: false},
+		{method: "unp", bitWidth: 16, excCount: 32, forWidth: 0, useDelta: false, useZZ: false},
+		// Unpack with FOR
+		{method: "unp", bitWidth: 16, excCount: 0, forWidth: 2, useDelta: false, useZZ: false},
+		// Full pipeline: exceptions + FOR + delta + zigzag
+		{method: "unp", bitWidth: 4, excCount: 8, forWidth: 1, useDelta: true, useZZ: false},
+		{method: "unp", bitWidth: 16, excCount: 16, forWidth: 4, useDelta: true, useZZ: true},
+
+		// Get-only probes (small fixed position set for quick turnaround)
+		{method: "get", bitWidth: 4, excCount: 0, forWidth: 0, useDelta: false, useZZ: false},
+		{method: "get", bitWidth: 16, excCount: 16, forWidth: 0, useDelta: false, useZZ: false},
+		{method: "get", bitWidth: 4, excCount: 0, forWidth: 0, useDelta: true, useZZ: false},
+		{method: "get", bitWidth: 4, excCount: 8, forWidth: 1, useDelta: true, useZZ: true},
+
+		// Mixed pack+unpack+get on same block (pipeline realism)
+		{method: "mix", bitWidth: 16, excCount: 0, forWidth: 0, useDelta: false, useZZ: false},
+		{method: "mix", bitWidth: 4, excCount: 8, forWidth: 1, useDelta: true, useZZ: false},
+	}
+}
+
+// BenchmarkQuickCompare runs ~20 representative benchmarks for rapid
+// cross-SIMD-level comparison. Usage:
+//
+//	for level in scalar sse2 avx2 avx512; do
+//	  echo "=== $level ===";
+//	  GOEXPERIMENT=simd UTL_SIMD_LEVEL=$level taskset -c 0-7 go test \
+//	    -bench=BenchmarkQuickCompare -benchmem -count=10 -run='^$' -timeout=300s ./...;
+//	done
+func BenchmarkQuickCompare(b *testing.B) {
+	for _, cfg := range quickCompareConfigs() {
+		b.Run(cfg.name(), func(b *testing.B) {
+			values, flag := generateMatrixData(cfg)
+			original := slices.Clone(values)
+
+			switch cfg.method {
+			case "pac":
+				dst := make([]byte, 0, 1024)
+				b.ReportAllocs()
+				b.SetBytes(int64(blockSize * 4))
+				b.ResetTimer()
+				for i := 0; i < b.N; i++ {
+					copy(values, original)
+					dst, _ = PackUint32(flag, dst[:0], values)
+				}
+
+			case "unp":
+				work := slices.Clone(original)
+				packed, err := PackUint32(flag, nil, work)
+				if err != nil {
+					b.Fatalf("pack failed: %v", err)
+				}
+				dst := make([]uint32, blockSize)
+				scratch := make([]uint32, blockSize)
+				b.ReportAllocs()
+				b.SetBytes(int64(blockSize * 4))
+				b.ResetTimer()
+				for i := 0; i < b.N; i++ {
+					UnpackUint32(dst, scratch, packed)
+				}
+
+			case "get":
+				work := slices.Clone(original)
+				packed, err := PackUint32(flag, nil, work)
+				if err != nil {
+					b.Fatalf("pack failed: %v", err)
+				}
+				positions := [4]int{0, 17, 64, 127}
+				var sink uint32
+				b.ReportAllocs()
+				b.SetBytes(int64(len(positions) * 4))
+				b.ResetTimer()
+				for i := 0; i < b.N; i++ {
+					for _, pos := range positions {
+						v, _ := GetUint32(pos, packed)
+						sink += v
+					}
+				}
+				benchSink = sink
+
+			case "mix":
+				positions := [4]int{0, 17, 64, 127}
+				packDst := make([]byte, 0, 1024)
+				unpackDst := make([]uint32, blockSize)
+				scratch := make([]uint32, blockSize)
+				var sink uint32
+				b.ReportAllocs()
+				b.SetBytes(int64(blockSize * 4))
+				b.ResetTimer()
+				for i := 0; i < b.N; i++ {
+					copy(values, original)
+					packed, _ := PackUint32(flag, packDst[:0], values)
+					UnpackUint32(unpackDst, scratch, packed)
+					for _, pos := range positions {
+						v, _ := GetUint32(pos, packed)
+						sink += v
+					}
+				}
+				benchSink = sink
 			}
 		})
 	}

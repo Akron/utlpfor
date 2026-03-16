@@ -197,6 +197,7 @@ func deltaEncodePerLaneSSE2(dst, src []uint32) bool {
 		curBase := v * utlLaneCount
 		prevBase := (v - 1) * utlLaneCount
 
+		// TODO-PERF: Maybe unroll
 		for group := 0; group < 4; group++ {
 			off := group * 4
 			cur := archsimd.LoadUint32x4Slice(src[curBase+off : curBase+off+4])
@@ -230,6 +231,7 @@ func deltaDecodePerLaneSSE2(dst, deltas []uint32, useZigZag bool) {
 		curBase := v * utlLaneCount
 		prevBase := (v - 1) * utlLaneCount
 
+		// TODO-PERF: Maybe unroll
 		for group := 0; group < 4; group++ {
 			off := group * 4
 			prev := archsimd.LoadUint32x4Slice(dst[prevBase+off : prevBase+off+4])

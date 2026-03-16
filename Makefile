@@ -1,6 +1,7 @@
 .PHONY: test test-simd test-force-scalar test-force-sse2 test-force-avx2 test-force-avx512 \
        bench bench-simd bench-save-scalar bench-save-simd bench-compare \
        compare-with-fastpfor bench-matrix bench-matrix-table bench-matrix-compare \
+       bench-quick bench-quick-save \
        fuzz fuzz-simd fuzz-regression fuzz-regression-simd \
        generate-native generate
 
@@ -91,6 +92,42 @@ compare-with-fastpfor:
 	@echo "--- Comparison (fastpfor-go vs utlpfor) ---"
 	@benchstat $(CURDIR)/benchmarks/fastpfor-comparable.txt $(CURDIR)/benchmarks/utlpfor-comparable.txt
 
+# --- Quick Comparison (~20 benchmarks x 4 SIMD levels, ~5 min) ---
+
+QUICK_COUNT ?= 10
+
+bench-quick:
+	@command -v go >/dev/null 2>&1 || { echo "Go not found" >&2; exit 1; }
+	@for level in scalar sse2 avx2 avx512; do \
+		printf '\n=== %s ===\n' "$$level"; \
+		out="$$(GOEXPERIMENT=simd UTL_SIMD_LEVEL=$$level $(TASKSET) go test \
+			-bench='BenchmarkQuickCompare' -benchmem -count=$(QUICK_COUNT) \
+			-run='^$$' -timeout=300s ./... 2>&1 || true)"; \
+		filtered="$$(printf '%s\n' "$$out" | grep -E 'BenchmarkQuickCompare|PASS|FAIL|^ok[[:space:]]' || true)"; \
+		if [ -n "$$filtered" ]; then \
+			printf '%s\n' "$$filtered"; \
+		else \
+			printf '[skip] %s benchmarks unsupported on this CPU\n' "$$level"; \
+		fi; \
+	done
+
+bench-quick-save:
+	@command -v go >/dev/null 2>&1 || { echo "Go not found" >&2; exit 1; }
+	@mkdir -p benchmarks
+	@STAMP=$$(date +%Y%m%d-%H%M); \
+	for level in scalar sse2 avx2 avx512; do \
+		printf '=== Running %s benchmarks ===\n' "$$level" >&2; \
+		GOEXPERIMENT=simd UTL_SIMD_LEVEL=$$level $(TASKSET) go test \
+			-bench='BenchmarkQuickCompare' -benchmem -count=$(QUICK_COUNT) \
+			-run='^$$' -timeout=300s ./... \
+			> benchmarks/quick-$$level-$$STAMP.txt 2>&1 || true; \
+		if grep -q 'BenchmarkQuickCompare/' benchmarks/quick-$$level-$$STAMP.txt; then \
+			printf '  saved benchmarks/quick-%s-%s.txt\n' "$$level" "$$STAMP" >&2; \
+		else \
+			printf '  [skip] %s unsupported on this CPU\n' "$$level" >&2; \
+		fi; \
+	done
+
 # --- Benchmark Matrix ---
 
 MATRIX_BENCH ?= BenchmarkMatrix/
@@ -103,11 +140,14 @@ bench-matrix:
 	echo "# Benchmarks at commit $$COMMIT"; \
 	for level in scalar sse2 avx2 avx512; do \
 		echo "=== Running $$level benchmarks ==="; \
-		{ echo "# git commit: $$COMMIT"; \
+		out="$$( { echo "# git commit: $$COMMIT"; \
 		  GOEXPERIMENT=simd UTL_SIMD_LEVEL=$$level $(TASKSET) go test \
 		    -bench='$(MATRIX_BENCH)' -benchmem -count=$(MATRIX_COUNT) \
-		    -run='^$$' -timeout=300s ./... 2>&1; \
-		} > benchmarks/matrix-$$level.txt || true; \
+		    -run='^$$' -timeout=300s ./... 2>&1; } || true)"; \
+		echo "$$out" > benchmarks/matrix-$$level.txt; \
+		if ! echo "$$out" | grep -q 'BenchmarkMatrix/'; then \
+			echo "[skip] $$level matrix benchmarks unsupported on this CPU"; \
+		fi; \
 	done
 	@echo "=== Formatting table ==="
 	@go run ./internal/benchfmt \
