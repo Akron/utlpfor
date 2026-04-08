@@ -377,8 +377,10 @@ func packUint32AVX2(flag byte, dst []byte, values []uint32) ([]byte, error) {
 	return dst[:totalLen], nil
 }
 
-// unpackUint32AVX2 is the full AVX2 unpacking pipeline.
-// Uses AVX2 for bit-unpacking and delta/zigzag; scalar for exceptions and FOR.
+// unpackUint32AVX2 is the AVX2 unpacking pipeline.
+// It uses SSE2 per-bitwidth unpack kernels for the lane unpack step because
+// AVX2 right-shift codegen is still suboptimal on current toolchains.
+// AVX2 remains active for delta/zigzag and FOR operations.
 func unpackUint32AVX2(dst []uint32, scratch []uint32, buf []byte) ([]uint32, int, error) {
 	if len(buf) < headerBytes {
 		return nil, 0, ErrInvalidBuffer
@@ -421,8 +423,13 @@ func unpackUint32AVX2(dst []uint32, scratch []uint32, buf []byte) ([]uint32, int
 	dst = dst[:blockSize]
 
 	payload := buf[pOff : pOff+payloadBytes]
+
+	// This requires https://github.com/golang/go/commit/aa80d7a7e6bf97aa27a74cc5056ef270a2a0c2f4
+	// which will likely be in Go 1.27.
+	// Until then, we may need SSE2 unpacker instead
 	unpackLanesUTLAVX2(dst, payload, blockSize, bitWidth)
 	archsimd.ClearAVXUpperBits()
+	// unpackLanesUTLSSE2(dst, payload, blockSize, bitWidth)
 
 	dst = dst[:count]
 
