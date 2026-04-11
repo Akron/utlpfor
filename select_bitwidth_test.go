@@ -9,8 +9,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// --- Scalar Benchmarks ---
-
 func BenchmarkSelectBitWidth_Scalar(b *testing.B) {
 	values := make([]uint32, 128)
 	for i := range values {
@@ -42,8 +40,6 @@ func BenchmarkFindMinMaxScalar(b *testing.B) {
 		findMinMaxScalar(values)
 	}
 }
-
-// --- Unit Tests ---
 
 func TestSelectBitWidth_AllSameWidth(t *testing.T) {
 	for bw := 0; bw <= 32; bw++ {

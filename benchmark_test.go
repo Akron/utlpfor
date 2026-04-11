@@ -6,8 +6,6 @@ import (
 	"testing"
 )
 
-// --- Core Benchmarks ---
-
 func BenchmarkPackUint32(b *testing.B) {
 	for _, bw := range []int{4, 8, 12, 16, 24, 32} {
 		b.Run(fmt.Sprintf("bw%d", bw), func(b *testing.B) {
@@ -92,8 +90,6 @@ func BenchmarkBlockLength(b *testing.B) {
 	}
 }
 
-// --- Exception Benchmarks ---
-
 func BenchmarkPackWithExceptions(b *testing.B) {
 	for _, excCount := range []int{1, 5, 10, 30, 64, 128} {
 		b.Run(fmt.Sprintf("exc%d", excCount), func(b *testing.B) {
@@ -149,8 +145,6 @@ func BenchmarkUnpackWithExceptions(b *testing.B) {
 		})
 	}
 }
-
-// --- Delta Benchmarks ---
 
 func BenchmarkPackDeltaUint32(b *testing.B) {
 	values := make([]uint32, blockSize)
@@ -423,8 +417,6 @@ func BenchmarkCompressionRatio(b *testing.B) {
 		b.ReportMetric(float64(len(packed)), "bytes")
 	})
 }
-
-// --- GetUint32 with Exceptions ---
 
 func BenchmarkGetUint32WithExceptions(b *testing.B) {
 	values := genDataWithSmallExceptions()
