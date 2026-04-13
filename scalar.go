@@ -168,11 +168,7 @@ func packUint32Scalar(flag byte, dst []byte, scratch []uint32, values []uint32) 
 
 	packLanesUTLScalar(dst[pOff:pOff+payloadBytes], values, bitWidth)
 
-	var highBitsBuf [blockSize]uint32
-	highBits := highBitsBuf[:]
-	if len(scratch) >= blockSize {
-		highBits = scratch[:blockSize]
-	}
+	highBits := scratch[:blockSize]
 
 	excOff := pOff + payloadBytes
 	collectAndWriteExceptions(values, bitWidth, dst[excOff:], excCount, highBits)
@@ -243,9 +239,13 @@ func unpackUint32Scalar(dst []uint32, scratch []uint32, buf []byte) ([]uint32, i
 	}
 
 	if hasDelta {
-		overflowPos := deltaDecodePerLaneWithOverflowScalar(dst, dst, hasZigZag)
-		if overflowPos > 0 {
-			return nil, 0, &ErrOverflow{Position: overflowPos}
+		if hasZigZag {
+			deltaDecodePerLaneScalar(dst, dst, true)
+		} else {
+			overflowPos := deltaDecodePerLaneWithOverflowScalar(dst, dst, false)
+			if overflowPos > 0 {
+				return nil, 0, &ErrOverflow{Position: overflowPos}
+			}
 		}
 	}
 

@@ -158,6 +158,8 @@ func packLanesUTLAVX2Generic(dst []byte, values []uint32, bitWidth int) {
 // zigzagEncodeAVX2 applies zigzag encoding to all values using AVX2.
 // Formula: (n << 1) ^ (n >> 31) where >> is arithmetic right shift.
 func zigzagEncodeAVX2(buf []uint32, n int) {
+
+	// TODO-PERF: Unroll?
 	for i := 0; i <= n-8; i += 8 {
 		v := archsimd.LoadUint32x8Slice(buf[i : i+8])
 		shifted := v.ShiftAllLeft(1)
@@ -176,6 +178,7 @@ func zigzagEncodeAVX2(buf []uint32, n int) {
 func zigzagDecodeAVX2(dst, src []uint32) {
 	one := archsimd.BroadcastUint32x8(1)
 	zero := archsimd.BroadcastUint32x8(0)
+	// TODO-PERF: Unroll?
 	for i := 0; i <= len(src)-8; i += 8 {
 		v := archsimd.LoadUint32x8Slice(src[i : i+8])
 		half := v.ShiftAllRight(1)
@@ -198,6 +201,7 @@ func zigzagDecodeAVX2(dst, src []uint32) {
 func deltaEncodePerLaneAVX2(dst, src []uint32) bool {
 	var anyBorrow uint8
 
+	// TODO-PERF: Unroll!
 	for v := utlValuesPerLane - 1; v > 0; v-- {
 		curBase := v * utlLaneCount
 		prevBase := (v - 1) * utlLaneCount
@@ -234,6 +238,7 @@ func deltaDecodePerLaneAVX2(dst, deltas []uint32, useZigZag bool) {
 		copy(dst, deltas)
 	}
 
+	// TODO-PERF: Unroll!
 	for v := 1; v < utlValuesPerLane; v++ {
 		curBase := v * utlLaneCount
 		prevBase := (v - 1) * utlLaneCount
@@ -261,6 +266,7 @@ func deltaDecodePerLaneWithOverflowAVX2(dst, deltas []uint32, useZigZag bool) in
 	copy(dst, deltas)
 	var overflowPos int
 
+	// TODO-PERF: Unroll!
 	for v := 1; v < utlValuesPerLane; v++ {
 		curBase := v * utlLaneCount
 		prevBase := (v - 1) * utlLaneCount
@@ -329,15 +335,9 @@ func packUint32AVX2(flag byte, dst []byte, scratch []uint32, values []uint32) ([
 
 	packInput := values
 	if len(values) < blockSize {
-		if len(scratch) >= blockSize {
-			copy(scratch[:len(values)], values)
-			clear(scratch[len(values):blockSize])
-			packInput = scratch[:blockSize]
-		} else {
-			var padded [blockSize]uint32
-			copy(padded[:], values)
-			packInput = padded[:]
-		}
+		copy(scratch[:len(values)], values)
+		clear(scratch[len(values):blockSize])
+		packInput = scratch[:blockSize]
 	}
 
 	if !hasExceptions {
@@ -367,11 +367,7 @@ func packUint32AVX2(flag byte, dst []byte, scratch []uint32, values []uint32) ([
 	packLanesUTLAVX2(dst[pOff:pOff+payloadBytes], packInput, bitWidth)
 	archsimd.ClearAVXUpperBits()
 
-	var highBitsBuf [blockSize]uint32
-	highBits := highBitsBuf[:]
-	if len(scratch) >= blockSize {
-		highBits = scratch[:blockSize]
-	}
+	highBits := scratch[:blockSize]
 
 	excOff := pOff + payloadBytes
 	collectAndWriteExceptions(values, bitWidth, dst[excOff:], excCount, highBits)
@@ -432,7 +428,7 @@ func unpackUint32AVX2(dst []uint32, scratch []uint32, buf []byte) ([]uint32, int
 
 	// This requires https://github.com/golang/go/commit/aa80d7a7e6bf97aa27a74cc5056ef270a2a0c2f4
 	// which will likely be in Go 1.27.
-	// Until then, we may need SSE2 unpacker instead
+	// Until then, we may need SSE2 unpacker or gotip
 	unpackLanesUTLAVX2(dst, payload, blockSize, bitWidth)
 	archsimd.ClearAVXUpperBits()
 	// unpackLanesUTLSSE2(dst, payload, blockSize, bitWidth)
@@ -451,15 +447,24 @@ func unpackUint32AVX2(dst []uint32, scratch []uint32, buf []byte) ([]uint32, int
 	}
 
 	if hasDelta {
-		var overflowPos int
-		if count == blockSize {
-			overflowPos = deltaDecodePerLaneWithOverflowAVX2(dst, dst, hasZigZag)
-			archsimd.ClearAVXUpperBits()
+		if hasZigZag {
+			if count == blockSize {
+				deltaDecodePerLaneAVX2(dst, dst, true)
+				archsimd.ClearAVXUpperBits()
+			} else {
+				deltaDecodePerLaneScalar(dst, dst, true)
+			}
 		} else {
-			overflowPos = deltaDecodePerLaneWithOverflowScalar(dst, dst, hasZigZag)
-		}
-		if overflowPos > 0 {
-			return nil, 0, &ErrOverflow{Position: overflowPos}
+			var overflowPos int
+			if count == blockSize {
+				overflowPos = deltaDecodePerLaneWithOverflowAVX2(dst, dst, false)
+				archsimd.ClearAVXUpperBits()
+			} else {
+				overflowPos = deltaDecodePerLaneWithOverflowScalar(dst, dst, false)
+			}
+			if overflowPos > 0 {
+				return nil, 0, &ErrOverflow{Position: overflowPos}
+			}
 		}
 	}
 
@@ -578,6 +583,8 @@ func findMinMaxAVX2(values []uint32) (uint32, uint32) {
 	minVec.Store(&minLanes)
 	maxVec.Store(&maxLanes)
 	minResult, maxResult := minLanes[0], maxLanes[0]
+
+	// TODO-PERF: Unroll?
 	for _, v := range minLanes[1:] {
 		if v < minResult {
 			minResult = v
@@ -606,10 +613,9 @@ func findMinMaxAVX2(values []uint32) (uint32, uint32) {
 func forSubtractAVX2(dst, src []uint32, baseValue uint32) {
 	baseVec := archsimd.BroadcastUint32x8(baseValue)
 	i := 0
+	// TODO-PERF: Unroll?
 	for ; i+8 <= len(src); i += 8 {
-		v := archsimd.LoadUint32x8Slice(src[i:])
-		v = v.Sub(baseVec)
-		v.StoreSlice(dst[i:])
+		archsimd.LoadUint32x8Slice(src[i:]).Sub(baseVec).StoreSlice(dst[i:])
 	}
 	for ; i < len(src); i++ {
 		dst[i] = src[i] - baseValue
@@ -620,10 +626,9 @@ func forSubtractAVX2(dst, src []uint32, baseValue uint32) {
 func forAddAVX2(output []uint32, count int, baseValue uint32) {
 	baseVec := archsimd.BroadcastUint32x8(baseValue)
 	i := 0
+	// TODO-PERF: Unroll?
 	for ; i+8 <= count; i += 8 {
-		v := archsimd.LoadUint32x8Slice(output[i:])
-		v = v.Add(baseVec)
-		v.StoreSlice(output[i:])
+		archsimd.LoadUint32x8Slice(output[i:]).Add(baseVec).StoreSlice(output[i:])
 	}
 	for ; i < count; i++ {
 		output[i] += baseValue

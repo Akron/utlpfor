@@ -312,15 +312,9 @@ func packUint32SSE2(flag byte, dst []byte, scratch []uint32, values []uint32) ([
 
 	packInput := values
 	if len(values) < blockSize {
-		if len(scratch) >= blockSize {
-			copy(scratch[:len(values)], values)
-			clear(scratch[len(values):blockSize])
-			packInput = scratch[:blockSize]
-		} else {
-			var padded [blockSize]uint32
-			copy(padded[:], values)
-			packInput = padded[:]
-		}
+		copy(scratch[:len(values)], values)
+		clear(scratch[len(values):blockSize])
+		packInput = scratch[:blockSize]
 	}
 
 	if !hasExceptions {
@@ -348,11 +342,7 @@ func packUint32SSE2(flag byte, dst []byte, scratch []uint32, values []uint32) ([
 
 	packLanesUTLSSE2(dst[pOff:pOff+payloadBytes], packInput, bitWidth)
 
-	var highBitsBuf [blockSize]uint32
-	highBits := highBitsBuf[:]
-	if len(scratch) >= blockSize {
-		highBits = scratch[:blockSize]
-	}
+	highBits := scratch[:blockSize]
 
 	excOff := pOff + payloadBytes
 	collectAndWriteExceptions(values, bitWidth, dst[excOff:], excCount, highBits)
@@ -424,14 +414,22 @@ func unpackUint32SSE2(dst []uint32, scratch []uint32, buf []byte) ([]uint32, int
 	}
 
 	if hasDelta {
-		var overflowPos int
-		if count == blockSize {
-			overflowPos = deltaDecodePerLaneWithOverflowSSE2(dst, dst, hasZigZag)
+		if hasZigZag {
+			if count == blockSize {
+				deltaDecodePerLaneSSE2(dst, dst, true)
+			} else {
+				deltaDecodePerLaneScalar(dst, dst, true)
+			}
 		} else {
-			overflowPos = deltaDecodePerLaneWithOverflowScalar(dst, dst, hasZigZag)
-		}
-		if overflowPos > 0 {
-			return nil, 0, &ErrOverflow{Position: overflowPos}
+			var overflowPos int
+			if count == blockSize {
+				overflowPos = deltaDecodePerLaneWithOverflowSSE2(dst, dst, false)
+			} else {
+				overflowPos = deltaDecodePerLaneWithOverflowScalar(dst, dst, false)
+			}
+			if overflowPos > 0 {
+				return nil, 0, &ErrOverflow{Position: overflowPos}
+			}
 		}
 	}
 

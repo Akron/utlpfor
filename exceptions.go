@@ -123,13 +123,7 @@ func collectAndWriteExceptions(values []uint32, bitWidth int,
 // scratch is used as a decode buffer (must have capacity >= excCount).
 // Returns the total number of bytes consumed and any error.
 func applyExceptions(dst []uint32, buf []byte, excStart, count, bitWidth, excCount int, scratch []uint32) (int, error) {
-	// TODO-PERF: scratch should always be large enough
-	var decodeBuf []uint32
-	if len(scratch) >= excCount {
-		decodeBuf = scratch[:excCount]
-	} else {
-		decodeBuf = make([]uint32, excCount)
-	}
+	decodeBuf := scratch[:excCount]
 
 	consumed, err := decodeExceptionHighBitsInto(decodeBuf, buf, excStart, excCount)
 	if err != nil {

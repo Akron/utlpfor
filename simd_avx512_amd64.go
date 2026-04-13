@@ -177,15 +177,9 @@ func packUint32AVX512(flag byte, dst []byte, scratch []uint32, values []uint32) 
 
 	packInput := values
 	if len(values) < blockSize {
-		if len(scratch) >= blockSize {
-			copy(scratch[:len(values)], values)
-			clear(scratch[len(values):blockSize])
-			packInput = scratch[:blockSize]
-		} else {
-			var padded [blockSize]uint32
-			copy(padded[:], values)
-			packInput = padded[:]
-		}
+		copy(scratch[:len(values)], values)
+		clear(scratch[len(values):blockSize])
+		packInput = scratch[:blockSize]
 	}
 
 	if !hasExceptions {
@@ -215,11 +209,7 @@ func packUint32AVX512(flag byte, dst []byte, scratch []uint32, values []uint32) 
 	packLanesUTLAVX512(dst[pOff:pOff+payloadBytes], packInput, bitWidth)
 	archsimd.ClearAVXUpperBits()
 
-	var highBitsBuf [blockSize]uint32
-	highBits := highBitsBuf[:]
-	if len(scratch) >= blockSize {
-		highBits = scratch[:blockSize]
-	}
+	highBits := scratch[:blockSize]
 
 	excOff := pOff + payloadBytes
 	collectAndWriteExceptions(values, bitWidth, dst[excOff:], excCount, highBits)
@@ -292,15 +282,24 @@ func unpackUint32AVX512(dst []uint32, scratch []uint32, buf []byte) ([]uint32, i
 	}
 
 	if hasDelta {
-		var overflowPos int
-		if count == blockSize {
-			overflowPos = deltaDecodePerLaneWithOverflowAVX2(dst, dst, hasZigZag)
-			archsimd.ClearAVXUpperBits()
+		if hasZigZag {
+			if count == blockSize {
+				deltaDecodePerLaneAVX2(dst, dst, true)
+				archsimd.ClearAVXUpperBits()
+			} else {
+				deltaDecodePerLaneScalar(dst, dst, true)
+			}
 		} else {
-			overflowPos = deltaDecodePerLaneWithOverflowScalar(dst, dst, hasZigZag)
-		}
-		if overflowPos > 0 {
-			return nil, 0, &ErrOverflow{Position: overflowPos}
+			var overflowPos int
+			if count == blockSize {
+				overflowPos = deltaDecodePerLaneWithOverflowAVX2(dst, dst, false)
+				archsimd.ClearAVXUpperBits()
+			} else {
+				overflowPos = deltaDecodePerLaneWithOverflowScalar(dst, dst, false)
+			}
+			if overflowPos > 0 {
+				return nil, 0, &ErrOverflow{Position: overflowPos}
+			}
 		}
 	}
 

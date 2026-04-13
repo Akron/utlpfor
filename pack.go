@@ -21,6 +21,9 @@ func ensureLen(dst []byte, n int) []byte {
 // The values slice may be modified in-place (FOR subtraction, delta encoding).
 // Callers that need the original values must copy them before calling PackUint32.
 func PackUint32(flag byte, dst []byte, scratch []uint32, values []uint32) ([]byte, error) {
+	if len(scratch) < blockSize {
+		scratch = make([]uint32, blockSize)
+	}
 	switch simdLevel {
 	case simdLevelAVX512VBMI, simdLevelAVX512:
 		return packUint32AVX512(flag, dst, scratch, values)
