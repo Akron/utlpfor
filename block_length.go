@@ -18,18 +18,21 @@ func BlockLength(buf []byte) (int, error) {
 		return 0, ErrInvalidBuffer
 	}
 
-	forBaseBytes := forBaseBytesLUT[forWidth]
-	base := payloadOffset(forBaseBytes, hasExceptions) + utlPayloadBytesLUT[bitWidth]
+	payloadBytes := bitWidth << 4 // step bitwidths: bw * 16
+	forBaseBytes := (1 << forWidth) >> 1
 
 	if !hasExceptions {
-		return base, nil
+		return headerBytes + forBaseBytes + payloadBytes, nil
 	}
 
-	// svbLen is always at offset 4 (after header), before FOR base.
 	if len(buf) < headerBytes+svbLenBytes {
 		return 0, ErrInvalidBuffer
 	}
 	svbLen := int(bo.Uint16(buf[headerBytes:]))
 
-	return base + excIndexSize(excCount) + svbLen, nil
+	excIdxSize := excCount
+	if excCount > excBitmapThreshold {
+		excIdxSize = 16
+	}
+	return headerBytes + svbLenBytes + forBaseBytes + payloadBytes + excIdxSize + svbLen, nil
 }
