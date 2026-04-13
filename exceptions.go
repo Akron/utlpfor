@@ -129,25 +129,58 @@ func applyExceptions(dst []uint32, buf []byte, excStart, count, bitWidth, excCou
 	if err != nil {
 		return 0, err
 	}
+	shift := uint(bitWidth)
+	for i := range excCount {
+		decodeBuf[i] <<= shift
+	}
 
 	if excCount <= excBitmapThreshold {
 		for i := range excCount {
 			pos := int(buf[excStart+i])
 			if pos < count {
-				dst[pos] |= decodeBuf[i] << bitWidth
+				dst[pos] |= decodeBuf[i]
 			}
 		}
 	} else {
 		bitmap := buf[excStart : excStart+16]
-		excIdx := 0
-		for pos := range count {
-			if bitmap[pos/8]&(1<<(pos%8)) != 0 {
-				dst[pos] |= decodeBuf[excIdx] << bitWidth
-				excIdx++
-			}
-		}
+		applyBitmapExceptions(dst, decodeBuf, bitmap, count)
 	}
 	return consumed, nil
+}
+
+// applyBitmapExceptions patches decoded values using a 128-bit exception bitmap.
+// It iterates only set bits, avoiding a full scan over all positions.
+func applyBitmapExceptions(dst []uint32, decodeBuf []uint32, bitmap []byte, count int) {
+	excIdx := 0
+	if count <= 0 {
+		return
+	}
+
+	word0 := bo.Uint64(bitmap)
+	word1 := bo.Uint64(bitmap[8:])
+	if count < blockSize {
+		if count < 64 {
+			word1 = 0
+			word0 &= (uint64(1) << count) - 1
+		} else {
+			word1 &= (uint64(1) << (count - 64)) - 1
+		}
+	}
+
+	for word0 != 0 {
+		bitPos := bits.TrailingZeros64(word0)
+		dst[bitPos] |= decodeBuf[excIdx]
+		excIdx++
+		word0 &= word0 - 1
+	}
+
+	for word1 != 0 {
+		bitPos := bits.TrailingZeros64(word1)
+		pos := 64 + bitPos
+		dst[pos] |= decodeBuf[excIdx]
+		excIdx++
+		word1 &= word1 - 1
+	}
 }
 
 // findExceptionIndex finds the index of a position in the exception list.
