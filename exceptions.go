@@ -72,33 +72,6 @@ func collectExceptionsDirect(values []uint32, bitWidth int,
 	return n
 }
 
-// writeExceptionsDirect writes exception index and pre-encoded SVB data
-// after the payload. Returns the number of bytes written.
-/*
-func writeExceptionsDirect(dst []byte, positions []byte, bitmap []byte,
-	excCount int, svbData []byte) int {
-	offset := 0
-	if excCount <= excBitmapThreshold {
-		copy(dst[offset:], positions[:excCount])
-		offset += excCount
-	} else {
-		copy(dst[offset:], bitmap[:16])
-		offset += 16
-	}
-	copy(dst[offset:], svbData)
-	offset += len(svbData)
-	return offset
-}
-*/
-
-// encodeExceptionHighBits encodes the high bits of exception values
-// using StreamVByte. Returns the encoded byte slice.
-/*
-func encodeExceptionHighBits(highBits []uint32) []byte {
-	return streamvbyte.EncodeUint32(highBits, nil)
-}
-*/
-
 // encodeSVBIntoDst encodes exception high bits directly into a pre-allocated
 // byte buffer. Returns the number of bytes written.
 func encodeSVBIntoDst(dst []byte, highBits []uint32) int {
@@ -112,15 +85,37 @@ func maxSVBEncodedLen(count int) int {
 	return streamvbyte.MaxEncodedLen(count)
 }
 
-// writeExceptionIndex writes the exception index (sorted positions or bitmap)
-// into dst. Returns the number of bytes written.
-func writeExceptionIndex(dst []byte, positions []byte, bitmap []byte, excCount int) int {
-	if excCount <= excBitmapThreshold {
-		copy(dst, positions[:excCount])
-		return excCount
+// collectAndWriteExceptions finds exception values and writes the exception
+// index directly into excIdxDst, avoiding intermediate stack buffers and
+// the separate writeExceptionIndex copy. For the bitmap path (excCount > 16),
+// this also reduces from 2 passes to 1 pass over values.
+// excCount must match the actual number of exceptions (from selectBitWidth).
+func collectAndWriteExceptions(values []uint32, bitWidth int,
+	excIdxDst []byte, excCount int, highBits []uint32) {
+	if bitWidth >= 32 {
+		return
 	}
-	copy(dst, bitmap[:16])
-	return 16
+	mask := uint32((1 << bitWidth) - 1)
+	if excCount <= excBitmapThreshold {
+		n := 0
+		for i, v := range values {
+			if v > mask {
+				excIdxDst[n] = byte(i)
+				highBits[n] = v >> bitWidth
+				n++
+			}
+		}
+	} else {
+		clear(excIdxDst[:16])
+		n := 0
+		for i, v := range values {
+			if v > mask {
+				excIdxDst[i>>3] |= 1 << (i & 7)
+				highBits[n] = v >> bitWidth
+				n++
+			}
+		}
+	}
 }
 
 // applyExceptions patches decoded values with exception high bits.

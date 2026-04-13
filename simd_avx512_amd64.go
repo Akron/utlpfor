@@ -215,17 +215,14 @@ func packUint32AVX512(flag byte, dst []byte, scratch []uint32, values []uint32) 
 	packLanesUTLAVX512(dst[pOff:pOff+payloadBytes], packInput, bitWidth)
 	archsimd.ClearAVXUpperBits()
 
-	var positions [blockSize]byte
-	var bitmap [16]byte
 	var highBitsBuf [blockSize]uint32
 	highBits := highBitsBuf[:]
 	if len(scratch) >= blockSize {
 		highBits = scratch[:blockSize]
 	}
-	collectExceptionsDirect(values, bitWidth, positions[:], bitmap[:], highBits)
 
 	excOff := pOff + payloadBytes
-	writeExceptionIndex(dst[excOff:], positions[:], bitmap[:], excCount)
+	collectAndWriteExceptions(values, bitWidth, dst[excOff:], excCount, highBits)
 
 	svbOffset := excOff + excIdxSize
 	svbLen := encodeSVBIntoDst(dst[svbOffset:maxTotalLen], highBits[:excCount])

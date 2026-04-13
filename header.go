@@ -82,6 +82,7 @@ var forBaseBytesLUT = [4]int{0, 1, 2, 4}
 
 // utlPayloadBytesLUT maps bit width (0-32) to UTL payload size in bytes.
 // Formula: ceil(8 * bitWidth / 32) * 64 = ceil(bitWidth/4) * 64.
+// For step bitwidths (multiples of 4), this simplifies to bitWidth * 16.
 var utlPayloadBytesLUT = [33]int{
 	0,
 	64, 64, 64, 64,
