@@ -130,18 +130,25 @@ func applyExceptions(dst []uint32, buf []byte, excStart, count, bitWidth, excCou
 		return 0, err
 	}
 	shift := uint(bitWidth)
-	for i := range excCount {
-		decodeBuf[i] <<= shift
-	}
 
 	if excCount <= excBitmapThreshold {
-		for i := range excCount {
-			pos := int(buf[excStart+i])
-			if pos < count {
-				dst[pos] |= decodeBuf[i]
+		excPos := buf[excStart : excStart+excCount]
+		if count == blockSize {
+			for i := range excCount {
+				dst[excPos[i]] |= decodeBuf[i] << shift
+			}
+		} else {
+			for i := range excCount {
+				pos := int(excPos[i])
+				if pos < count {
+					dst[pos] |= decodeBuf[i] << shift
+				}
 			}
 		}
 	} else {
+		for i := range excCount {
+			decodeBuf[i] <<= shift
+		}
 		bitmap := buf[excStart : excStart+16]
 		applyBitmapExceptions(dst, decodeBuf, bitmap, count)
 	}
