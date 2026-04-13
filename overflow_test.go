@@ -36,7 +36,7 @@ func TestErrOverflow_CorruptDeltaBlock(t *testing.T) {
 		values[i] = uint32(i * 100)
 	}
 	expected := append([]uint32(nil), values...)
-	packed, err := PackUint32(Delta, nil, values)
+	packed, err := PackUint32(Delta, nil, nil, values)
 	require.NoError(t, err)
 	unpacked, _, err := UnpackUint32(nil, make([]uint32, blockSize), packed)
 	require.NoError(t, err)
@@ -49,7 +49,7 @@ func TestErrOverflow_DescendingDelta_NoOverflow(t *testing.T) {
 		values[i] = uint32(10000 - i*50)
 	}
 	expected := append([]uint32(nil), values...)
-	packed, err := PackUint32(Delta, nil, values)
+	packed, err := PackUint32(Delta, nil, nil, values)
 	require.NoError(t, err)
 	unpacked, _, err := UnpackUint32(nil, make([]uint32, blockSize), packed)
 	require.NoError(t, err)

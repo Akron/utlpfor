@@ -295,7 +295,7 @@ func deltaDecodePerLaneWithOverflowAVX2(dst, deltas []uint32, useZigZag bool) in
 
 // packUint32AVX2 is the full AVX2 packing pipeline.
 // Uses AVX2 for bit-packing and delta/zigzag encoding; scalar for exceptions and FOR.
-func packUint32AVX2(flag byte, dst []byte, values []uint32) ([]byte, error) {
+func packUint32AVX2(flag byte, dst []byte, scratch []uint32, values []uint32) ([]byte, error) {
 	if len(values) == 0 || len(values) > blockSize {
 		return nil, ErrInvalidBuffer
 	}
@@ -327,11 +327,17 @@ func packUint32AVX2(flag byte, dst []byte, values []uint32) ([]byte, error) {
 	hasExceptions := excCount > 0
 	forBaseBytes := forBaseBytesLUT[forW]
 
-	var padded [blockSize]uint32
 	packInput := values
 	if len(values) < blockSize {
-		copy(padded[:], values)
-		packInput = padded[:]
+		if len(scratch) >= blockSize {
+			copy(scratch[:len(values)], values)
+			clear(scratch[len(values):blockSize])
+			packInput = scratch[:blockSize]
+		} else {
+			var padded [blockSize]uint32
+			copy(padded[:], values)
+			packInput = padded[:]
+		}
 	}
 
 	if !hasExceptions {
@@ -347,34 +353,37 @@ func packUint32AVX2(flag byte, dst []byte, values []uint32) ([]byte, error) {
 		return dst[:totalLen], nil
 	}
 
-	var positions [blockSize]byte
-	var bitmap [16]byte
-	var highBits [blockSize]uint32
-	collectExceptionsDirect(values, bitWidth, positions[:], bitmap[:], highBits[:])
-
-	svbData := encodeExceptionHighBits(highBits[:excCount])
-	svbLen := len(svbData)
-
-	excIdxSize := excCount
-	if excCount > excBitmapThreshold {
-		excIdxSize = 16
-	}
-
+	excIdxSize := excIndexSize(excCount)
+	maxSvbLen := maxSVBEncodedLen(excCount)
 	pOff := payloadOffset(forBaseBytes, true)
-	totalLen := pOff + payloadBytes + excIdxSize + svbLen
+	maxTotalLen := pOff + payloadBytes + excIdxSize + maxSvbLen
 
-	dst = ensureLen(dst, totalLen)
+	dst = ensureLen(dst, maxTotalLen)
 	bo.PutUint32(dst, encodeHeader(len(values), bitWidth, excCount, headerFlags))
-	bo.PutUint16(dst[headerBytes:], uint16(svbLen))
 	if useFOR {
 		writeFORBase(dst, baseValue, forW, true)
 	}
 
 	packLanesUTLAVX2(dst[pOff:pOff+payloadBytes], packInput, bitWidth)
 	archsimd.ClearAVXUpperBits()
-	writeExceptionsDirect(dst[pOff+payloadBytes:], positions[:], bitmap[:], excCount, svbData)
 
-	return dst[:totalLen], nil
+	var positions [blockSize]byte
+	var bitmap [16]byte
+	var highBitsBuf [blockSize]uint32
+	highBits := highBitsBuf[:]
+	if len(scratch) >= blockSize {
+		highBits = scratch[:blockSize]
+	}
+	collectExceptionsDirect(values, bitWidth, positions[:], bitmap[:], highBits)
+
+	excOff := pOff + payloadBytes
+	writeExceptionIndex(dst[excOff:], positions[:], bitmap[:], excCount)
+
+	svbOffset := excOff + excIdxSize
+	svbLen := encodeSVBIntoDst(dst[svbOffset:maxTotalLen], highBits[:excCount])
+
+	bo.PutUint16(dst[headerBytes:], uint16(svbLen))
+	return dst[:svbOffset+svbLen], nil
 }
 
 // unpackUint32AVX2 is the AVX2 unpacking pipeline.

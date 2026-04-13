@@ -74,6 +74,7 @@ func collectExceptionsDirect(values []uint32, bitWidth int,
 
 // writeExceptionsDirect writes exception index and pre-encoded SVB data
 // after the payload. Returns the number of bytes written.
+/*
 func writeExceptionsDirect(dst []byte, positions []byte, bitmap []byte,
 	excCount int, svbData []byte) int {
 	offset := 0
@@ -88,11 +89,38 @@ func writeExceptionsDirect(dst []byte, positions []byte, bitmap []byte,
 	offset += len(svbData)
 	return offset
 }
+*/
 
 // encodeExceptionHighBits encodes the high bits of exception values
 // using StreamVByte. Returns the encoded byte slice.
+/*
 func encodeExceptionHighBits(highBits []uint32) []byte {
 	return streamvbyte.EncodeUint32(highBits, nil)
+}
+*/
+
+// encodeSVBIntoDst encodes exception high bits directly into a pre-allocated
+// byte buffer. Returns the number of bytes written.
+func encodeSVBIntoDst(dst []byte, highBits []uint32) int {
+	svbData := streamvbyte.EncodeUint32(highBits,
+		&streamvbyte.EncodeOptions[uint32]{Buffer: dst})
+	return len(svbData)
+}
+
+// maxSVBEncodedLen returns the maximum encoded size for count SVB values.
+func maxSVBEncodedLen(count int) int {
+	return streamvbyte.MaxEncodedLen(count)
+}
+
+// writeExceptionIndex writes the exception index (sorted positions or bitmap)
+// into dst. Returns the number of bytes written.
+func writeExceptionIndex(dst []byte, positions []byte, bitmap []byte, excCount int) int {
+	if excCount <= excBitmapThreshold {
+		copy(dst, positions[:excCount])
+		return excCount
+	}
+	copy(dst, bitmap[:16])
+	return 16
 }
 
 // applyExceptions patches decoded values with exception high bits.

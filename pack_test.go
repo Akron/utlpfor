@@ -21,7 +21,7 @@ func TestPackUint32_RoundTrip_AllBitWidths(t *testing.T) {
 				values[i] = uint32(i*7+3) & mask
 			}
 			original := slices.Clone(values)
-			packed, err := PackUint32(0, nil, values)
+			packed, err := PackUint32(0, nil, nil, values)
 			require.NoError(t, err)
 			unpacked, _, err := UnpackUint32(nil, make([]uint32, 128), packed)
 			require.NoError(t, err)
@@ -38,7 +38,7 @@ func TestPackUint32_PartialBlock(t *testing.T) {
 				values[i] = uint32(i)
 			}
 			original := slices.Clone(values)
-			packed, err := PackUint32(0, nil, values)
+			packed, err := PackUint32(0, nil, nil, values)
 			require.NoError(t, err)
 			unpacked, _, err := UnpackUint32(nil, make([]uint32, 128), packed)
 			require.NoError(t, err)
@@ -49,7 +49,7 @@ func TestPackUint32_PartialBlock(t *testing.T) {
 
 func TestPackUint32_AllZeros(t *testing.T) {
 	values := make([]uint32, 128)
-	packed, err := PackUint32(0, nil, values)
+	packed, err := PackUint32(0, nil, nil, values)
 	require.NoError(t, err)
 	unpacked, _, err := UnpackUint32(nil, make([]uint32, 128), packed)
 	require.NoError(t, err)
@@ -62,7 +62,7 @@ func TestPackUint32_AllMax(t *testing.T) {
 		values[i] = 0xFFFFFFFF
 	}
 	original := append([]uint32(nil), values...)
-	packed, err := PackUint32(0, nil, values)
+	packed, err := PackUint32(0, nil, nil, values)
 	require.NoError(t, err)
 	unpacked, _, err := UnpackUint32(nil, make([]uint32, 128), packed)
 	require.NoError(t, err)
@@ -75,7 +75,7 @@ func TestPackUint32_DstGrowth(t *testing.T) {
 		values[i] = uint32(i * 100)
 	}
 	dst := make([]byte, 0, 10)
-	packed, err := PackUint32(0, dst, values)
+	packed, err := PackUint32(0, dst, nil, values)
 	require.NoError(t, err)
 	assert.NotNil(t, packed)
 }
@@ -85,8 +85,8 @@ func TestPackUint32_DeterministicOutput(t *testing.T) {
 	for i := range values {
 		values[i] = uint32(i)
 	}
-	packed1, _ := PackUint32(0, nil, values)
-	packed2, _ := PackUint32(0, nil, values)
+	packed1, _ := PackUint32(0, nil, nil, values)
+	packed2, _ := PackUint32(0, nil, nil, values)
 	assert.Equal(t, packed1, packed2)
 }
 
@@ -119,7 +119,7 @@ func TestPackUint32_CompressesData(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			packed, err := PackUint32(0, nil, tt.values)
+			packed, err := PackUint32(0, nil, nil, tt.values)
 			require.NoError(t, err)
 			rawSize := len(tt.values) * 4
 			assert.Less(t, len(packed), rawSize,
@@ -129,12 +129,12 @@ func TestPackUint32_CompressesData(t *testing.T) {
 }
 
 func TestPackUint32_EmptyValues(t *testing.T) {
-	_, err := PackUint32(0, nil, []uint32{})
+	_, err := PackUint32(0, nil, nil, []uint32{})
 	assert.Error(t, err)
 }
 
 func TestPackUint32_TooManyValues(t *testing.T) {
-	_, err := PackUint32(0, nil, make([]uint32, 129))
+	_, err := PackUint32(0, nil, nil, make([]uint32, 129))
 	assert.Error(t, err)
 }
 
@@ -144,7 +144,7 @@ func TestPackUint32_DstReuse(t *testing.T) {
 		values[i] = uint32(i)
 	}
 	dst := make([]byte, 1024)
-	packed, err := PackUint32(0, dst, values)
+	packed, err := PackUint32(0, dst, nil, values)
 	require.NoError(t, err)
 	assert.True(t, cap(packed) >= cap(dst), "should reuse provided dst buffer")
 }

@@ -44,11 +44,15 @@ Work in progress. The library is functional but not yet released.
 ## API
 
 ```go
-func PackUint32(flag byte, dst []byte, values []uint32) ([]byte, error)
+func PackUint32(flag byte, dst []byte, scratch []uint32, values []uint32) ([]byte, error)
 func UnpackUint32(dst []uint32, scratch []uint32, buf []byte) ([]uint32, int, error)
 func GetUint32(pos int, buf []byte) (uint32, error)
 func BlockLength(buf []byte) (int, error)
+
+const ScratchLen = 128 // minimum scratch buffer capacity for zero-allocation operation
 ```
+
+Pass `scratch` with capacity >= `ScratchLen` and a pre-allocated `dst` for zero heap allocations. Pass `nil` for `scratch` to use internal allocations.
 
 ## Quick Start
 

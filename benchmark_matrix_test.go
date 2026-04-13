@@ -188,12 +188,12 @@ func BenchmarkMatrix(b *testing.B) {
 				b.ResetTimer()
 				for i := 0; i < b.N; i++ {
 					copy(values, original)
-					dst, _ = PackUint32(flag, dst[:0], values)
+					dst, _ = PackUint32(flag, dst[:0], nil, values)
 				}
 
 			case "unp":
 				work := slices.Clone(original)
-				packed, err := PackUint32(flag, nil, work)
+				packed, err := PackUint32(flag, nil, nil, work)
 				if err != nil {
 					b.Fatalf("pack failed: %v", err)
 				}
@@ -208,7 +208,7 @@ func BenchmarkMatrix(b *testing.B) {
 
 			case "get":
 				work := slices.Clone(original)
-				packed, err := PackUint32(flag, nil, work)
+				packed, err := PackUint32(flag, nil, nil, work)
 				if err != nil {
 					b.Fatalf("pack failed: %v", err)
 				}
@@ -226,7 +226,7 @@ func BenchmarkMatrix(b *testing.B) {
 
 			case "len":
 				work := slices.Clone(original)
-				packed, err := PackUint32(flag, nil, work)
+				packed, err := PackUint32(flag, nil, nil, work)
 				if err != nil {
 					b.Fatalf("pack failed: %v", err)
 				}
@@ -314,12 +314,12 @@ func BenchmarkQuickCompare(b *testing.B) {
 				b.ResetTimer()
 				for i := 0; i < b.N; i++ {
 					copy(values, original)
-					dst, _ = PackUint32(flag, dst[:0], values)
+					dst, _ = PackUint32(flag, dst[:0], nil, values)
 				}
 
 			case "unp":
 				work := slices.Clone(original)
-				packed, err := PackUint32(flag, nil, work)
+				packed, err := PackUint32(flag, nil, nil, work)
 				if err != nil {
 					b.Fatalf("pack failed: %v", err)
 				}
@@ -334,7 +334,7 @@ func BenchmarkQuickCompare(b *testing.B) {
 
 			case "get":
 				work := slices.Clone(original)
-				packed, err := PackUint32(flag, nil, work)
+				packed, err := PackUint32(flag, nil, nil, work)
 				if err != nil {
 					b.Fatalf("pack failed: %v", err)
 				}
@@ -362,7 +362,7 @@ func BenchmarkQuickCompare(b *testing.B) {
 				b.ResetTimer()
 				for i := 0; i < b.N; i++ {
 					copy(values, original)
-					packed, _ := PackUint32(flag, packDst[:0], values)
+					packed, _ := PackUint32(flag, packDst[:0], nil, values)
 					UnpackUint32(unpackDst, scratch, packed)
 					for _, pos := range positions {
 						v, _ := GetUint32(pos, packed)
@@ -401,7 +401,7 @@ func TestMatrixDataGeneration(t *testing.T) {
 						t.Run(cfg.name(), func(t *testing.T) {
 							values, flag := generateMatrixData(cfg)
 							work := slices.Clone(values)
-							packed, err := PackUint32(flag, nil, work)
+							packed, err := PackUint32(flag, nil, nil, work)
 							require.NoError(t, err)
 							require.GreaterOrEqual(t, len(packed), headerBytes)
 

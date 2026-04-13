@@ -116,7 +116,7 @@ func unpackLanePairUTL64(dst []uint32, payload []byte, lane0, bitWidth, count in
 }
 
 // packUint32Scalar is the scalar implementation of PackUint32.
-func packUint32Scalar(flag byte, dst []byte, values []uint32) ([]byte, error) {
+func packUint32Scalar(flag byte, dst []byte, scratch []uint32, values []uint32) ([]byte, error) {
 	if len(values) == 0 || len(values) > blockSize {
 		return nil, ErrInvalidBuffer
 	}
@@ -155,33 +155,36 @@ func packUint32Scalar(flag byte, dst []byte, values []uint32) ([]byte, error) {
 		return dst[:totalLen], nil
 	}
 
-	var positions [blockSize]byte
-	var bitmap [16]byte
-	var highBits [blockSize]uint32
-	collectExceptionsDirect(values, bitWidth, positions[:], bitmap[:], highBits[:])
-
-	svbData := encodeExceptionHighBits(highBits[:excCount])
-	svbLen := len(svbData)
-
-	excIdxSize := excCount
-	if excCount > excBitmapThreshold {
-		excIdxSize = 16
-	}
-
+	excIdxSize := excIndexSize(excCount)
+	maxSvbLen := maxSVBEncodedLen(excCount)
 	pOff := payloadOffset(forBaseBytes, true)
-	totalLen := pOff + payloadBytes + excIdxSize + svbLen
+	maxTotalLen := pOff + payloadBytes + excIdxSize + maxSvbLen
 
-	dst = ensureLen(dst, totalLen)
+	dst = ensureLen(dst, maxTotalLen)
 	bo.PutUint32(dst, encodeHeader(len(values), bitWidth, excCount, headerFlags))
-	bo.PutUint16(dst[headerBytes:], uint16(svbLen))
 	if useFOR {
 		writeFORBase(dst, baseValue, forW, true)
 	}
 
 	packLanesUTLScalar(dst[pOff:pOff+payloadBytes], values, bitWidth)
-	writeExceptionsDirect(dst[pOff+payloadBytes:], positions[:], bitmap[:], excCount, svbData)
 
-	return dst[:totalLen], nil
+	var positions [blockSize]byte
+	var bitmap [16]byte
+	var highBitsBuf [blockSize]uint32
+	highBits := highBitsBuf[:]
+	if len(scratch) >= blockSize {
+		highBits = scratch[:blockSize]
+	}
+	collectExceptionsDirect(values, bitWidth, positions[:], bitmap[:], highBits)
+
+	excOff := pOff + payloadBytes
+	writeExceptionIndex(dst[excOff:], positions[:], bitmap[:], excCount)
+
+	svbOffset := excOff + excIdxSize
+	svbLen := encodeSVBIntoDst(dst[svbOffset:maxTotalLen], highBits[:excCount])
+
+	bo.PutUint16(dst[headerBytes:], uint16(svbLen))
+	return dst[:svbOffset+svbLen], nil
 }
 
 // unpackUint32Scalar is the scalar implementation of UnpackUint32.

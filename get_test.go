@@ -13,7 +13,7 @@ func TestGetUint32_AllPositions(t *testing.T) {
 	for i := range values {
 		values[i] = uint32(i*17 + 3)
 	}
-	packed, _ := PackUint32(0, nil, values)
+	packed, _ := PackUint32(0, nil, nil, values)
 
 	for pos := range 128 {
 		got, err := GetUint32(pos, packed)
@@ -33,7 +33,7 @@ func TestGetUint32_AllPositions_AllBitWidths(t *testing.T) {
 			for i := range values {
 				values[i] = uint32(i*13+7) & mask
 			}
-			packed, _ := PackUint32(0, nil, values)
+			packed, _ := PackUint32(0, nil, nil, values)
 
 			for pos := range 128 {
 				got, err := GetUint32(pos, packed)
@@ -49,7 +49,7 @@ func TestGetUint32_MatchesUnpack(t *testing.T) {
 	for i := range values {
 		values[i] = uint32(i * i)
 	}
-	packed, _ := PackUint32(0, nil, values)
+	packed, _ := PackUint32(0, nil, nil, values)
 
 	unpacked, _, _ := UnpackUint32(nil, make([]uint32, 128), packed)
 	for pos := range unpacked {
@@ -61,7 +61,7 @@ func TestGetUint32_MatchesUnpack(t *testing.T) {
 
 func TestGetUint32_OutOfRange(t *testing.T) {
 	values := make([]uint32, 50)
-	packed, _ := PackUint32(0, nil, values)
+	packed, _ := PackUint32(0, nil, nil, values)
 
 	_, err := GetUint32(50, packed)
 	assert.ErrorIs(t, err, ErrPositionOutOfRange)
@@ -72,7 +72,7 @@ func TestGetUint32_OutOfRange(t *testing.T) {
 
 func TestGetUint32_NegativePosition(t *testing.T) {
 	values := make([]uint32, 128)
-	packed, _ := PackUint32(0, nil, values)
+	packed, _ := PackUint32(0, nil, nil, values)
 
 	_, err := GetUint32(-1, packed)
 	assert.ErrorIs(t, err, ErrPositionOutOfRange)
@@ -88,7 +88,7 @@ func TestGetUint32_ZeroAllocations(t *testing.T) {
 	for i := range values {
 		values[i] = uint32(i)
 	}
-	packed, _ := PackUint32(0, nil, values)
+	packed, _ := PackUint32(0, nil, nil, values)
 
 	allocs := testing.AllocsPerRun(100, func() {
 		GetUint32(42, packed)
@@ -98,7 +98,7 @@ func TestGetUint32_ZeroAllocations(t *testing.T) {
 
 func TestGetUint32_AllZeros(t *testing.T) {
 	values := make([]uint32, 128)
-	packed, _ := PackUint32(0, nil, values)
+	packed, _ := PackUint32(0, nil, nil, values)
 
 	for pos := range 128 {
 		got, err := GetUint32(pos, packed)
@@ -112,7 +112,7 @@ func TestGetUint32_AllMax(t *testing.T) {
 	for i := range values {
 		values[i] = 0xFFFFFFFF
 	}
-	packed, _ := PackUint32(0, nil, values)
+	packed, _ := PackUint32(0, nil, nil, values)
 
 	for pos := range 128 {
 		got, err := GetUint32(pos, packed)

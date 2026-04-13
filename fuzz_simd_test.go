@@ -24,11 +24,11 @@ func FuzzSIMDScalarConsistency(f *testing.F) {
 		simdValues := make([]uint32, len(values))
 		copy(simdValues, values)
 
-		scalarPacked, err := packUint32Scalar(0, nil, scalarValues)
+		scalarPacked, err := packUint32Scalar(0, nil, nil, scalarValues)
 		if err != nil {
 			return
 		}
-		simdPacked, err := PackUint32(0, nil, simdValues)
+		simdPacked, err := PackUint32(0, nil, nil, simdValues)
 		if err != nil {
 			return
 		}

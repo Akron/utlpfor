@@ -102,7 +102,7 @@ func TestPackUnpack_SIMDScalarDifferential_Random(t *testing.T) {
 		}
 		original := slices.Clone(values)
 
-		packed, err := PackUint32(0, nil, values)
+		packed, err := PackUint32(0, nil, nil, values)
 		require.NoError(t, err, "seed=%d", seed)
 
 		unpacked, _, err := UnpackUint32(nil, make([]uint32, blockSize), packed)
@@ -116,7 +116,7 @@ func TestGetUint32_SIMDMatchesScalar(t *testing.T) {
 	for i := range values {
 		values[i] = uint32(i*13 + 7)
 	}
-	packed, err := PackUint32(0, nil, values)
+	packed, err := PackUint32(0, nil, nil, values)
 	require.NoError(t, err)
 
 	for pos := range blockSize {
@@ -125,8 +125,6 @@ func TestGetUint32_SIMDMatchesScalar(t *testing.T) {
 		assert.Equal(t, values[pos], got, "pos=%d", pos)
 	}
 }
-
-// --- Kernel-only micro-benchmarks for SIMD investigation ---
 
 func BenchmarkKernelUnpackScalar(b *testing.B) {
 	for _, bw := range []int{8, 16} {
@@ -550,7 +548,7 @@ func TestPackUnpack_SIMDEdgeBitWidths(t *testing.T) {
 				}
 			}
 
-			packed, err := PackUint32(0, nil, values)
+			packed, err := PackUint32(0, nil, nil, values)
 			require.NoError(t, err)
 			unpacked, _, err := UnpackUint32(nil, make([]uint32, blockSize), packed)
 			require.NoError(t, err)

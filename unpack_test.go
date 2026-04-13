@@ -12,7 +12,7 @@ func TestUnpackUint32_ReturnsConsumedLength(t *testing.T) {
 	for i := range values {
 		values[i] = uint32(i)
 	}
-	packed, _ := PackUint32(0, nil, values)
+	packed, _ := PackUint32(0, nil, nil, values)
 
 	_, consumed, err := UnpackUint32(nil, make([]uint32, 128), packed)
 	require.NoError(t, err)
@@ -25,7 +25,7 @@ func TestUnpackUint32_ScratchBufferReuse(t *testing.T) {
 	for i := range values {
 		values[i] = uint32(i * 3)
 	}
-	packed, _ := PackUint32(0, nil, values)
+	packed, _ := PackUint32(0, nil, nil, values)
 
 	unpacked1, _, _ := UnpackUint32(nil, scratch, packed)
 	unpacked2, _, _ := UnpackUint32(nil, scratch, packed)
@@ -60,7 +60,7 @@ func TestUnpackUint32_ZeroAllocations(t *testing.T) {
 	for i := range values {
 		values[i] = uint32(i)
 	}
-	packed, _ := PackUint32(0, nil, values)
+	packed, _ := PackUint32(0, nil, nil, values)
 	dst := make([]uint32, 128)
 	scratch := make([]uint32, 128)
 

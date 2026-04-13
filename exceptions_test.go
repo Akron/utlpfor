@@ -19,7 +19,7 @@ func TestPackUnpack_WithExceptions(t *testing.T) {
 	values[50] = 0x1000000
 	values[100] = 0xFFFFFF
 
-	packed, err := PackUint32(0, nil, values)
+	packed, err := PackUint32(0, nil, nil, values)
 	require.NoError(t, err)
 	unpacked, _, err := UnpackUint32(nil, make([]uint32, 128), packed)
 	require.NoError(t, err)
@@ -32,7 +32,7 @@ func TestPackUnpack_AllExceptions(t *testing.T) {
 		values[i] = uint32(0x10000000 + i)
 	}
 	original := slices.Clone(values)
-	packed, err := PackUint32(0, nil, values)
+	packed, err := PackUint32(0, nil, nil, values)
 	require.NoError(t, err)
 	unpacked, _, err := UnpackUint32(nil, make([]uint32, 128), packed)
 	require.NoError(t, err)
@@ -44,7 +44,7 @@ func TestPackUnpack_NoExceptions(t *testing.T) {
 	for i := range values {
 		values[i] = uint32(i & 0xFF)
 	}
-	packed, err := PackUint32(0, nil, values)
+	packed, err := PackUint32(0, nil, nil, values)
 	require.NoError(t, err)
 	unpacked, _, err := UnpackUint32(nil, make([]uint32, 128), packed)
 	require.NoError(t, err)
@@ -57,7 +57,7 @@ func TestPackUnpack_SparseExceptions(t *testing.T) {
 		values[i] = uint32(i)
 	}
 	values[0] = 0xFFFFFFF
-	packed, err := PackUint32(0, nil, values)
+	packed, err := PackUint32(0, nil, nil, values)
 	require.NoError(t, err)
 	unpacked, _, err := UnpackUint32(nil, make([]uint32, 128), packed)
 	require.NoError(t, err)
@@ -72,7 +72,7 @@ func TestPackUnpack_ExactlyAtBitmapThreshold(t *testing.T) {
 	for i := range 16 {
 		values[i*8] = 0x10000000 + uint32(i)
 	}
-	packed, err := PackUint32(0, nil, values)
+	packed, err := PackUint32(0, nil, nil, values)
 	require.NoError(t, err)
 	unpacked, _, err := UnpackUint32(nil, make([]uint32, 128), packed)
 	require.NoError(t, err)
@@ -87,7 +87,7 @@ func TestPackUnpack_OneAboveBitmapThreshold(t *testing.T) {
 	for i := range 17 {
 		values[i*7] = 0x10000000 + uint32(i)
 	}
-	packed, err := PackUint32(0, nil, values)
+	packed, err := PackUint32(0, nil, nil, values)
 	require.NoError(t, err)
 	unpacked, _, err := UnpackUint32(nil, make([]uint32, 128), packed)
 	require.NoError(t, err)
@@ -108,7 +108,7 @@ func TestPackUnpack_VariousExceptionCounts(t *testing.T) {
 				}
 				values[idx] = 0x10000000 + uint32(i)
 			}
-			packed, err := PackUint32(0, nil, values)
+			packed, err := PackUint32(0, nil, nil, values)
 			require.NoError(t, err)
 			unpacked, _, err := UnpackUint32(nil, make([]uint32, 128), packed)
 			require.NoError(t, err)
@@ -123,7 +123,7 @@ func TestGetUint32_WithExceptions(t *testing.T) {
 		values[i] = uint32(i)
 	}
 	values[42] = 0x100000
-	packed, _ := PackUint32(0, nil, values)
+	packed, _ := PackUint32(0, nil, nil, values)
 
 	got, err := GetUint32(10, packed)
 	require.NoError(t, err)
@@ -140,7 +140,7 @@ func TestPackUnpack_ExceptionsWithCompression(t *testing.T) {
 		values[i] = uint32(i)
 	}
 	values[0] = 0x100000
-	packed, err := PackUint32(0, nil, values)
+	packed, err := PackUint32(0, nil, nil, values)
 	require.NoError(t, err)
 	rawSize := len(values) * 4
 	assert.Less(t, len(packed), rawSize,
@@ -156,7 +156,7 @@ func TestPackUnpack_RandomVectors(t *testing.T) {
 			values[i] = rng.Uint32()
 		}
 		original := slices.Clone(values)
-		packed, err := PackUint32(0, nil, values)
+		packed, err := PackUint32(0, nil, nil, values)
 		require.NoError(t, err, "trial %d", trial)
 		unpacked, _, err := UnpackUint32(nil, make([]uint32, 128), packed)
 		require.NoError(t, err, "trial %d", trial)
@@ -172,7 +172,7 @@ func TestGetUint32_WithExceptions_AllPositions(t *testing.T) {
 	values[10] = 0x10000
 	values[50] = 0x1000000
 	values[100] = 0xFFFFFF
-	packed, _ := PackUint32(0, nil, values)
+	packed, _ := PackUint32(0, nil, nil, values)
 
 	for pos := range 128 {
 		got, err := GetUint32(pos, packed)
@@ -189,7 +189,7 @@ func TestGetUint32_WithBitmapExceptions(t *testing.T) {
 	for i := range 20 {
 		values[i*6] = 0x10000000 + uint32(i)
 	}
-	packed, _ := PackUint32(0, nil, values)
+	packed, _ := PackUint32(0, nil, nil, values)
 
 	for pos := range 128 {
 		got, err := GetUint32(pos, packed)
@@ -205,7 +205,7 @@ func TestPackUnpack_ConsumedMatchesBlockLength(t *testing.T) {
 	}
 	values[10] = 0x10000
 	values[50] = 0x1000000
-	packed, err := PackUint32(0, nil, values)
+	packed, err := PackUint32(0, nil, nil, values)
 	require.NoError(t, err)
 
 	bl, err := BlockLength(packed)

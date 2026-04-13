@@ -22,7 +22,7 @@ func FuzzPackUnpackUint32RoundTrip(f *testing.F) {
 		}
 
 		original := slices.Clone(values)
-		packed, err := PackUint32(0, nil, values)
+		packed, err := PackUint32(0, nil, nil, values)
 		require.NoError(t, err)
 
 		unpacked, consumed, err := UnpackUint32(nil, make([]uint32, blockSize), packed)
@@ -44,7 +44,7 @@ func FuzzPackDeltaUint32RoundTrip(f *testing.F) {
 		}
 
 		original := slices.Clone(values)
-		packed, err := PackUint32(Delta, nil, values)
+		packed, err := PackUint32(Delta, nil, nil, values)
 		require.NoError(t, err)
 
 		unpacked, _, err := UnpackUint32(nil, make([]uint32, blockSize), packed)
@@ -62,7 +62,7 @@ func FuzzGetUint32MatchesUnpack(f *testing.F) {
 			return
 		}
 
-		packed, err := PackUint32(0, nil, values)
+		packed, err := PackUint32(0, nil, nil, values)
 		require.NoError(t, err)
 
 		unpacked, _, err := UnpackUint32(nil, make([]uint32, blockSize), packed)
@@ -95,7 +95,7 @@ func FuzzCorruptDeltaOverflow(f *testing.F) {
 			return
 		}
 
-		packed, err := PackUint32(Delta, nil, values)
+		packed, err := PackUint32(Delta, nil, nil, values)
 		if err != nil {
 			return
 		}
@@ -116,7 +116,7 @@ func FuzzDeltaWithExceptions(f *testing.F) {
 		}
 
 		original := slices.Clone(values)
-		packed, err := PackUint32(Delta, nil, values)
+		packed, err := PackUint32(Delta, nil, nil, values)
 		if err != nil {
 			return
 		}
@@ -146,7 +146,7 @@ func FuzzCompressionRatio(f *testing.F) {
 			}
 		}
 
-		packed, err := PackUint32(0, nil, values)
+		packed, err := PackUint32(0, nil, nil, values)
 		if err != nil {
 			return
 		}

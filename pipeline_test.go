@@ -17,7 +17,7 @@ func TestFullPipeline_DeltaPlusExceptions(t *testing.T) {
 	values[50] = 0xFFFFFF
 	expected := append([]uint32(nil), values...)
 
-	packed, err := PackUint32(Delta, nil, values)
+	packed, err := PackUint32(Delta, nil, nil, values)
 	require.NoError(t, err)
 	unpacked, _, err := UnpackUint32(nil, make([]uint32, 128), packed)
 	require.NoError(t, err)
@@ -35,7 +35,7 @@ func TestFullPipeline_BlockLengthConsistency(t *testing.T) {
 
 		for _, flag := range []byte{0, Delta} {
 			work := append([]uint32(nil), values...)
-			packed, err := PackUint32(flag, nil, work)
+			packed, err := PackUint32(flag, nil, nil, work)
 			require.NoError(t, err)
 
 			blockLen, err := BlockLength(packed)
@@ -56,7 +56,7 @@ func TestFullPipeline_GetMatchesUnpack(t *testing.T) {
 
 	for _, flag := range []byte{0, Delta} {
 		work := append([]uint32(nil), values...)
-		packed, err := PackUint32(flag, nil, work)
+		packed, err := PackUint32(flag, nil, nil, work)
 		require.NoError(t, err)
 		unpacked, _, err := UnpackUint32(nil, make([]uint32, 128), packed)
 		require.NoError(t, err)
@@ -74,7 +74,7 @@ func TestFullPipeline_PlainNoExceptions(t *testing.T) {
 	for i := range values {
 		values[i] = uint32(i)
 	}
-	packed, err := PackUint32(0, nil, values)
+	packed, err := PackUint32(0, nil, nil, values)
 	require.NoError(t, err)
 
 	header := binary.LittleEndian.Uint32(packed)
@@ -90,7 +90,7 @@ func TestFullPipeline_DeltaDescendingWithExceptions(t *testing.T) {
 	values[64] = 0xFFFFFFF
 	expected := append([]uint32(nil), values...)
 
-	packed, err := PackUint32(Delta, nil, values)
+	packed, err := PackUint32(Delta, nil, nil, values)
 	require.NoError(t, err)
 	unpacked, _, err := UnpackUint32(nil, make([]uint32, 128), packed)
 	require.NoError(t, err)
@@ -128,7 +128,7 @@ func TestFullPipeline_CompressionRatio(t *testing.T) {
 	for _, ds := range datasets {
 		t.Run(ds.name, func(t *testing.T) {
 			work := append([]uint32(nil), ds.values...)
-			packed, err := PackUint32(ds.flag, nil, work)
+			packed, err := PackUint32(ds.flag, nil, nil, work)
 			require.NoError(t, err)
 			rawSize := len(ds.values) * 4
 			assert.Less(t, len(packed), rawSize,
@@ -143,7 +143,7 @@ func TestFullPipeline_GetMatchesUnpack_Delta(t *testing.T) {
 		values[i] = uint32(i * 100)
 	}
 	expected := append([]uint32(nil), values...)
-	packed, err := PackUint32(Delta, nil, values)
+	packed, err := PackUint32(Delta, nil, nil, values)
 	require.NoError(t, err)
 
 	unpacked, _, err := UnpackUint32(nil, make([]uint32, 128), packed)
@@ -167,7 +167,7 @@ func TestFullPipeline_GetMatchesUnpack_DeltaWithExceptions(t *testing.T) {
 	values[100] = 0xFFFFFF
 	expected := append([]uint32(nil), values...)
 
-	packed, err := PackUint32(Delta, nil, values)
+	packed, err := PackUint32(Delta, nil, nil, values)
 	require.NoError(t, err)
 
 	unpacked, _, err := UnpackUint32(nil, make([]uint32, 128), packed)
@@ -188,7 +188,7 @@ func TestFullPipeline_GetMatchesUnpack_DeltaDescending(t *testing.T) {
 	}
 	expected := append([]uint32(nil), values...)
 
-	packed, err := PackUint32(Delta, nil, values)
+	packed, err := PackUint32(Delta, nil, nil, values)
 	require.NoError(t, err)
 
 	unpacked, _, err := UnpackUint32(nil, make([]uint32, 128), packed)
@@ -212,7 +212,7 @@ func TestFullPipeline_GetMatchesUnpack_RandomDelta(t *testing.T) {
 		}
 		expected := append([]uint32(nil), values...)
 
-		packed, err := PackUint32(Delta, nil, values)
+		packed, err := PackUint32(Delta, nil, nil, values)
 		require.NoError(t, err, "trial %d", trial)
 
 		unpacked, _, err := UnpackUint32(nil, make([]uint32, 128), packed)

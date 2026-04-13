@@ -73,7 +73,7 @@ func TestDispatch_ScalarAlwaysAvailable(t *testing.T) {
 		values[i] = uint32(i)
 	}
 
-	packed, err := packUint32Scalar(0, nil, values)
+	packed, err := packUint32Scalar(0, nil, nil, values)
 	require.NoError(t, err)
 
 	unpacked, _, err := unpackUint32Scalar(nil, make([]uint32, 128), packed)
@@ -87,10 +87,10 @@ func TestDispatch_AllLevelsProduceIdenticalOutput(t *testing.T) {
 		values[i] = uint32(i*7 + 3)
 	}
 
-	scalarPacked, err := packUint32Scalar(0, nil, values)
+	scalarPacked, err := packUint32Scalar(0, nil, nil, values)
 	require.NoError(t, err)
 
-	apiPacked, err := PackUint32(0, nil, values)
+	apiPacked, err := PackUint32(0, nil, nil, values)
 	require.NoError(t, err)
 	assert.Equal(t, scalarPacked, apiPacked,
 		"API output must match scalar output")
@@ -102,11 +102,11 @@ func TestDispatch_AllLevelsProduceIdenticalOutput_Delta(t *testing.T) {
 		values[i] = uint32(i * 100)
 	}
 	scalarWork := append([]uint32(nil), values...)
-	scalarPacked, err := packUint32Scalar(Delta, nil, scalarWork)
+	scalarPacked, err := packUint32Scalar(Delta, nil, nil, scalarWork)
 	require.NoError(t, err)
 
 	apiWork := append([]uint32(nil), values...)
-	apiPacked, err := PackUint32(Delta, nil, apiWork)
+	apiPacked, err := PackUint32(Delta, nil, nil, apiWork)
 	require.NoError(t, err)
 	assert.Equal(t, scalarPacked, apiPacked,
 		"API delta output must match scalar delta output")
@@ -119,7 +119,7 @@ func TestDispatch_UnpackMatchesScalar(t *testing.T) {
 	}
 	values[10] = 0x100000
 
-	packed, err := PackUint32(0, nil, values)
+	packed, err := PackUint32(0, nil, nil, values)
 	require.NoError(t, err)
 
 	scalarOut, scalarConsumed, err := unpackUint32Scalar(nil, make([]uint32, 128), packed)
@@ -139,7 +139,7 @@ func TestDispatch_GetMatchesScalar(t *testing.T) {
 	}
 	values[10] = 0x100000
 
-	packed, err := PackUint32(0, nil, values)
+	packed, err := PackUint32(0, nil, nil, values)
 	require.NoError(t, err)
 
 	for pos := range values {
@@ -192,7 +192,7 @@ func BenchmarkDispatchOverhead(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		dst, _ = PackUint32(0, dst[:0], values)
+		dst, _ = PackUint32(0, dst[:0], nil, values)
 	}
 }
 
@@ -206,6 +206,6 @@ func BenchmarkScalarDirect(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		dst, _ = packUint32Scalar(0, dst[:0], values)
+		dst, _ = packUint32Scalar(0, dst[:0], nil, values)
 	}
 }

@@ -74,7 +74,7 @@ func TestPackUnpackScalar64RoundTrip_Random(t *testing.T) {
 		}
 		original := slices.Clone(values)
 
-		packed, err := PackUint32(0, nil, values)
+		packed, err := PackUint32(0, nil, nil, values)
 		require.NoError(t, err, "seed=%d", seed)
 
 		unpacked, _, err := UnpackUint32(nil, make([]uint32, blockSize), packed)
@@ -97,7 +97,7 @@ func TestPackScalar64_PartialBlock(t *testing.T) {
 				}
 				original := slices.Clone(values)
 
-				packed, err := PackUint32(0, nil, values)
+				packed, err := PackUint32(0, nil, nil, values)
 				require.NoError(t, err)
 
 				unpacked, _, err := UnpackUint32(nil, make([]uint32, blockSize), packed)
