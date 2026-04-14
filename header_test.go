@@ -112,8 +112,8 @@ func TestDecodeHeader_FORWidthBitPosition(t *testing.T) {
 	assert.Equal(t, 15, forWidthShift, "FOR width must start at bit 15")
 }
 
-func TestDecodeHeader_SpecialFlagBitPosition(t *testing.T) {
-	assert.Equal(t, uint32(1<<21), headerSpecialFlag, "SPECIAL flag must be at bit 21")
+func TestDecodeHeader_Block256AllExcFlagBitPosition(t *testing.T) {
+	assert.Equal(t, uint32(1<<21), headerBlock256AllExcFlag, "Block 256 all exceptions flag must be at bit 21")
 }
 
 func TestDecodeHeader_CombineFlagBitPosition(t *testing.T) {

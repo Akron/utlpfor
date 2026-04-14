@@ -51,10 +51,10 @@ const (
 	// Must be 0 in current implementation.
 	headerBlock256Flag = uint32(1 << 20)
 
-	// Bit 21: SPECIAL flag -- modifies interpretation of other header fields
+	// Bit 21: 256-block-all-exceptions flag
 	// in specific combinations (e.g. full-block all-exceptions in 256-mode).
 	// Silently ignored in current implementation.
-	headerSpecialFlag = uint32(1 << 21)
+	headerBlock256AllExcFlag = uint32(1 << 21)
 
 	// Bit 22: delta flag.
 	headerDeltaFlag = uint32(1 << 22)

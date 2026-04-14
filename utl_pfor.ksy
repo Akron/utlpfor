@@ -17,7 +17,7 @@ doc: |
     bits 17-18: reserved (2 contiguous bits, must be 0)
     bit  19:    E2 combine-with-next (reserved, must be 0)
     bit  20:    E1 block-length mode (reserved, must be 0)
-    bit  21:    SPECIAL flag (reserved, silently ignored)
+    bit  21:    E1 block-length all-exception flag (reserved, silently ignored)
     bit  22:    delta flag
     bit  23:    zigzag flag
     bits 24-31: exc_count (0 = no exceptions, 1-128 = exception count)
