@@ -77,23 +77,15 @@ const (
 	headerReservedMask = headerReservedBitsMask | headerCombineFlag | headerBlock256Flag
 )
 
-// forBaseBytesLUT maps FOR width code (0-3) to the number of base bytes.
-var forBaseBytesLUT = [4]int{0, 1, 2, 4}
+// utlPayloadBytes returns the UTL payload size in bytes for any bitwidth.
+// Formula: ceil(bitWidth / 4) * 64. For step bitwidths (multiples of 4),
+// this simplifies to bitWidth * 16 (one shift), but the general formula
+// handles all bitwidths for test/validation use.
+func utlPayloadBytes(bitWidth int) int { return ((bitWidth + 3) >> 2) << 6 }
 
-// utlPayloadBytesLUT maps bit width (0-32) to UTL payload size in bytes.
-// Formula: ceil(8 * bitWidth / 32) * 64 = ceil(bitWidth/4) * 64.
-// For step bitwidths (multiples of 4), this simplifies to bitWidth * 16.
-var utlPayloadBytesLUT = [33]int{
-	0,
-	64, 64, 64, 64,
-	128, 128, 128, 128,
-	192, 192, 192, 192,
-	256, 256, 256, 256,
-	320, 320, 320, 320,
-	384, 384, 384, 384,
-	448, 448, 448, 448,
-	512, 512, 512, 512,
-}
+// forBaseBytes returns the number of base value bytes for a FOR width code.
+// Maps: 0->0, 1->1, 2->2, 3->4 (no FOR, uint8, uint16, uint32).
+func forBaseBytes(forWidth int) int { return (1 << forWidth) >> 1 }
 
 // encodeHeader packs count, bitWidth, excCount, and flags into a 32-bit header.
 // The bitWidth must be a step bitwidth (0, 4, 8, 12, 16, 20, 24, 28, 32).

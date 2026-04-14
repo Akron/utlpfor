@@ -175,9 +175,9 @@ func packUint32AVX512(flag byte, dst []byte, scratch []uint32, values []uint32) 
 	}
 
 	bitWidth, excCount := selectBitWidthAVX512(values)
-	payloadBytes := utlPayloadBytesLUT[bitWidth]
+	payloadBytes := utlPayloadBytes(bitWidth)
 	hasExceptions := excCount > 0
-	forBaseBytes := forBaseBytesLUT[forW]
+	forBaseBytes := forBaseBytes(forW)
 
 	packInput := values
 	if len(values) < blockSize {
@@ -254,10 +254,10 @@ func unpackUint32AVX512(dst []uint32, scratch []uint32, buf []byte) ([]uint32, i
 	var forBase uint32
 	if hasFOR {
 		forBase = readFORBase(buf, pOff, forWidth)
-		pOff += forBaseBytesLUT[forWidth]
+		pOff += forBaseBytes(forWidth)
 	}
 
-	payloadBytes := utlPayloadBytesLUT[bitWidth]
+	payloadBytes := utlPayloadBytes(bitWidth)
 
 	if len(buf) < pOff+payloadBytes {
 		return nil, 0, ErrInvalidBuffer
@@ -270,13 +270,13 @@ func unpackUint32AVX512(dst []uint32, scratch []uint32, buf []byte) ([]uint32, i
 
 	payload := buf[pOff : pOff+payloadBytes]
 	unpackLanesUTLAVX512(dst, payload, blockSize, bitWidth)
-	archsimd.ClearAVXUpperBits()
 
 	dst = dst[:count]
 
 	consumed := pOff + payloadBytes
 
 	if hasExceptions {
+		archsimd.ClearAVXUpperBits()
 		excStart := pOff + payloadBytes
 		var err error
 		consumed, err = applyExceptions(dst, buf, excStart, count, bitWidth, excCount, scratch)
@@ -289,19 +289,20 @@ func unpackUint32AVX512(dst []uint32, scratch []uint32, buf []byte) ([]uint32, i
 		if hasZigZag {
 			if count == blockSize {
 				deltaDecodePerLaneAVX2(dst, true)
-				archsimd.ClearAVXUpperBits()
 			} else {
+				archsimd.ClearAVXUpperBits()
 				deltaDecodePerLaneScalar(dst, true)
 			}
 		} else {
 			var overflowPos int
 			if count == blockSize {
 				overflowPos = deltaDecodePerLaneWithOverflowAVX2(dst, false)
-				archsimd.ClearAVXUpperBits()
 			} else {
+				archsimd.ClearAVXUpperBits()
 				overflowPos = deltaDecodePerLaneWithOverflowScalar(dst, false)
 			}
 			if overflowPos > 0 {
+				archsimd.ClearAVXUpperBits()
 				return nil, 0, &ErrOverflow{Position: overflowPos}
 			}
 		}
@@ -309,9 +310,9 @@ func unpackUint32AVX512(dst []uint32, scratch []uint32, buf []byte) ([]uint32, i
 
 	if hasFOR {
 		forAddAVX512(dst, count, forBase)
-		archsimd.ClearAVXUpperBits()
 	}
 
+	archsimd.ClearAVXUpperBits()
 	return dst, consumed, nil
 }
 

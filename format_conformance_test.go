@@ -178,14 +178,14 @@ func TestFormatConformance_HeaderBitPositions(t *testing.T) {
 }
 
 func TestFormatConformance_PayloadSize(t *testing.T) {
-	// Verify utlPayloadBytesLUT matches the formula:
+	// Verify utlPayloadBytes matches the formula:
 	// bitWidth == 0 -> 0, else ceil(bitWidth/4) * 64.
 	for bw := 0; bw <= 32; bw++ {
 		expected := 0
 		if bw > 0 {
 			expected = ((bw + 3) / 4) * 64
 		}
-		assert.Equal(t, expected, utlPayloadBytesLUT[bw],
+		assert.Equal(t, expected, utlPayloadBytes(bw),
 			"payload size mismatch for bw=%d", bw)
 	}
 }
@@ -193,11 +193,11 @@ func TestFormatConformance_PayloadSize(t *testing.T) {
 func TestFormatConformance_PayloadSizeSteps(t *testing.T) {
 	// Verify payload sizes increase in 64-byte steps (one super-word per 4 bit-widths).
 	for bw := 1; bw <= 32; bw++ {
-		size := utlPayloadBytesLUT[bw]
+		size := utlPayloadBytes(bw)
 		assert.Equal(t, 0, size%64, "payload must be multiple of 64 for bw=%d", bw)
 
 		if bw > 1 && bw%4 == 1 {
-			prev := utlPayloadBytesLUT[bw-1]
+			prev := utlPayloadBytes(bw - 1)
 			assert.Equal(t, 64, size-prev,
 				"payload should increase by 64 at bw=%d boundary", bw)
 		}
@@ -222,7 +222,7 @@ func TestFormatConformance_ExceptionTableLayout_SortedPositions(t *testing.T) {
 		"2 exceptions should use sorted-positions format")
 
 	svbLen := int(bo.Uint16(packed[headerBytes:]))
-	payloadEnd := headerBytes + svbLenBytes + utlPayloadBytesLUT[bw]
+	payloadEnd := headerBytes + svbLenBytes + utlPayloadBytes(bw)
 	positions := packed[payloadEnd : payloadEnd+excCount]
 
 	assert.Equal(t, 2, excCount)
@@ -250,7 +250,7 @@ func TestFormatConformance_ExceptionTableLayout_Bitmap(t *testing.T) {
 	require.True(t, hasExc, "expected exceptions")
 
 	if excCount > excBitmapThreshold {
-		payloadEnd := headerBytes + svbLenBytes + utlPayloadBytesLUT[bw]
+		payloadEnd := headerBytes + svbLenBytes + utlPayloadBytes(bw)
 		bitmap := packed[payloadEnd : payloadEnd+16]
 
 		// Verify bitmap has the correct bits set for exception positions.
@@ -343,7 +343,7 @@ func TestFormatConformance_WireLayout_NoExceptions(t *testing.T) {
 	require.False(t, hasExc)
 
 	// Layout: [header:4][payload:N] (no FOR for this data since min=0)
-	expectedLen := headerBytes + utlPayloadBytesLUT[bw]
+	expectedLen := headerBytes + utlPayloadBytes(bw)
 	assert.Equal(t, expectedLen, len(packed))
 }
 
@@ -363,7 +363,7 @@ func TestFormatConformance_WireLayout_WithExceptions(t *testing.T) {
 	require.True(t, hasExc)
 
 	svbLen := int(bo.Uint16(packed[headerBytes:]))
-	payloadBytes := utlPayloadBytesLUT[bw]
+	payloadBytes := utlPayloadBytes(bw)
 	excIndexSize := excCount
 	if excCount > excBitmapThreshold {
 		excIndexSize = 16
@@ -407,7 +407,7 @@ func TestKaitai_HeaderFields_Plain(t *testing.T) {
 	assert.False(t, b.hasZigZag)
 	assert.False(t, b.hasExceptions)
 	assert.Equal(t, 0, b.excCount)
-	assert.Equal(t, utlPayloadBytesLUT[b.bitWidth], b.payloadSize)
+	assert.Equal(t, utlPayloadBytes(b.bitWidth), b.payloadSize)
 }
 
 func TestKaitai_HeaderFields_Delta(t *testing.T) {

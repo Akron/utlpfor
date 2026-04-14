@@ -80,7 +80,7 @@ func TestUnpackUint32_UnsupportedType(t *testing.T) {
 
 func TestUnpackUint32_Uint16TypeAccepted(t *testing.T) {
 	h := encodeHeader(128, 8, 0, headerTypeUint16Flag)
-	payloadBytes := utlPayloadBytesLUT[8]
+	payloadBytes := utlPayloadBytes(8)
 	buf := make([]byte, headerBytes+payloadBytes)
 	bo.PutUint32(buf, h)
 	_, _, err := UnpackUint32(nil, make([]uint32, 128), buf)

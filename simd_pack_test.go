@@ -26,7 +26,7 @@ func TestPackUTL_SIMDMatchesScalar_AllBitWidths(t *testing.T) {
 				values[i] = uint32(i*7+3) & mask
 			}
 
-			payloadLen := utlPayloadBytesLUT[bw]
+			payloadLen := utlPayloadBytes(bw)
 			scalarOut := make([]byte, payloadLen)
 			packLanesUTLScalar(scalarOut, values, bw)
 
@@ -63,7 +63,7 @@ func TestUnpackUTL_SIMDMatchesScalar_AllBitWidths(t *testing.T) {
 				values[i] = uint32(i*7+3) & mask
 			}
 
-			payloadLen := utlPayloadBytesLUT[bw]
+			payloadLen := utlPayloadBytes(bw)
 			payload := make([]byte, payloadLen)
 			packLanesUTLScalar(payload, values, bw)
 
@@ -134,7 +134,7 @@ func BenchmarkKernelUnpackScalar(b *testing.B) {
 			for i := range values {
 				values[i] = uint32(i*7) & mask
 			}
-			payloadLen := utlPayloadBytesLUT[bw]
+			payloadLen := utlPayloadBytes(bw)
 			payload := make([]byte, payloadLen)
 			packLanesUTLScalar(payload, values, bw)
 			dst := make([]uint32, blockSize)
@@ -157,7 +157,7 @@ func BenchmarkKernelUnpackSSE2(b *testing.B) {
 			for i := range values {
 				values[i] = uint32(i*7) & mask
 			}
-			payloadLen := utlPayloadBytesLUT[bw]
+			payloadLen := utlPayloadBytes(bw)
 			payload := make([]byte, payloadLen)
 			packLanesUTLScalar(payload, values, bw)
 			dst := make([]uint32, blockSize)
@@ -180,7 +180,7 @@ func BenchmarkKernelUnpackAVX2(b *testing.B) {
 			for i := range values {
 				values[i] = uint32(i*7) & mask
 			}
-			payloadLen := utlPayloadBytesLUT[bw]
+			payloadLen := utlPayloadBytes(bw)
 			payload := make([]byte, payloadLen)
 			packLanesUTLScalar(payload, values, bw)
 			dst := make([]uint32, blockSize)
@@ -203,7 +203,7 @@ func BenchmarkKernelUnpackAVX2_VZ(b *testing.B) {
 			for i := range values {
 				values[i] = uint32(i*7) & mask
 			}
-			payloadLen := utlPayloadBytesLUT[bw]
+			payloadLen := utlPayloadBytes(bw)
 			payload := make([]byte, payloadLen)
 			packLanesUTLScalar(payload, values, bw)
 			dst := make([]uint32, blockSize)
@@ -227,7 +227,7 @@ func BenchmarkKernelPackAVX2_VZ(b *testing.B) {
 			for i := range values {
 				values[i] = uint32(i*7) & mask
 			}
-			payloadLen := utlPayloadBytesLUT[bw]
+			payloadLen := utlPayloadBytes(bw)
 			dst := make([]byte, payloadLen)
 
 			b.ReportAllocs()
@@ -249,7 +249,7 @@ func BenchmarkKernelPackScalar(b *testing.B) {
 			for i := range values {
 				values[i] = uint32(i*7) & mask
 			}
-			payloadLen := utlPayloadBytesLUT[bw]
+			payloadLen := utlPayloadBytes(bw)
 			dst := make([]byte, payloadLen)
 
 			b.ReportAllocs()
@@ -270,7 +270,7 @@ func BenchmarkKernelPackSSE2(b *testing.B) {
 			for i := range values {
 				values[i] = uint32(i*7) & mask
 			}
-			payloadLen := utlPayloadBytesLUT[bw]
+			payloadLen := utlPayloadBytes(bw)
 			dst := make([]byte, payloadLen)
 
 			b.ReportAllocs()
@@ -291,7 +291,7 @@ func BenchmarkKernelPackAVX2(b *testing.B) {
 			for i := range values {
 				values[i] = uint32(i*7) & mask
 			}
-			payloadLen := utlPayloadBytesLUT[bw]
+			payloadLen := utlPayloadBytes(bw)
 			dst := make([]byte, payloadLen)
 
 			b.ReportAllocs()
@@ -447,7 +447,7 @@ func BenchmarkKernelUnpackAVX2_ConstBW8(b *testing.B) {
 	for i := range values {
 		values[i] = uint32(i*7) & 0xFF
 	}
-	payloadLen := utlPayloadBytesLUT[8]
+	payloadLen := utlPayloadBytes(8)
 	payload := make([]byte, payloadLen)
 	packLanesUTLScalar(payload, values, 8)
 	dst := make([]uint32, blockSize)
@@ -468,7 +468,7 @@ func BenchmarkKernelUnpackAVX2_Direct(b *testing.B) {
 			for i := range values {
 				values[i] = uint32(i*7) & mask
 			}
-			payloadLen := utlPayloadBytesLUT[bw]
+			payloadLen := utlPayloadBytes(bw)
 			payload := make([]byte, payloadLen)
 			packLanesUTLScalar(payload, values, bw)
 			dst := make([]uint32, blockSize)
@@ -498,7 +498,7 @@ func BenchmarkKernelUnpackAVX512(b *testing.B) {
 			for i := range values {
 				values[i] = uint32(i*7) & mask
 			}
-			payloadLen := utlPayloadBytesLUT[bw]
+			payloadLen := utlPayloadBytes(bw)
 			payload := make([]byte, payloadLen)
 			packLanesUTLScalar(payload, values, bw)
 			dst := make([]uint32, blockSize)
@@ -521,7 +521,7 @@ func BenchmarkKernelPackAVX512(b *testing.B) {
 			for i := range values {
 				values[i] = uint32(i*7) & mask
 			}
-			payloadLen := utlPayloadBytesLUT[bw]
+			payloadLen := utlPayloadBytes(bw)
 			dst := make([]byte, payloadLen)
 
 			b.ReportAllocs()

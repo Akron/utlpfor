@@ -199,7 +199,7 @@ func TestPackUint32_DeltaMutatesInputInPlace(t *testing.T) {
 	}
 	original := append([]uint32(nil), values...)
 
-	_, err := PackUint32(Delta, make([]byte, 0, headerBytes+utlPayloadBytesLUT[32]), nil, values)
+	_, err := PackUint32(Delta, make([]byte, 0, headerBytes+utlPayloadBytes(32)), nil, values)
 	require.NoError(t, err)
 
 	assert.NotEqual(t, original, values, "delta path should encode in place")
@@ -224,7 +224,7 @@ func TestPackUint32_DeltaPath_NoAllocsWithPreallocatedDst(t *testing.T) {
 		template[i] = uint32(i * 10)
 	}
 	work := make([]uint32, len(template))
-	dst := make([]byte, 0, headerBytes+utlPayloadBytesLUT[32])
+	dst := make([]byte, 0, headerBytes+utlPayloadBytes(32))
 
 	allocs := testing.AllocsPerRun(1000, func() {
 		copy(work, template)

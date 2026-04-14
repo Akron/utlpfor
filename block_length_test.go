@@ -10,7 +10,7 @@ import (
 
 // makeValidBlock creates a minimal valid block buffer for testing BlockLength.
 func makeValidBlock(count, bitWidth int, _ bool) []byte {
-	payloadBytes := utlPayloadBytesLUT[bitWidth]
+	payloadBytes := utlPayloadBytes(bitWidth)
 	total := headerBytes + payloadBytes
 	buf := make([]byte, total)
 	h := encodeHeader(count, bitWidth, 0, headerTypeUint32Flag)
@@ -20,7 +20,7 @@ func makeValidBlock(count, bitWidth int, _ bool) []byte {
 
 // makeValidBlockWithExceptions creates a block buffer with exception metadata.
 func makeValidBlockWithExceptions(count, bitWidth, excCount int) []byte {
-	payloadBytes := utlPayloadBytesLUT[bitWidth]
+	payloadBytes := utlPayloadBytes(bitWidth)
 	excIdxSize := excCount
 	if excCount > excBitmapThreshold {
 		excIdxSize = 16
@@ -64,7 +64,7 @@ func TestBlockLength_AllStepBitWidths(t *testing.T) {
 			buf := makeValidBlock(128, bw, false)
 			got, err := BlockLength(buf)
 			require.NoError(t, err)
-			assert.Equal(t, 4+utlPayloadBytesLUT[bw], got)
+			assert.Equal(t, 4+utlPayloadBytes(bw), got)
 		})
 	}
 }

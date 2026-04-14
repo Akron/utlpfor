@@ -301,9 +301,9 @@ func packUint32SSE2(flag byte, dst []byte, scratch []uint32, values []uint32) ([
 	}
 
 	bitWidth, excCount := selectBitWidthSSE2(values)
-	payloadBytes := utlPayloadBytesLUT[bitWidth]
+	payloadBytes := utlPayloadBytes(bitWidth)
 	hasExceptions := excCount > 0
-	forBaseBytes := forBaseBytesLUT[forW]
+	forBaseBytes := forBaseBytes(forW)
 
 	packInput := values
 	if len(values) < blockSize {
@@ -378,10 +378,10 @@ func unpackUint32SSE2(dst []uint32, scratch []uint32, buf []byte) ([]uint32, int
 	var forBase uint32
 	if hasFOR {
 		forBase = readFORBase(buf, pOff, forWidth)
-		pOff += forBaseBytesLUT[forWidth]
+		pOff += forBaseBytes(forWidth)
 	}
 
-	payloadBytes := utlPayloadBytesLUT[bitWidth]
+	payloadBytes := utlPayloadBytes(bitWidth)
 
 	if len(buf) < pOff+payloadBytes {
 		return nil, 0, ErrInvalidBuffer

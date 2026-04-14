@@ -24,7 +24,7 @@ func TestPackScalar64MatchesNaive_AllBitWidths(t *testing.T) {
 				values[i] = uint32(i*7+3) & mask
 			}
 
-			payloadLen := utlPayloadBytesLUT[bw]
+			payloadLen := utlPayloadBytes(bw)
 			naiveOut := make([]byte, payloadLen)
 			newOut := make([]byte, payloadLen)
 
@@ -48,7 +48,7 @@ func TestUnpackScalar64MatchesNaive_AllBitWidths(t *testing.T) {
 				values[i] = uint32(i*7+3) & mask
 			}
 
-			payloadLen := utlPayloadBytesLUT[bw]
+			payloadLen := utlPayloadBytes(bw)
 			payload := make([]byte, payloadLen)
 			packLanesUTLScalarNaive(payload, values, bw)
 
@@ -122,7 +122,7 @@ func TestPackScalar64MatchesNaive_Random(t *testing.T) {
 					values[i] = rng.Uint32() & mask
 				}
 
-				payloadLen := utlPayloadBytesLUT[bw]
+				payloadLen := utlPayloadBytes(bw)
 				naiveOut := make([]byte, payloadLen)
 				newOut := make([]byte, payloadLen)
 
@@ -150,7 +150,7 @@ func TestUnpackScalar64MatchesNaive_Random(t *testing.T) {
 					values[i] = rng.Uint32() & mask
 				}
 
-				payloadLen := utlPayloadBytesLUT[bw]
+				payloadLen := utlPayloadBytes(bw)
 				payload := make([]byte, payloadLen)
 				packLanesUTLScalarNaive(payload, values, bw)
 
@@ -180,7 +180,7 @@ func BenchmarkKernelPackScalarNaive(b *testing.B) {
 			for i := range values {
 				values[i] = uint32(i*7) & mask
 			}
-			payloadLen := utlPayloadBytesLUT[bw]
+			payloadLen := utlPayloadBytes(bw)
 			dst := make([]byte, payloadLen)
 
 			b.ReportAllocs()
@@ -204,7 +204,7 @@ func BenchmarkKernelUnpackScalarNaive(b *testing.B) {
 			for i := range values {
 				values[i] = uint32(i*7) & mask
 			}
-			payloadLen := utlPayloadBytesLUT[bw]
+			payloadLen := utlPayloadBytes(bw)
 			payload := make([]byte, payloadLen)
 			packLanesUTLScalarNaive(payload, values, bw)
 			dst := make([]uint32, blockSize)
@@ -230,7 +230,7 @@ func BenchmarkKernelPackScalar64(b *testing.B) {
 			for i := range values {
 				values[i] = uint32(i*7) & mask
 			}
-			payloadLen := utlPayloadBytesLUT[bw]
+			payloadLen := utlPayloadBytes(bw)
 			dst := make([]byte, payloadLen)
 
 			b.ReportAllocs()
@@ -254,7 +254,7 @@ func BenchmarkKernelUnpackScalar64(b *testing.B) {
 			for i := range values {
 				values[i] = uint32(i*7) & mask
 			}
-			payloadLen := utlPayloadBytesLUT[bw]
+			payloadLen := utlPayloadBytes(bw)
 			payload := make([]byte, payloadLen)
 			packLanesUTLScalar(payload, values, bw)
 			dst := make([]uint32, blockSize)

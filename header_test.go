@@ -193,7 +193,7 @@ func TestUtlPayloadBytesLUT(t *testing.T) {
 		if bw > 0 {
 			expected = ((bw + 3) / 4) * 64
 		}
-		assert.Equal(t, expected, utlPayloadBytesLUT[bw],
+		assert.Equal(t, expected, utlPayloadBytes(bw),
 			"payload size mismatch for bw=%d", bw)
 	}
 }

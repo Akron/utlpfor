@@ -143,9 +143,9 @@ func packUint32Scalar(flag byte, dst []byte, scratch []uint32, values []uint32) 
 	}
 
 	bitWidth, excCount := selectBitWidth(values)
-	payloadBytes := utlPayloadBytesLUT[bitWidth]
+	payloadBytes := utlPayloadBytes(bitWidth)
 	hasExceptions := excCount > 0
-	forBaseBytes := forBaseBytesLUT[forW]
+	forBaseBytes := forBaseBytes(forW)
 
 	if !hasExceptions {
 		pOff := payloadOffset(forBaseBytes, false)
@@ -212,10 +212,10 @@ func unpackUint32Scalar(dst []uint32, scratch []uint32, buf []byte) ([]uint32, i
 	var forBase uint32
 	if hasFOR {
 		forBase = readFORBase(buf, pOff, forWidth)
-		pOff += forBaseBytesLUT[forWidth]
+		pOff += forBaseBytes(forWidth)
 	}
 
-	payloadBytes := utlPayloadBytesLUT[bitWidth]
+	payloadBytes := utlPayloadBytes(bitWidth)
 
 	if len(buf) < pOff+payloadBytes {
 		return nil, 0, ErrInvalidBuffer

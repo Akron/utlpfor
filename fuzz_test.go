@@ -151,7 +151,7 @@ func FuzzCompressionRatio(f *testing.F) {
 			return
 		}
 
-		theoreticalPacked := headerBytes + utlPayloadBytesLUT[maxBW]
+		theoreticalPacked := headerBytes + utlPayloadBytes(maxBW)
 		rawSize := len(values) * 4
 		if maxBW < 32 && theoreticalPacked < rawSize {
 			assert.LessOrEqual(t, len(packed), rawSize,

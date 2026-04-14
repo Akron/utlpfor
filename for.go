@@ -59,7 +59,7 @@ const (
 func totalBlockCost(bitWidth, excCount, forBaseBytes int) int {
 	hasExc := min(excCount, 1)
 	svbDataEstimate := (excCount*svbAvgBytesPerExcNumer + svbAvgBytesPerExcDenom/2) / svbAvgBytesPerExcDenom
-	return headerBytes + utlPayloadBytesLUT[bitWidth] + forBaseBytes +
+	return headerBytes + utlPayloadBytes(bitWidth) + forBaseBytes +
 		hasExc*svbLenBytes + min(excCount, excBitmapThreshold) + svbDataEstimate
 }
 

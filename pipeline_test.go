@@ -229,7 +229,7 @@ func TestFullPipeline_GetMatchesUnpack_RandomDelta(t *testing.T) {
 
 func TestFullPipeline_IntTypeValidation(t *testing.T) {
 	h := encodeHeader(128, 8, 0, uint32(IntTypeUint64)<<headerTypeShift)
-	buf := make([]byte, 4+utlPayloadBytesLUT[8])
+	buf := make([]byte, 4+utlPayloadBytes(8))
 	bo.PutUint32(buf, h)
 
 	_, _, err := UnpackUint32(nil, make([]uint32, 128), buf)

@@ -328,9 +328,9 @@ func packUint32AVX2(flag byte, dst []byte, scratch []uint32, values []uint32) ([
 	}
 
 	bitWidth, excCount := selectBitWidthAVX2(values)
-	payloadBytes := utlPayloadBytesLUT[bitWidth]
+	payloadBytes := utlPayloadBytes(bitWidth)
 	hasExceptions := excCount > 0
-	forBaseBytes := forBaseBytesLUT[forW]
+	forBaseBytes := forBaseBytes(forW)
 
 	packInput := values
 	if len(values) < blockSize {
@@ -409,10 +409,10 @@ func unpackUint32AVX2(dst []uint32, scratch []uint32, buf []byte) ([]uint32, int
 	var forBase uint32
 	if hasFOR {
 		forBase = readFORBase(buf, pOff, forWidth)
-		pOff += forBaseBytesLUT[forWidth]
+		pOff += forBaseBytes(forWidth)
 	}
 
-	payloadBytes := utlPayloadBytesLUT[bitWidth]
+	payloadBytes := utlPayloadBytes(bitWidth)
 
 	if len(buf) < pOff+payloadBytes {
 		return nil, 0, ErrInvalidBuffer
@@ -429,14 +429,13 @@ func unpackUint32AVX2(dst []uint32, scratch []uint32, buf []byte) ([]uint32, int
 	// which will likely be in Go 1.27.
 	// Until then, we may need SSE2 unpacker or gotip
 	unpackLanesUTLAVX2(dst, payload, blockSize, bitWidth)
-	archsimd.ClearAVXUpperBits()
-	// unpackLanesUTLSSE2(dst, payload, blockSize, bitWidth)
 
 	dst = dst[:count]
 
 	consumed := pOff + payloadBytes
 
 	if hasExceptions {
+		archsimd.ClearAVXUpperBits()
 		excStart := pOff + payloadBytes
 		var err error
 		consumed, err = applyExceptions(dst, buf, excStart, count, bitWidth, excCount, scratch)
@@ -449,19 +448,20 @@ func unpackUint32AVX2(dst []uint32, scratch []uint32, buf []byte) ([]uint32, int
 		if hasZigZag {
 			if count == blockSize {
 				deltaDecodePerLaneAVX2(dst, true)
-				archsimd.ClearAVXUpperBits()
 			} else {
+				archsimd.ClearAVXUpperBits()
 				deltaDecodePerLaneScalar(dst, true)
 			}
 		} else {
 			var overflowPos int
 			if count == blockSize {
 				overflowPos = deltaDecodePerLaneWithOverflowAVX2(dst, false)
-				archsimd.ClearAVXUpperBits()
 			} else {
+				archsimd.ClearAVXUpperBits()
 				overflowPos = deltaDecodePerLaneWithOverflowScalar(dst, false)
 			}
 			if overflowPos > 0 {
+				archsimd.ClearAVXUpperBits()
 				return nil, 0, &ErrOverflow{Position: overflowPos}
 			}
 		}
@@ -469,9 +469,9 @@ func unpackUint32AVX2(dst []uint32, scratch []uint32, buf []byte) ([]uint32, int
 
 	if hasFOR {
 		forAddAVX2(dst, count, forBase)
-		archsimd.ClearAVXUpperBits()
 	}
 
+	archsimd.ClearAVXUpperBits()
 	return dst, consumed, nil
 }
 
