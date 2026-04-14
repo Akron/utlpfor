@@ -149,8 +149,6 @@ func packLanesUTLSSE2Generic(dst []byte, values []uint32, bitWidth int) {
 	}
 }
 
-// --- SSE2 Zigzag Encode/Decode ---
-
 // zigzagEncodeSSE2 applies zigzag encoding using SSE2 (Uint32x4).
 // Formula: (n << 1) ^ (n >> 31) with arithmetic right shift.
 func zigzagEncodeSSE2(buf []uint32, n int) {
@@ -183,8 +181,6 @@ func zigzagDecodeSSE2(dst, src []uint32) {
 		dst[i] = uint32(zigzagDecode32(src[i]))
 	}
 }
-
-// --- SSE2 Per-Lane Delta Encode/Decode ---
 
 // deltaEncodePerLaneSSE2 computes per-lane deltas using SSE2 (Uint32x4).
 // Processes all 16 lanes in four register groups.

@@ -32,6 +32,8 @@ func decodeExceptionHighBitsInto(dst []uint32, buf []byte, excStart, excCount in
 	if svbStart+svbLen > len(buf) {
 		return 0, ErrInvalidBuffer
 	}
+	// High bits are serialized immediately after exception index bytes.
+	// Keeping this layout fixed avoids format branching in pack/unpack paths.
 	streamvbyte.DecodeUint32(
 		buf[svbStart:svbStart+svbLen], excCount,
 		&streamvbyte.DecodeOptions[uint32]{Buffer: dst[:excCount]},
@@ -97,20 +99,42 @@ func collectAndWriteExceptions(values []uint32, bitWidth int,
 		n := 0
 		for i, v := range values {
 			if v > mask {
+				// Small-exception mode stores sorted absolute positions.
+				// This keeps Get() lookup cheap via early-exit linear scan.
 				excIdxDst[n] = byte(i)
 				highBits[n] = v >> bitWidth
 				n++
 			}
 		}
 	} else {
-		clear(excIdxDst[:16])
-		n := 0
+		// Build the 128-bit exception bitmap in registers first, then write once.
+		// This reduces repeated byte stores in the hot loop.
+		var word0, word1 uint64
 		for i, v := range values {
-			if v > mask {
-				excIdxDst[i>>3] |= 1 << (i & 7)
-				highBits[n] = v >> bitWidth
-				n++
+			if v <= mask {
+				continue
 			}
+			if i < 64 {
+				word0 |= uint64(1) << i
+			} else {
+				word1 |= uint64(1) << (i - 64)
+			}
+		}
+		bo.PutUint64(excIdxDst, word0)
+		bo.PutUint64(excIdxDst[8:], word1)
+
+		// Iterate set bits in ascending index order to match bitmap rank order.
+		// SVB highBits must follow this exact order for correct reconstruction.
+		n := 0
+		for w := word0; w != 0; w &= w - 1 {
+			i := bits.TrailingZeros64(w)
+			highBits[n] = values[i] >> bitWidth
+			n++
+		}
+		for w := word1; w != 0; w &= w - 1 {
+			i := 64 + bits.TrailingZeros64(w)
+			highBits[n] = values[i] >> bitWidth
+			n++
 		}
 	}
 }
@@ -131,6 +155,7 @@ func applyExceptions(dst []uint32, buf []byte, excStart, count, bitWidth, excCou
 	if excCount <= excBitmapThreshold {
 		excPos := buf[excStart : excStart+excCount]
 		if count == blockSize {
+			// Fast path: packed positions are guaranteed in-range for full blocks.
 			for i := range excCount {
 				dst[excPos[i]] |= decodeBuf[i] << shift
 			}
@@ -143,6 +168,7 @@ func applyExceptions(dst []uint32, buf []byte, excStart, count, bitWidth, excCou
 			}
 		}
 	} else {
+		// Pre-shift once; bitmap apply can then OR without extra per-hit shifts.
 		for i := range excCount {
 			decodeBuf[i] <<= shift
 		}
@@ -160,6 +186,8 @@ func applyBitmapExceptions(dst []uint32, decodeBuf []uint32, bitmap []byte, coun
 	word0 := bo.Uint64(bitmap)
 	word1 := bo.Uint64(bitmap[8:])
 	if count < blockSize {
+		// Last partial block may carry stale high bits in trailing bitmap region.
+		// Mask them so exception rank and decoded values stay aligned.
 		if count < 64 {
 			word1 = 0
 			word0 &= (uint64(1) << count) - 1
@@ -169,6 +197,7 @@ func applyBitmapExceptions(dst []uint32, decodeBuf []uint32, bitmap []byte, coun
 	}
 
 	for word0 != 0 {
+		// w &= w-1 drops one set bit, so cost scales with exceptions, not 128 slots.
 		bitPos := bits.TrailingZeros64(word0)
 		dst[bitPos] |= decodeBuf[excIdx]
 		excIdx++
@@ -207,6 +236,7 @@ func findExceptionIndex(buf []byte, excStart, excCount, pos int) int {
 		return -1
 	}
 	count := 0
+	// Rank = popcount(bits before pos); this maps bitmap position to SVB index.
 	for b := range byteIdx {
 		count += bits.OnesCount8(bitmap[b])
 	}

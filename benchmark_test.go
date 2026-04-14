@@ -440,3 +440,24 @@ func BenchmarkGetUint32Delta(b *testing.B) {
 		GetUint32(i%blockSize, packed)
 	}
 }
+
+func BenchmarkCollectAndWriteExceptions(b *testing.B) {
+	values := make([]uint32, blockSize)
+	for i := range values {
+		values[i] = uint32(i)
+	}
+	for i := range 48 {
+		values[(i*11)%blockSize] = 0x200000 + uint32(i)
+	}
+
+	const bitWidth = 12
+	const excCount = 48
+	var excIdx [16]byte
+	var highBits [blockSize]uint32
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		collectAndWriteExceptions(values, bitWidth, excIdx[:], excCount, highBits[:])
+	}
+}

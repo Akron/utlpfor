@@ -237,6 +237,39 @@ func TestCollectExceptionsDirect_Counts(t *testing.T) {
 	assert.Equal(t, uint32(0x1000000>>7), highBits[1])
 }
 
+func TestCollectAndWriteExceptions_BitmapPath(t *testing.T) {
+	values := make([]uint32, blockSize)
+	for i := range values {
+		values[i] = uint32(i)
+	}
+	// Force >16 exceptions so bitmap mode is used.
+	for i := range 24 {
+		pos := i * 5
+		if pos >= blockSize {
+			pos = blockSize - 1
+		}
+		values[pos] = 0x2000 + uint32(i)
+	}
+
+	const bitWidth = 8
+	const excCount = 24
+	var excIdx [16]byte
+	var highBits [blockSize]uint32
+
+	collectAndWriteExceptions(values, bitWidth, excIdx[:], excCount, highBits[:])
+
+	seen := 0
+	for i := range blockSize {
+		if excIdx[i>>3]&(1<<(i&7)) == 0 {
+			continue
+		}
+		require.Less(t, seen, excCount)
+		assert.Equal(t, values[i]>>bitWidth, highBits[seen])
+		seen++
+	}
+	assert.Equal(t, excCount, seen)
+}
+
 func TestFindExceptionIndex_SortedPositions(t *testing.T) {
 	buf := make([]byte, 20)
 	buf[0] = 5
