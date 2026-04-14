@@ -3,7 +3,8 @@
        compare-with-fastpfor bench-matrix bench-matrix-table bench-matrix-compare \
        bench-quick bench-quick-save \
        fuzz fuzz-simd fuzz-regression fuzz-regression-simd \
-       generate-native generate
+       generate-native generate \
+       sim
 
 FUZZTIME ?= 30s
 BENCHCOUNT ?= 10
@@ -198,3 +199,9 @@ fuzz-regression:
 
 fuzz-regression-simd:
 	GOEXPERIMENT=simd go test -run='Fuzz' -count=1 ./...
+
+SIM_RUNS ?= 10
+SIM_WARMUP ?= 5
+
+sim:
+	GOEXPERIMENT=simd go run ./cmd/sim -runs $(SIM_RUNS) -warmup $(SIM_WARMUP)
