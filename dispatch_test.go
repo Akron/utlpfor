@@ -72,11 +72,12 @@ func TestDispatch_ScalarAlwaysAvailable(t *testing.T) {
 	for i := range values {
 		values[i] = uint32(i)
 	}
+	scratch := make([]uint32, blockSize)
 
-	packed, err := packUint32Scalar(0, nil, nil, values)
+	packed, err := packUint32Scalar(0, nil, scratch, values)
 	require.NoError(t, err)
 
-	unpacked, _, err := unpackUint32Scalar(nil, make([]uint32, 128), packed)
+	unpacked, _, err := unpackUint32Scalar(nil, scratch, packed)
 	require.NoError(t, err)
 	assert.Equal(t, values, unpacked)
 }
@@ -86,8 +87,9 @@ func TestDispatch_AllLevelsProduceIdenticalOutput(t *testing.T) {
 	for i := range values {
 		values[i] = uint32(i*7 + 3)
 	}
+	scratch := make([]uint32, blockSize)
 
-	scalarPacked, err := packUint32Scalar(0, nil, nil, values)
+	scalarPacked, err := packUint32Scalar(0, nil, scratch, values)
 	require.NoError(t, err)
 
 	apiPacked, err := PackUint32(0, nil, nil, values)
@@ -101,8 +103,9 @@ func TestDispatch_AllLevelsProduceIdenticalOutput_Delta(t *testing.T) {
 	for i := range values {
 		values[i] = uint32(i * 100)
 	}
+	scratch := make([]uint32, blockSize)
 	scalarWork := append([]uint32(nil), values...)
-	scalarPacked, err := packUint32Scalar(Delta, nil, nil, scalarWork)
+	scalarPacked, err := packUint32Scalar(Delta, nil, scratch, scalarWork)
 	require.NoError(t, err)
 
 	apiWork := append([]uint32(nil), values...)
@@ -202,10 +205,11 @@ func BenchmarkScalarDirect(b *testing.B) {
 		values[i] = uint32(i)
 	}
 	dst := make([]byte, 0, 1024)
+	scratch := make([]uint32, blockSize)
 
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		dst, _ = packUint32Scalar(0, dst[:0], nil, values)
+		dst, _ = packUint32Scalar(0, dst[:0], scratch, values)
 	}
 }

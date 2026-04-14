@@ -17,9 +17,6 @@ func excIndexSize(excCount int) int {
 // readSVBLen reads the StreamVByte data length from the block buffer.
 // svbLen is always at offset 4 (immediately after the header), regardless of FOR.
 func readSVBLen(buf []byte) (int, error) {
-	if len(buf) < headerBytes+svbLenBytes {
-		return 0, ErrInvalidBuffer
-	}
 	return int(bo.Uint16(buf[headerBytes:])), nil
 }
 
@@ -159,9 +156,6 @@ func applyExceptions(dst []uint32, buf []byte, excStart, count, bitWidth, excCou
 // It iterates only set bits, avoiding a full scan over all positions.
 func applyBitmapExceptions(dst []uint32, decodeBuf []uint32, bitmap []byte, count int) {
 	excIdx := 0
-	if count <= 0 {
-		return
-	}
 
 	word0 := bo.Uint64(bitmap)
 	word1 := bo.Uint64(bitmap[8:])

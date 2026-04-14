@@ -19,12 +19,13 @@ func FuzzSIMDScalarConsistency(f *testing.F) {
 			return
 		}
 
+		scratch := make([]uint32, blockSize)
 		scalarValues := make([]uint32, len(values))
 		copy(scalarValues, values)
 		simdValues := make([]uint32, len(values))
 		copy(simdValues, values)
 
-		scalarPacked, err := packUint32Scalar(0, nil, nil, scalarValues)
+		scalarPacked, err := packUint32Scalar(0, nil, scratch, scalarValues)
 		if err != nil {
 			return
 		}

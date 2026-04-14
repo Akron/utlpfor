@@ -2,6 +2,9 @@ package utlpfor
 
 import "math/rand"
 
+// stepBitWidths lists all valid step bitwidths for test iteration.
+var stepBitWidths = [9]int{0, 4, 8, 12, 16, 20, 24, 28, 32}
+
 // genSequential returns n sequentially increasing uint32 values [0, 1, 2, ...].
 // Matches fastpfor-go's genSequential for cross-repo benchmark comparison.
 func genSequential(n int) []uint32 {

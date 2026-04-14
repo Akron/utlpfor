@@ -59,7 +59,7 @@ func getUint32Scalar(pos int, buf []byte) (uint32, error) {
 		return 0, err
 	}
 
-	if count == 0 || pos < 0 || pos >= count {
+	if pos < 0 || pos >= count {
 		return 0, ErrPositionOutOfRange
 	}
 
