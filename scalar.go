@@ -142,7 +142,12 @@ func packUint32Scalar(flag byte, dst []byte, scratch []uint32, values []uint32) 
 		headerFlags |= headerDeltaFlag
 	}
 
-	bitWidth, excCount := selectBitWidth(values)
+	var bitWidth, excCount int
+	if flag&NoPatch != 0 {
+		bitWidth = selectBitWidthNoPatch(values)
+	} else {
+		bitWidth, excCount = selectBitWidth(values)
+	}
 	payloadBytes := utlPayloadBytes(bitWidth)
 	hasExceptions := excCount > 0
 	forBaseBytes := forBaseBytes(forW)

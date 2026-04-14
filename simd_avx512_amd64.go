@@ -174,7 +174,12 @@ func packUint32AVX512(flag byte, dst []byte, scratch []uint32, values []uint32) 
 		headerFlags |= headerDeltaFlag
 	}
 
-	bitWidth, excCount := selectBitWidthAVX512(values)
+	var bitWidth, excCount int
+	if flag&NoPatch != 0 {
+		bitWidth = selectBitWidthNoPatchAVX512(values)
+	} else {
+		bitWidth, excCount = selectBitWidthAVX512(values)
+	}
 	payloadBytes := utlPayloadBytes(bitWidth)
 	hasExceptions := excCount > 0
 	forBaseBytes := forBaseBytes(forW)
@@ -464,6 +469,28 @@ func buildExcCountsAVX512(values []uint32) (exc [9]int) {
 		exc[7] += gtCountU32(v, 0xFFFFFFF)
 	}
 	return
+}
+
+// selectBitWidthNoPatchAVX512 computes the minimum step bitwidth using AVX-512
+// OR-reduction. No exception analysis is performed.
+func selectBitWidthNoPatchAVX512(values []uint32) int {
+	orVec := archsimd.BroadcastUint32x16(0)
+	i := 0
+	for ; i+16 <= len(values); i += 16 {
+		orVec = orVec.Or(archsimd.LoadUint32x16Slice(values[i:]))
+	}
+	var lanes [16]uint32
+	orVec.Store(&lanes)
+	var orAll uint32
+	for _, v := range lanes {
+		orAll |= v
+	}
+
+	// TODO-PERF: Fallback to AVX2 for the tail
+	for ; i < len(values); i++ {
+		orAll |= values[i]
+	}
+	return roundUpToStep(bits.Len32(orAll))
 }
 
 // findMinMaxAVX512 computes min/max using AVX-512 16-wide operations with 2

@@ -17,6 +17,17 @@ func roundUpToStep(bw int) int {
 // stepIndex converts a step bitwidth (0,4,8,...,32) to the step index (0-8).
 func stepIndex(bw int) int { return bw >> 2 }
 
+// selectBitWidthNoPatch computes the minimum step bitwidth that fits all
+// values with zero exceptions. Uses a single OR-reduction pass over the
+// data followed by bits.Len32 and step rounding.
+func selectBitWidthNoPatch(values []uint32) int {
+	var orAll uint32
+	for _, v := range values {
+		orAll |= v
+	}
+	return roundUpToStep(bits.Len32(orAll))
+}
+
 // excCostBytesPerValue maps step-delta index (0-8) to SVB bytes-per-value.
 // Index is (maxStepIdx - candidateStepIdx), i.e. the number of 4-bit steps
 // between the candidate and the maximum. Pre-computed from:

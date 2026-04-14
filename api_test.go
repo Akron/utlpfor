@@ -51,3 +51,9 @@ func TestNoFORFlagConstant(t *testing.T) {
 	assert.Equal(t, byte(2), utlpfor.NoFOR)
 	assert.Equal(t, byte(0), utlpfor.Delta&utlpfor.NoFOR, "flags must not overlap")
 }
+
+func TestNoPatchFlagConstant(t *testing.T) {
+	assert.Equal(t, byte(4), utlpfor.NoPatch)
+	assert.Equal(t, byte(0), utlpfor.Delta&utlpfor.NoPatch, "flags must not overlap")
+	assert.Equal(t, byte(0), utlpfor.NoFOR&utlpfor.NoPatch, "flags must not overlap")
+}

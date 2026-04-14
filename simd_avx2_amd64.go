@@ -327,7 +327,12 @@ func packUint32AVX2(flag byte, dst []byte, scratch []uint32, values []uint32) ([
 		headerFlags |= headerDeltaFlag
 	}
 
-	bitWidth, excCount := selectBitWidthAVX2(values)
+	var bitWidth, excCount int
+	if flag&NoPatch != 0 {
+		bitWidth = selectBitWidthNoPatchAVX2(values)
+	} else {
+		bitWidth, excCount = selectBitWidthAVX2(values)
+	}
 	payloadBytes := utlPayloadBytes(bitWidth)
 	hasExceptions := excCount > 0
 	forBaseBytes := forBaseBytes(forW)
@@ -606,6 +611,27 @@ func findMinMaxAVX2(values []uint32) (uint32, uint32) {
 		}
 	}
 	return minResult, maxResult
+}
+
+// selectBitWidthNoPatchAVX2 computes the minimum step bitwidth using AVX2
+// OR-reduction. No exception analysis is performed.
+func selectBitWidthNoPatchAVX2(values []uint32) int {
+	orVec := archsimd.BroadcastUint32x8(0)
+	i := 0
+	for ; i+8 <= len(values); i += 8 {
+		orVec = orVec.Or(archsimd.LoadUint32x8Slice(values[i:]))
+	}
+	var lanes [8]uint32
+	orVec.Store(&lanes)
+	var orAll uint32
+	for _, v := range lanes {
+		orAll |= v
+	}
+	// TODO-PERF: Fallback to SSE2 for the tail
+	for ; i < len(values); i++ {
+		orAll |= values[i]
+	}
+	return roundUpToStep(bits.Len32(orAll))
 }
 
 // forSubtractAVX2 subtracts baseValue from each element using AVX2.

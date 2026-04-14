@@ -2,6 +2,7 @@ package utlpfor
 
 import (
 	"fmt"
+	"math/bits"
 	"slices"
 	"testing"
 
@@ -147,4 +148,275 @@ func TestPackUint32_DstReuse(t *testing.T) {
 	packed, err := PackUint32(0, dst, nil, values)
 	require.NoError(t, err)
 	assert.True(t, cap(packed) >= cap(dst), "should reuse provided dst buffer")
+}
+
+func TestPackUint32_NoPatch_RoundTrip_AllBitWidths(t *testing.T) {
+	for bw := 1; bw <= 32; bw++ {
+		t.Run(fmt.Sprintf("bw%d", bw), func(t *testing.T) {
+			values := make([]uint32, blockSize)
+			mask := uint32((1 << bw) - 1)
+			if bw == 32 {
+				mask = 0xFFFFFFFF
+			}
+			for i := range values {
+				values[i] = uint32(i*7+3) & mask
+			}
+			original := slices.Clone(values)
+			packed, err := PackUint32(NoPatch, nil, nil, values)
+			require.NoError(t, err)
+
+			header := bo.Uint32(packed)
+			excCount := int((header >> headerExcCountShift) & headerExcCountMask)
+			assert.Equal(t, 0, excCount, "NoPatch must produce zero exceptions")
+
+			unpacked, _, err := UnpackUint32(nil, make([]uint32, blockSize), packed)
+			require.NoError(t, err)
+			assert.Equal(t, original, unpacked)
+		})
+	}
+}
+
+func TestPackUint32_NoPatch_PartialBlock(t *testing.T) {
+	for _, count := range []int{1, 15, 50, 100, 127} {
+		t.Run(fmt.Sprintf("count%d", count), func(t *testing.T) {
+			values := make([]uint32, count)
+			for i := range values {
+				values[i] = uint32(i)
+			}
+			original := slices.Clone(values)
+			packed, err := PackUint32(NoPatch, nil, nil, values)
+			require.NoError(t, err)
+			unpacked, _, err := UnpackUint32(nil, make([]uint32, blockSize), packed)
+			require.NoError(t, err)
+			assert.Equal(t, original, unpacked)
+		})
+	}
+}
+
+func TestPackUint32_NoPatch_WithOutliers(t *testing.T) {
+	values := make([]uint32, blockSize)
+	for i := range values {
+		values[i] = uint32(i % 256)
+	}
+	values[50] = 0xFFFFFF
+	values[100] = 0xFFFFFFF
+	original := slices.Clone(values)
+
+	packed, err := PackUint32(NoPatch, nil, nil, values)
+	require.NoError(t, err)
+
+	header := bo.Uint32(packed)
+	excCount := int((header >> headerExcCountShift) & headerExcCountMask)
+	assert.Equal(t, 0, excCount, "NoPatch must never produce exceptions")
+
+	unpacked, _, err := UnpackUint32(nil, make([]uint32, blockSize), packed)
+	require.NoError(t, err)
+	assert.Equal(t, original, unpacked)
+}
+
+func TestPackUint32_NoPatch_DeltaCombination(t *testing.T) {
+	values := make([]uint32, blockSize)
+	for i := range values {
+		values[i] = uint32(i * 100)
+	}
+	expected := slices.Clone(values)
+
+	packed, err := PackUint32(Delta|NoPatch, nil, nil, values)
+	require.NoError(t, err)
+
+	header := bo.Uint32(packed)
+	excCount := int((header >> headerExcCountShift) & headerExcCountMask)
+	assert.Equal(t, 0, excCount)
+
+	unpacked, _, err := UnpackUint32(nil, make([]uint32, blockSize), packed)
+	require.NoError(t, err)
+	assert.Equal(t, expected, unpacked)
+}
+
+func TestPackUint32_NoPatch_AllZeros(t *testing.T) {
+	values := make([]uint32, blockSize)
+	packed, err := PackUint32(NoPatch, nil, nil, values)
+	require.NoError(t, err)
+	unpacked, _, err := UnpackUint32(nil, make([]uint32, blockSize), packed)
+	require.NoError(t, err)
+	assert.Equal(t, values, unpacked)
+}
+
+func TestPackUint32_NoPatch_AllMax(t *testing.T) {
+	values := make([]uint32, blockSize)
+	for i := range values {
+		values[i] = 0xFFFFFFFF
+	}
+	original := slices.Clone(values)
+	packed, err := PackUint32(NoPatch, nil, nil, values)
+	require.NoError(t, err)
+	unpacked, _, err := UnpackUint32(nil, make([]uint32, blockSize), packed)
+	require.NoError(t, err)
+	assert.Equal(t, original, unpacked)
+}
+
+func TestPackUint32_NoPatch_DictionaryCompressed(t *testing.T) {
+	values := make([]uint32, blockSize)
+	for i := range values {
+		values[i] = uint32(i*8 + i%3)
+	}
+	original := slices.Clone(values)
+
+	packed, err := PackUint32(NoPatch, nil, nil, values)
+	require.NoError(t, err)
+
+	unpacked, _, err := UnpackUint32(nil, make([]uint32, blockSize), packed)
+	require.NoError(t, err)
+	assert.Equal(t, original, unpacked)
+
+	header := bo.Uint32(packed)
+	encodedBW := int((header >> headerWidthShift) & headerWidthMask)
+	bitWidth := encodedBW * 4
+	maxVal := values[blockSize-1]
+	expectedBW := roundUpToStep(bits.Len32(maxVal))
+	assert.Equal(t, expectedBW, bitWidth, "bitwidth should match step-rounded max bits")
+}
+
+func TestPackUint32_NoPatch_AllowsFOR(t *testing.T) {
+	values := make([]uint32, blockSize)
+	for i := range values {
+		values[i] = 1000000 + uint32(i%100)
+	}
+
+	packed := func() []byte {
+		clone := slices.Clone(values)
+		p, err := PackUint32(NoPatch, nil, nil, clone)
+		require.NoError(t, err)
+		return p
+	}()
+
+	header := bo.Uint32(packed)
+	forWidth := int((header >> forWidthShift) & forWidthMask)
+	assert.NotEqual(t, 0, forWidth, "NoPatch should still allow FOR when beneficial")
+	excCount := int((header >> headerExcCountShift) & headerExcCountMask)
+	assert.Equal(t, 0, excCount, "NoPatch must still produce zero exceptions")
+
+	unpacked, _, err := UnpackUint32(nil, make([]uint32, blockSize), packed)
+	require.NoError(t, err)
+	assert.Equal(t, values, unpacked)
+}
+
+func TestPackUint32_NoPatch_NoFOR_Explicit(t *testing.T) {
+	values := make([]uint32, blockSize)
+	for i := range values {
+		values[i] = 1000000 + uint32(i%100)
+	}
+
+	packed := func() []byte {
+		clone := slices.Clone(values)
+		p, err := PackUint32(NoPatch|NoFOR, nil, nil, clone)
+		require.NoError(t, err)
+		return p
+	}()
+
+	header := bo.Uint32(packed)
+	forWidth := int((header >> forWidthShift) & forWidthMask)
+	assert.Equal(t, 0, forWidth, "NoPatch|NoFOR must skip FOR")
+	excCount := int((header >> headerExcCountShift) & headerExcCountMask)
+	assert.Equal(t, 0, excCount, "NoPatch must produce zero exceptions")
+
+	unpacked, _, err := UnpackUint32(nil, make([]uint32, blockSize), packed)
+	require.NoError(t, err)
+	assert.Equal(t, values, unpacked)
+}
+
+func TestPackUint32_NoPatch_FOR_SmallerOutput(t *testing.T) {
+	values := make([]uint32, blockSize)
+	for i := range values {
+		values[i] = 1000000 + uint32(i%100)
+	}
+
+	packedWithFOR := func() []byte {
+		clone := slices.Clone(values)
+		p, err := PackUint32(NoPatch, nil, nil, clone)
+		require.NoError(t, err)
+		return p
+	}()
+
+	packedNoFOR := func() []byte {
+		clone := slices.Clone(values)
+		p, err := PackUint32(NoPatch|NoFOR, nil, nil, clone)
+		require.NoError(t, err)
+		return p
+	}()
+
+	assert.Less(t, len(packedWithFOR), len(packedNoFOR),
+		"NoPatch with FOR should produce smaller output for clustered data")
+}
+
+func TestPackUint32_NoPatch_FOR_RoundTrip(t *testing.T) {
+	for _, count := range []int{1, 15, 50, 100, 128} {
+		t.Run(fmt.Sprintf("count%d", count), func(t *testing.T) {
+			values := make([]uint32, count)
+			for i := range values {
+				values[i] = 500000 + uint32(i*3)
+			}
+			original := slices.Clone(values)
+
+			packed, err := PackUint32(NoPatch, nil, nil, values)
+			require.NoError(t, err)
+
+			unpacked, _, err := UnpackUint32(nil, make([]uint32, blockSize), packed)
+			require.NoError(t, err)
+			assert.Equal(t, original, unpacked)
+		})
+	}
+}
+
+func TestPackUint32_NoPatch_Delta_FOR_RoundTrip(t *testing.T) {
+	values := make([]uint32, blockSize)
+	for i := range values {
+		values[i] = 1000000 + uint32(i*100)
+	}
+	expected := slices.Clone(values)
+
+	packed, err := PackUint32(Delta|NoPatch, nil, nil, values)
+	require.NoError(t, err)
+
+	header := bo.Uint32(packed)
+	excCount := int((header >> headerExcCountShift) & headerExcCountMask)
+	assert.Equal(t, 0, excCount, "NoPatch must produce zero exceptions")
+
+	unpacked, _, err := UnpackUint32(nil, make([]uint32, blockSize), packed)
+	require.NoError(t, err)
+	assert.Equal(t, expected, unpacked)
+}
+
+func TestPackUint32_NoPatch_GetMatchesUnpack(t *testing.T) {
+	values := make([]uint32, blockSize)
+	for i := range values {
+		values[i] = uint32(i % 1024)
+	}
+	packed, err := PackUint32(NoPatch, nil, nil, values)
+	require.NoError(t, err)
+
+	unpacked, _, err := UnpackUint32(nil, make([]uint32, blockSize), packed)
+	require.NoError(t, err)
+
+	for pos := range unpacked {
+		got, err := GetUint32(pos, packed)
+		require.NoError(t, err)
+		assert.Equal(t, unpacked[pos], got, "pos=%d", pos)
+	}
+}
+
+func TestPackUint32_NoPatch_BlockLengthConsistency(t *testing.T) {
+	for _, flag := range []byte{NoPatch, NoPatch | Delta} {
+		values := make([]uint32, blockSize)
+		for i := range values {
+			values[i] = uint32(i % 1024)
+		}
+		clone := slices.Clone(values)
+		packed, err := PackUint32(flag, nil, nil, clone)
+		require.NoError(t, err)
+
+		blockLen, err := BlockLength(packed)
+		require.NoError(t, err)
+		assert.Equal(t, len(packed), blockLen, "flag=%d", flag)
+	}
 }
