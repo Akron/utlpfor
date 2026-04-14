@@ -185,6 +185,38 @@ func BenchmarkCompare_Unpack_Delta_BP128(b *testing.B) {
 	}
 }
 
+func makeCompDeltaZigzagValues() []uint32 {
+	v := make([]uint32, 128)
+	for i := range v {
+		v[i] = 5000 + uint32(i*7) - uint32((i%5)*3)
+	}
+	return v
+}
+
+func BenchmarkCompare_Unpack_DeltaZigzag_UTL(b *testing.B) {
+	source := makeCompDeltaZigzagValues()
+	data := slices.Clone(source)
+	packed, _ := PackUint32(Delta, nil, nil, data)
+	dst := make([]uint32, 128)
+	scratch := make([]uint32, 128)
+	b.SetBytes(int64(len(source) * 4))
+	for b.Loop() {
+		UnpackUint32(dst, scratch, packed)
+	}
+}
+
+func BenchmarkCompare_Unpack_DeltaZigzag_BP128(b *testing.B) {
+	source := makeCompDeltaZigzagValues()
+	data := slices.Clone(source)
+	packed := fastpfor.PackDeltaUint32(nil, data)
+	dst := make([]uint32, 128)
+	scratch := make([]uint32, 128)
+	b.SetBytes(int64(len(source) * 4))
+	for b.Loop() {
+		fastpfor.UnpackUint32WithBufferAndLength(dst, scratch, packed)
+	}
+}
+
 func BenchmarkCompare_Unpack_Exceptions_UTL(b *testing.B) {
 	values := makeCompExceptionValues()
 	packed, _ := PackUint32(0, nil, nil, values)

@@ -28,11 +28,10 @@ func TestDeltaRoundTrip_PerLane(t *testing.T) {
 	for i := range values {
 		values[i] = uint32(i * 10)
 	}
-	deltas := make([]uint32, 128)
-	needZZ := deltaEncodePerLaneScalar(deltas, values)
-	result := make([]uint32, 128)
-	deltaDecodePerLaneScalar(result, deltas, needZZ)
-	assert.Equal(t, values, result)
+	original := append([]uint32(nil), values...)
+	needZZ := deltaEncodePerLaneScalar(values)
+	deltaDecodePerLaneScalar(values, needZZ)
+	assert.Equal(t, original, values)
 }
 
 func TestDeltaRoundTrip_PerLane_Descending(t *testing.T) {
@@ -40,22 +39,20 @@ func TestDeltaRoundTrip_PerLane_Descending(t *testing.T) {
 	for i := range values {
 		values[i] = uint32(10000 - i*50)
 	}
-	deltas := make([]uint32, 128)
-	needZZ := deltaEncodePerLaneScalar(deltas, values)
+	original := append([]uint32(nil), values...)
+	needZZ := deltaEncodePerLaneScalar(values)
 	assert.True(t, needZZ, "descending data requires zigzag")
-	result := make([]uint32, 128)
-	deltaDecodePerLaneScalar(result, deltas, needZZ)
-	assert.Equal(t, values, result)
+	deltaDecodePerLaneScalar(values, needZZ)
+	assert.Equal(t, original, values)
 }
 
 func TestDeltaRoundTrip_PerLane_AllZeros(t *testing.T) {
 	values := make([]uint32, 128)
-	deltas := make([]uint32, 128)
-	needZZ := deltaEncodePerLaneScalar(deltas, values)
+	original := append([]uint32(nil), values...)
+	needZZ := deltaEncodePerLaneScalar(values)
 	assert.False(t, needZZ)
-	result := make([]uint32, 128)
-	deltaDecodePerLaneScalar(result, deltas, needZZ)
-	assert.Equal(t, values, result)
+	deltaDecodePerLaneScalar(values, needZZ)
+	assert.Equal(t, original, values)
 }
 
 func TestDeltaRoundTrip_PerLane_SingleValue(t *testing.T) {
@@ -75,17 +72,13 @@ func TestDeltaEncodePerLane_LaneIndependence(t *testing.T) {
 	for i := range values {
 		values[i] = uint32(i * 10)
 	}
-	deltas := make([]uint32, 128)
-	deltaEncodePerLaneScalar(deltas, values)
+	original := append([]uint32(nil), values...)
+	deltaEncodePerLaneScalar(values)
 
-	// Lane 0 base is preserved.
-	assert.Equal(t, values[0], deltas[0])
-	// Lane 1 base is preserved.
-	assert.Equal(t, values[1], deltas[1])
-	// Lane 0 values: indices 0, 16, 32, ... with values 0, 160, 320, ...
-	// Lane 0 deltas: 0, 160, 160, ...
-	assert.Equal(t, uint32(160), deltas[16])
-	assert.Equal(t, uint32(160), deltas[32])
+	assert.Equal(t, original[0], values[0])
+	assert.Equal(t, original[1], values[1])
+	assert.Equal(t, uint32(160), values[16])
+	assert.Equal(t, uint32(160), values[32])
 }
 
 func TestDeltaEncodeDecodePerLane_AllPatterns(t *testing.T) {
@@ -244,21 +237,19 @@ func TestPackUint32_DeltaPath_NoAllocsWithPreallocatedDst(t *testing.T) {
 // --- Overflow detection test ---
 
 func TestDeltaDecodePerLane_OverflowDetection(t *testing.T) {
-	deltas := make([]uint32, 128)
-	deltas[0] = 0xFFFFFFF0
-	deltas[16] = 0x20
+	values := make([]uint32, 128)
+	values[0] = 0xFFFFFFF0
+	values[16] = 0x20
 
-	dst := make([]uint32, 128)
-	pos := deltaDecodePerLaneWithOverflowScalar(dst, deltas, false)
+	pos := deltaDecodePerLaneWithOverflowScalar(values, false)
 	assert.Equal(t, 16, pos, "overflow should be detected at lane-order index 16")
 }
 
 func TestDeltaDecodePerLane_NoOverflowWithZigZag(t *testing.T) {
-	deltas := make([]uint32, 128)
-	deltas[0] = 0xFFFFFFF0
-	deltas[16] = 0x20
+	values := make([]uint32, 128)
+	values[0] = 0xFFFFFFF0
+	values[16] = 0x20
 
-	dst := make([]uint32, 128)
-	pos := deltaDecodePerLaneWithOverflowScalar(dst, deltas, true)
+	pos := deltaDecodePerLaneWithOverflowScalar(values, true)
 	assert.Equal(t, 0, pos, "zigzag mode should not report overflow")
 }

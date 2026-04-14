@@ -46,7 +46,7 @@ func unpackLanesUTLAVX512Generic(dst []uint32, payload []byte, count, bitWidth i
 	}
 
 	bitOffset := 0
-	for v := 0; v < utlValuesPerLane; v++ {
+	for v := range utlValuesPerLane {
 		wordIdx := bitOffset / 32
 		shift := uint64(bitOffset % 32)
 		base := wordIdx * utlSuperWordBytes
@@ -105,7 +105,7 @@ func packLanesUTLAVX512(dst []byte, values []uint32, bitWidth int) {
 // Used as fallback for non-step bitwidths (should not be reached in practice).
 func packLanesUTLAVX512Generic(dst []byte, values []uint32, bitWidth int) {
 	if bitWidth == 32 {
-		for v := 0; v < utlValuesPerLane; v++ {
+		for v := range utlValuesPerLane {
 			inBase := v * utlLaneCount
 			base := v * utlSuperWordBytes
 			archsimd.LoadUint32x16Slice(values[inBase : inBase+16]).Store(
@@ -119,7 +119,7 @@ func packLanesUTLAVX512Generic(dst []byte, values []uint32, bitWidth int) {
 	clear(dst)
 
 	bitOffset := 0
-	for v := 0; v < utlValuesPerLane; v++ {
+	for v := range utlValuesPerLane {
 		inBase := v * utlLaneCount
 		val := archsimd.LoadUint32x16Slice(values[inBase : inBase+16]).And(mask)
 
@@ -150,19 +150,23 @@ func packUint32AVX512(flag byte, dst []byte, scratch []uint32, values []uint32) 
 
 	headerFlags := headerTypeUint32Flag
 
-	useFOR, baseValue, forW := selectBitWidthWithFORAVX512(values)
-
-	if useFOR {
-		forSubtractAVX512(values, values, baseValue)
-		headerFlags |= uint32(forW) << forWidthShift
+	var useFOR bool
+	var baseValue uint32
+	var forW int
+	if flag&NoFOR == 0 {
+		useFOR, baseValue, forW = selectBitWidthWithFORAVX512(values)
+		if useFOR {
+			forSubtractAVX512(values, values, baseValue)
+			headerFlags |= uint32(forW) << forWidthShift
+		}
 	}
 
 	if flag&Delta != 0 {
 		var needZZ bool
 		if len(values) == blockSize {
-			needZZ = deltaEncodePerLaneAVX2(values, values)
+			needZZ = deltaEncodePerLaneAVX2(values)
 		} else {
-			needZZ = deltaEncodePerLaneScalar(values, values)
+			needZZ = deltaEncodePerLaneScalar(values)
 		}
 		if needZZ {
 			headerFlags |= headerZigZagFlag
@@ -284,18 +288,18 @@ func unpackUint32AVX512(dst []uint32, scratch []uint32, buf []byte) ([]uint32, i
 	if hasDelta {
 		if hasZigZag {
 			if count == blockSize {
-				deltaDecodePerLaneAVX2(dst, dst, true)
+				deltaDecodePerLaneAVX2(dst, true)
 				archsimd.ClearAVXUpperBits()
 			} else {
-				deltaDecodePerLaneScalar(dst, dst, true)
+				deltaDecodePerLaneScalar(dst, true)
 			}
 		} else {
 			var overflowPos int
 			if count == blockSize {
-				overflowPos = deltaDecodePerLaneWithOverflowAVX2(dst, dst, false)
+				overflowPos = deltaDecodePerLaneWithOverflowAVX2(dst, false)
 				archsimd.ClearAVXUpperBits()
 			} else {
-				overflowPos = deltaDecodePerLaneWithOverflowScalar(dst, dst, false)
+				overflowPos = deltaDecodePerLaneWithOverflowScalar(dst, false)
 			}
 			if overflowPos > 0 {
 				return nil, 0, &ErrOverflow{Position: overflowPos}
@@ -346,7 +350,7 @@ func selectBitWidthWithFORAVX512(values []uint32) (useFOR bool, baseValue uint32
 
 		end := uintptr(n) * 4
 		for off := uintptr(0); off+64 <= end; off += 64 {
-			v := archsimd.LoadUint32x16((*[16]uint32)(unsafe.Pointer(uintptr(p) + off)))
+			v := archsimd.LoadUint32x16((*[16]uint32)(unsafe.Add(p, off)))
 			minVec = minVec.Min(v)
 			maxVec = maxVec.Max(v)
 			exc[0] += bits.OnesCount16(v.Greater(t0).ToBits())
@@ -473,12 +477,12 @@ func findMinMaxAVX512(values []uint32) (uint32, uint32) {
 
 	p := unsafe.Pointer(&values[0])
 	min0 := archsimd.LoadUint32x16((*[16]uint32)(p))
-	min1 := archsimd.LoadUint32x16((*[16]uint32)(unsafe.Pointer(uintptr(p) + 64)))
+	min1 := archsimd.LoadUint32x16((*[16]uint32)(unsafe.Add(p, 64)))
 	max0, max1 := min0, min1
 
 	end := uintptr(n) * 4
 	for off := uintptr(128); off+128 <= end; off += 128 {
-		c0 := archsimd.LoadUint32x16((*[16]uint32)(unsafe.Pointer(uintptr(p) + off)))
+		c0 := archsimd.LoadUint32x16((*[16]uint32)(unsafe.Add(p, off)))
 		c1 := archsimd.LoadUint32x16((*[16]uint32)(unsafe.Pointer(uintptr(p) + off + 64)))
 		min0 = min0.Min(c0)
 		max0 = max0.Max(c0)

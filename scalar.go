@@ -123,15 +123,19 @@ func packUint32Scalar(flag byte, dst []byte, scratch []uint32, values []uint32) 
 
 	headerFlags := headerTypeUint32Flag
 
-	useFOR, baseValue, forW := selectBitWidthWithFOR(values)
-
-	if useFOR {
-		forSubtractScalar(values, values, baseValue)
-		headerFlags |= uint32(forW) << forWidthShift
+	var useFOR bool
+	var baseValue uint32
+	var forW int
+	if flag&NoFOR == 0 {
+		useFOR, baseValue, forW = selectBitWidthWithFOR(values)
+		if useFOR {
+			forSubtractScalar(values, values, baseValue)
+			headerFlags |= uint32(forW) << forWidthShift
+		}
 	}
 
 	if flag&Delta != 0 {
-		needZZ := deltaEncodePerLaneScalar(values, values)
+		needZZ := deltaEncodePerLaneScalar(values)
 		if needZZ {
 			headerFlags |= headerZigZagFlag
 		}
@@ -240,9 +244,9 @@ func unpackUint32Scalar(dst []uint32, scratch []uint32, buf []byte) ([]uint32, i
 
 	if hasDelta {
 		if hasZigZag {
-			deltaDecodePerLaneScalar(dst, dst, true)
+			deltaDecodePerLaneScalar(dst, true)
 		} else {
-			overflowPos := deltaDecodePerLaneWithOverflowScalar(dst, dst, false)
+			overflowPos := deltaDecodePerLaneWithOverflowScalar(dst, false)
 			if overflowPos > 0 {
 				return nil, 0, &ErrOverflow{Position: overflowPos}
 			}

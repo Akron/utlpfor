@@ -13,7 +13,7 @@ import (
 
 // zigzagEncodeSlice applies zigzag encoding to all values (scalar reference).
 func zigzagEncodeSlice(buf []uint32, n int) {
-	for i := 0; i < n; i++ {
+	for i := range n {
 		buf[i] = zigzagEncode32(int32(buf[i]))
 	}
 }
@@ -75,31 +75,33 @@ func TestZigzagEncode_SIMDMatchesScalar_EdgeValues(t *testing.T) {
 }
 
 func TestZigzagDecode_SIMDMatchesScalar(t *testing.T) {
-	src := make([]uint32, blockSize)
-	for i := range src {
-		src[i] = uint32(i * 5)
+	encoded := make([]uint32, blockSize)
+	for i := range encoded {
+		encoded[i] = uint32(i * 5)
 	}
-	zigzagEncodeSlice(src, len(src))
+	zigzagEncodeSlice(encoded, len(encoded))
 
 	scalarDst := make([]uint32, blockSize)
-	zigzagDecodeSlice(scalarDst, src)
+	zigzagDecodeSlice(scalarDst, encoded)
 
 	if simdLevel >= simdLevelAVX2 {
-		simdDst := make([]uint32, blockSize)
-		zigzagDecodeAVX2(simdDst, src)
-		assert.Equal(t, scalarDst, simdDst, "AVX2 zigzag decode mismatch")
+		simdBuf := make([]uint32, blockSize)
+		copy(simdBuf, encoded)
+		zigzagDecodeAVX2(simdBuf)
+		assert.Equal(t, scalarDst, simdBuf, "AVX2 zigzag decode mismatch")
 	}
 
 	if simdLevel >= simdLevelSSE2 {
-		simdDst := make([]uint32, blockSize)
-		zigzagDecodeSSE2(simdDst, src)
-		assert.Equal(t, scalarDst, simdDst, "SSE2 zigzag decode mismatch")
+		simdBuf := make([]uint32, blockSize)
+		copy(simdBuf, encoded)
+		zigzagDecodeSSE2(simdBuf)
+		assert.Equal(t, scalarDst, simdBuf, "SSE2 zigzag decode mismatch")
 	}
 }
 
 func TestZigzagRoundTrip_SIMD(t *testing.T) {
 	rng := rand.New(rand.NewSource(42))
-	for trial := 0; trial < 100; trial++ {
+	for trial := range 100 {
 		original := make([]uint32, blockSize)
 		for i := range original {
 			original[i] = rng.Uint32()
@@ -109,20 +111,16 @@ func TestZigzagRoundTrip_SIMD(t *testing.T) {
 			buf := make([]uint32, blockSize)
 			copy(buf, original)
 			zigzagEncodeAVX2(buf, len(buf))
-
-			decoded := make([]uint32, blockSize)
-			zigzagDecodeAVX2(decoded, buf)
-			assert.Equal(t, original, decoded, "AVX2 trial=%d", trial)
+			zigzagDecodeAVX2(buf)
+			assert.Equal(t, original, buf, "AVX2 trial=%d", trial)
 		}
 
 		if simdLevel >= simdLevelSSE2 {
 			buf := make([]uint32, blockSize)
 			copy(buf, original)
 			zigzagEncodeSSE2(buf, len(buf))
-
-			decoded := make([]uint32, blockSize)
-			zigzagDecodeSSE2(decoded, buf)
-			assert.Equal(t, original, decoded, "SSE2 trial=%d", trial)
+			zigzagDecodeSSE2(buf)
+			assert.Equal(t, original, buf, "SSE2 trial=%d", trial)
 		}
 	}
 }
@@ -164,21 +162,24 @@ func TestDeltaEncode_SIMDMatchesScalar(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			values := tc.gen()
-			scalarDst := make([]uint32, blockSize)
-			scalarZZ := deltaEncodePerLaneScalar(scalarDst, values)
+			scalarBuf := make([]uint32, blockSize)
+			copy(scalarBuf, values)
+			scalarZZ := deltaEncodePerLaneScalar(scalarBuf)
 
 			if simdLevel >= simdLevelAVX2 {
-				simdDst := make([]uint32, blockSize)
-				simdZZ := deltaEncodePerLaneAVX2(simdDst, values)
+				simdBuf := make([]uint32, blockSize)
+				copy(simdBuf, values)
+				simdZZ := deltaEncodePerLaneAVX2(simdBuf)
 				assert.Equal(t, scalarZZ, simdZZ, "AVX2 needZigZag mismatch")
-				assert.Equal(t, scalarDst, simdDst, "AVX2 delta encode mismatch")
+				assert.Equal(t, scalarBuf, simdBuf, "AVX2 delta encode mismatch")
 			}
 
 			if simdLevel >= simdLevelSSE2 {
-				simdDst := make([]uint32, blockSize)
-				simdZZ := deltaEncodePerLaneSSE2(simdDst, values)
+				simdBuf := make([]uint32, blockSize)
+				copy(simdBuf, values)
+				simdZZ := deltaEncodePerLaneSSE2(simdBuf)
 				assert.Equal(t, scalarZZ, simdZZ, "SSE2 needZigZag mismatch")
-				assert.Equal(t, scalarDst, simdDst, "SSE2 delta encode mismatch")
+				assert.Equal(t, scalarBuf, simdBuf, "SSE2 delta encode mismatch")
 			}
 		})
 	}
@@ -221,98 +222,104 @@ func TestDeltaDecode_SIMDMatchesScalar(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			values := tc.gen()
-			deltas := make([]uint32, blockSize)
-			useZZ := deltaEncodePerLaneScalar(deltas, values)
-
-			scalarResult := make([]uint32, blockSize)
-			deltaDecodePerLaneScalar(scalarResult, deltas, useZZ)
+			scalarBuf := make([]uint32, blockSize)
+			copy(scalarBuf, values)
+			useZZ := deltaEncodePerLaneScalar(scalarBuf)
+			deltaDecodePerLaneScalar(scalarBuf, useZZ)
 
 			if simdLevel >= simdLevelAVX2 {
-				simdResult := make([]uint32, blockSize)
-				deltaDecodePerLaneAVX2(simdResult, deltas, useZZ)
-				assert.Equal(t, scalarResult, simdResult, "AVX2 decode mismatch")
+				simdBuf := make([]uint32, blockSize)
+				copy(simdBuf, values)
+				deltaEncodePerLaneScalar(simdBuf)
+				deltaDecodePerLaneAVX2(simdBuf, useZZ)
+				assert.Equal(t, scalarBuf, simdBuf, "AVX2 decode mismatch")
 			}
 
 			if simdLevel >= simdLevelSSE2 {
-				simdResult := make([]uint32, blockSize)
-				deltaDecodePerLaneSSE2(simdResult, deltas, useZZ)
-				assert.Equal(t, scalarResult, simdResult, "SSE2 decode mismatch")
+				simdBuf := make([]uint32, blockSize)
+				copy(simdBuf, values)
+				deltaEncodePerLaneScalar(simdBuf)
+				deltaDecodePerLaneSSE2(simdBuf, useZZ)
+				assert.Equal(t, scalarBuf, simdBuf, "SSE2 decode mismatch")
 			}
 		})
 	}
 }
 
 func TestDeltaDecodeOverflow_SIMDMatchesScalar(t *testing.T) {
-	values := make([]uint32, blockSize)
-	for i := range values {
-		values[i] = 0xFFFFFFF0
+	makeDeltas := func() []uint32 {
+		values := make([]uint32, blockSize)
+		for i := range values {
+			values[i] = 0xFFFFFFF0
+		}
+		values[0] = 100
+		deltaEncodePerLaneScalar(values)
+		return values
 	}
-	values[0] = 100
 
-	deltas := make([]uint32, blockSize)
-	deltaEncodePerLaneScalar(deltas, values)
-
-	scalarPos := deltaDecodePerLaneWithOverflowScalar(
-		make([]uint32, blockSize), deltas, false)
+	scalarBuf := makeDeltas()
+	scalarPos := deltaDecodePerLaneWithOverflowScalar(scalarBuf, false)
 
 	if simdLevel >= simdLevelAVX2 {
-		simdPos := deltaDecodePerLaneWithOverflowAVX2(
-			make([]uint32, blockSize), deltas, false)
+		simdBuf := makeDeltas()
+		simdPos := deltaDecodePerLaneWithOverflowAVX2(simdBuf, false)
 		assert.Equal(t, scalarPos, simdPos, "AVX2 overflow position mismatch")
 	}
 
 	if simdLevel >= simdLevelSSE2 {
-		simdPos := deltaDecodePerLaneWithOverflowSSE2(
-			make([]uint32, blockSize), deltas, false)
+		simdBuf := makeDeltas()
+		simdPos := deltaDecodePerLaneWithOverflowSSE2(simdBuf, false)
 		assert.Equal(t, scalarPos, simdPos, "SSE2 overflow position mismatch")
 	}
 }
 
 func TestDeltaDecodeOverflow_NoOverflowWithZigZag_SIMD(t *testing.T) {
-	values := make([]uint32, blockSize)
-	for i := range values {
-		values[i] = 0xFFFFFFF0
+	makeDeltas := func() []uint32 {
+		values := make([]uint32, blockSize)
+		for i := range values {
+			values[i] = 0xFFFFFFF0
+		}
+		values[0] = 100
+		deltaEncodePerLaneScalar(values)
+		return values
 	}
-	values[0] = 100
-
-	deltas := make([]uint32, blockSize)
-	deltaEncodePerLaneScalar(deltas, values)
 
 	if simdLevel >= simdLevelAVX2 {
-		pos := deltaDecodePerLaneWithOverflowAVX2(
-			make([]uint32, blockSize), deltas, true)
+		buf := makeDeltas()
+		pos := deltaDecodePerLaneWithOverflowAVX2(buf, true)
 		assert.Equal(t, 0, pos, "AVX2: zigzag mode should not report overflow")
 	}
 
 	if simdLevel >= simdLevelSSE2 {
-		pos := deltaDecodePerLaneWithOverflowSSE2(
-			make([]uint32, blockSize), deltas, true)
+		buf := makeDeltas()
+		pos := deltaDecodePerLaneWithOverflowSSE2(buf, true)
 		assert.Equal(t, 0, pos, "SSE2: zigzag mode should not report overflow")
 	}
 }
 
 func TestDeltaDecodeOverflow_NoFalsePositive_SIMD(t *testing.T) {
-	values := make([]uint32, blockSize)
-	for i := range values {
-		values[i] = uint32(i * 10)
+	makeDeltas := func() []uint32 {
+		values := make([]uint32, blockSize)
+		for i := range values {
+			values[i] = uint32(i * 10)
+		}
+		deltaEncodePerLaneScalar(values)
+		return values
 	}
 
-	deltas := make([]uint32, blockSize)
-	deltaEncodePerLaneScalar(deltas, values)
-
-	scalarPos := deltaDecodePerLaneWithOverflowScalar(
-		make([]uint32, blockSize), deltas, false)
+	scalarBuf := makeDeltas()
+	scalarPos := deltaDecodePerLaneWithOverflowScalar(scalarBuf, false)
 	assert.Equal(t, 0, scalarPos, "no overflow expected in sorted data")
 
 	if simdLevel >= simdLevelAVX2 {
-		simdPos := deltaDecodePerLaneWithOverflowAVX2(
-			make([]uint32, blockSize), deltas, false)
+		simdBuf := makeDeltas()
+		simdPos := deltaDecodePerLaneWithOverflowAVX2(simdBuf, false)
 		assert.Equal(t, 0, simdPos, "AVX2: no false positive overflow")
 	}
 
 	if simdLevel >= simdLevelSSE2 {
-		simdPos := deltaDecodePerLaneWithOverflowSSE2(
-			make([]uint32, blockSize), deltas, false)
+		simdBuf := makeDeltas()
+		simdPos := deltaDecodePerLaneWithOverflowSSE2(simdBuf, false)
 		assert.Equal(t, 0, simdPos, "SSE2: no false positive overflow")
 	}
 }
@@ -367,7 +374,7 @@ func TestDeltaRoundTrip_SIMD_AllPatterns(t *testing.T) {
 
 func TestDeltaRoundTrip_SIMD_Random(t *testing.T) {
 	rng := rand.New(rand.NewSource(0))
-	for seed := int64(0); seed < 500; seed++ {
+	for seed := range int64(500) {
 		rng.Seed(seed)
 		values := make([]uint32, blockSize)
 		for i := range values {
@@ -386,26 +393,26 @@ func TestDeltaRoundTrip_SIMD_Random(t *testing.T) {
 
 func TestDeltaEncodeDecodeRoundTrip_SIMD(t *testing.T) {
 	rng := rand.New(rand.NewSource(99))
-	for trial := 0; trial < 100; trial++ {
+	for trial := range 100 {
 		original := make([]uint32, blockSize)
 		for i := range original {
 			original[i] = rng.Uint32()
 		}
 
 		if simdLevel >= simdLevelAVX2 {
-			deltas := make([]uint32, blockSize)
-			useZZ := deltaEncodePerLaneAVX2(deltas, original)
-			decoded := make([]uint32, blockSize)
-			deltaDecodePerLaneAVX2(decoded, deltas, useZZ)
-			assert.Equal(t, original, decoded, "AVX2 round-trip trial=%d", trial)
+			buf := make([]uint32, blockSize)
+			copy(buf, original)
+			useZZ := deltaEncodePerLaneAVX2(buf)
+			deltaDecodePerLaneAVX2(buf, useZZ)
+			assert.Equal(t, original, buf, "AVX2 round-trip trial=%d", trial)
 		}
 
 		if simdLevel >= simdLevelSSE2 {
-			deltas := make([]uint32, blockSize)
-			useZZ := deltaEncodePerLaneSSE2(deltas, original)
-			decoded := make([]uint32, blockSize)
-			deltaDecodePerLaneSSE2(decoded, deltas, useZZ)
-			assert.Equal(t, original, decoded, "SSE2 round-trip trial=%d", trial)
+			buf := make([]uint32, blockSize)
+			copy(buf, original)
+			useZZ := deltaEncodePerLaneSSE2(buf)
+			deltaDecodePerLaneSSE2(buf, useZZ)
+			assert.Equal(t, original, buf, "SSE2 round-trip trial=%d", trial)
 		}
 	}
 }

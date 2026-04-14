@@ -93,7 +93,7 @@ func TestUnpackUTL_SIMDMatchesScalar_AllBitWidths(t *testing.T) {
 
 func TestPackUnpack_SIMDScalarDifferential_Random(t *testing.T) {
 	rng := rand.New(rand.NewSource(0))
-	for seed := int64(0); seed < 1000; seed++ {
+	for seed := range int64(1000) {
 		rng.Seed(seed)
 		count := rng.Intn(blockSize) + 1
 		values := make([]uint32, count)
@@ -416,7 +416,7 @@ func unpackAVX2_constBW8(dst []uint32, payload []byte) {
 	const bw = 8
 	mask := archsimd.BroadcastUint32x8(0xFF)
 	bitOffset := 0
-	for v := 0; v < utlValuesPerLane; v++ {
+	for v := range utlValuesPerLane {
 		wordIdx := bitOffset / 32
 		shift := uint64(bitOffset % 32)
 		base := wordIdx * utlSuperWordBytes

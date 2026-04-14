@@ -461,3 +461,126 @@ func BenchmarkCollectAndWriteExceptions(b *testing.B) {
 		collectAndWriteExceptions(values, bitWidth, excIdx[:], excCount, highBits[:])
 	}
 }
+
+// Compare packing speed with and without FOR analysis.
+// NoFOR skips the min/max scan and FOR cost evaluation.
+
+func BenchmarkPackDeltaMonotonic_WithFOR(b *testing.B) {
+	source := genMonotonic(blockSize)
+	data := make([]uint32, blockSize)
+	dst := make([]byte, 0, 1024)
+	scratch := make([]uint32, ScratchLen)
+
+	b.ReportAllocs()
+	b.SetBytes(int64(blockSize * 4))
+
+	for b.Loop() {
+		copy(data, source)
+		dst, _ = PackUint32(Delta, dst[:0], scratch, data)
+	}
+}
+
+func BenchmarkPackDeltaMonotonic_NoFOR(b *testing.B) {
+	source := genMonotonic(blockSize)
+	data := make([]uint32, blockSize)
+	dst := make([]byte, 0, 1024)
+	scratch := make([]uint32, ScratchLen)
+
+	b.ReportAllocs()
+	b.SetBytes(int64(blockSize * 4))
+
+	for b.Loop() {
+		copy(data, source)
+		dst, _ = PackUint32(Delta|NoFOR, dst[:0], scratch, data)
+	}
+}
+
+func BenchmarkPackSequential_WithFOR(b *testing.B) {
+	data := genSequential(blockSize)
+	dst := make([]byte, 0, 1024)
+	scratch := make([]uint32, ScratchLen)
+
+	b.ReportAllocs()
+	b.SetBytes(int64(blockSize * 4))
+
+	for b.Loop() {
+		dst, _ = PackUint32(0, dst[:0], scratch, data)
+	}
+}
+
+func BenchmarkPackSequential_NoFOR(b *testing.B) {
+	data := genSequential(blockSize)
+	dst := make([]byte, 0, 1024)
+	scratch := make([]uint32, ScratchLen)
+
+	b.ReportAllocs()
+	b.SetBytes(int64(blockSize * 4))
+
+	for b.Loop() {
+		dst, _ = PackUint32(NoFOR, dst[:0], scratch, data)
+	}
+}
+
+func BenchmarkPackClustered_WithFOR(b *testing.B) {
+	values := make([]uint32, blockSize)
+	for i := range values {
+		values[i] = 1000000 + uint32(i%100)
+	}
+	dst := make([]byte, 0, 1024)
+	scratch := make([]uint32, ScratchLen)
+
+	b.ReportAllocs()
+	b.SetBytes(int64(blockSize * 4))
+
+	for b.Loop() {
+		clone := slices.Clone(values)
+		dst, _ = PackUint32(0, dst[:0], scratch, clone)
+	}
+}
+
+func BenchmarkPackClustered_NoFOR(b *testing.B) {
+	values := make([]uint32, blockSize)
+	for i := range values {
+		values[i] = 1000000 + uint32(i%100)
+	}
+	dst := make([]byte, 0, 1024)
+	scratch := make([]uint32, ScratchLen)
+
+	b.ReportAllocs()
+	b.SetBytes(int64(blockSize * 4))
+
+	for b.Loop() {
+		clone := slices.Clone(values)
+		dst, _ = PackUint32(NoFOR, dst[:0], scratch, clone)
+	}
+}
+
+func BenchmarkPackDeltaMixed_WithFOR(b *testing.B) {
+	source := genMixed(blockSize)
+	data := make([]uint32, blockSize)
+	dst := make([]byte, 0, 1024)
+	scratch := make([]uint32, ScratchLen)
+
+	b.ReportAllocs()
+	b.SetBytes(int64(blockSize * 4))
+
+	for b.Loop() {
+		copy(data, source)
+		dst, _ = PackUint32(Delta, dst[:0], scratch, data)
+	}
+}
+
+func BenchmarkPackDeltaMixed_NoFOR(b *testing.B) {
+	source := genMixed(blockSize)
+	data := make([]uint32, blockSize)
+	dst := make([]byte, 0, 1024)
+	scratch := make([]uint32, ScratchLen)
+
+	b.ReportAllocs()
+	b.SetBytes(int64(blockSize * 4))
+
+	for b.Loop() {
+		copy(data, source)
+		dst, _ = PackUint32(Delta|NoFOR, dst[:0], scratch, data)
+	}
+}

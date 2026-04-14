@@ -1,6 +1,7 @@
 package utlpfor
 
 import (
+	"fmt"
 	"math/rand"
 	"slices"
 	"testing"
@@ -572,4 +573,192 @@ func TestForSubtractAddScalar(t *testing.T) {
 	}
 	forAddScalar(subtracted, 128, 1000000)
 	assert.Equal(t, values, subtracted)
+}
+
+func TestNoFOR_FlagConstant(t *testing.T) {
+	assert.Equal(t, byte(2), NoFOR)
+	assert.Equal(t, byte(0), Delta&NoFOR, "NoFOR and Delta must not overlap")
+}
+
+func TestNoFOR_RoundTrip_Sequential(t *testing.T) {
+	values := make([]uint32, 128)
+	for i := range values {
+		values[i] = uint32(i)
+	}
+	original := slices.Clone(values)
+	packed, err := PackUint32(NoFOR, nil, nil, values)
+	require.NoError(t, err)
+	unpacked, _, err := UnpackUint32(nil, make([]uint32, 128), packed)
+	require.NoError(t, err)
+	assert.Equal(t, original, unpacked)
+}
+
+func TestNoFOR_RoundTrip_ClusteredData(t *testing.T) {
+	values := make([]uint32, 128)
+	for i := range values {
+		values[i] = 1000000 + uint32(i%100)
+	}
+	original := slices.Clone(values)
+	packed, err := PackUint32(NoFOR, nil, nil, values)
+	require.NoError(t, err)
+
+	header := bo.Uint32(packed)
+	forWidth := int((header >> forWidthShift) & forWidthMask)
+	assert.Equal(t, forWidthNone, forWidth,
+		"NoFOR flag must prevent FOR header from being set")
+
+	unpacked, _, err := UnpackUint32(nil, make([]uint32, 128), packed)
+	require.NoError(t, err)
+	assert.Equal(t, original, unpacked)
+}
+
+func TestNoFOR_RoundTrip_WithDelta(t *testing.T) {
+	values := make([]uint32, 128)
+	for i := range values {
+		values[i] = 1000000 + uint32(i*10)
+	}
+	original := slices.Clone(values)
+	packed, err := PackUint32(Delta|NoFOR, nil, nil, values)
+	require.NoError(t, err)
+
+	header := bo.Uint32(packed)
+	forWidth := int((header >> forWidthShift) & forWidthMask)
+	assert.Equal(t, forWidthNone, forWidth,
+		"NoFOR flag must prevent FOR even with Delta")
+	assert.NotZero(t, header&headerDeltaFlag, "Delta flag should be set")
+
+	unpacked, _, err := UnpackUint32(nil, make([]uint32, 128), packed)
+	require.NoError(t, err)
+	assert.Equal(t, original, unpacked)
+}
+
+func TestNoFOR_RoundTrip_AllBitWidths(t *testing.T) {
+	for bw := 1; bw <= 32; bw++ {
+		t.Run(fmt.Sprintf("bw%d", bw), func(t *testing.T) {
+			values := make([]uint32, 128)
+			mask := uint32((1 << bw) - 1)
+			if bw == 32 {
+				mask = 0xFFFFFFFF
+			}
+			for i := range values {
+				values[i] = uint32(i*7+3) & mask
+			}
+			original := slices.Clone(values)
+			packed, err := PackUint32(NoFOR, nil, nil, values)
+			require.NoError(t, err)
+			unpacked, _, err := UnpackUint32(nil, make([]uint32, 128), packed)
+			require.NoError(t, err)
+			assert.Equal(t, original, unpacked)
+		})
+	}
+}
+
+func TestNoFOR_RoundTrip_MonotonicDelta(t *testing.T) {
+	values := genMonotonic(128)
+	original := slices.Clone(values)
+	packed, err := PackUint32(Delta|NoFOR, nil, nil, values)
+	require.NoError(t, err)
+
+	header := bo.Uint32(packed)
+	forWidth := int((header >> forWidthShift) & forWidthMask)
+	assert.Equal(t, forWidthNone, forWidth)
+
+	unpacked, _, err := UnpackUint32(nil, make([]uint32, 128), packed)
+	require.NoError(t, err)
+	assert.Equal(t, original, unpacked)
+}
+
+func TestNoFOR_RoundTrip_PartialBlock(t *testing.T) {
+	for _, count := range []int{1, 15, 50, 100, 127} {
+		t.Run(fmt.Sprintf("count%d", count), func(t *testing.T) {
+			values := make([]uint32, count)
+			for i := range values {
+				values[i] = 1000000 + uint32(i)
+			}
+			original := slices.Clone(values)
+			packed, err := PackUint32(NoFOR, nil, nil, values)
+			require.NoError(t, err)
+			unpacked, _, err := UnpackUint32(nil, make([]uint32, 128), packed)
+			require.NoError(t, err)
+			assert.Equal(t, original, unpacked)
+		})
+	}
+}
+
+func TestNoFOR_RoundTrip_WithExceptions(t *testing.T) {
+	values := make([]uint32, 128)
+	for i := range values {
+		values[i] = uint32(i % 256)
+	}
+	values[50] = 0xFFFFFFFF
+	values[100] = 0x80000000
+	original := slices.Clone(values)
+
+	packed, err := PackUint32(NoFOR, nil, nil, values)
+	require.NoError(t, err)
+	unpacked, _, err := UnpackUint32(nil, make([]uint32, 128), packed)
+	require.NoError(t, err)
+	assert.Equal(t, original, unpacked)
+}
+
+func TestNoFOR_RoundTrip_RandomVectors(t *testing.T) {
+	rng := rand.New(rand.NewSource(101))
+	for trial := range 100 {
+		base := rng.Uint32() >> 8
+		spread := uint32(rng.Intn(256))
+		values := make([]uint32, 128)
+		for i := range values {
+			values[i] = base + uint32(rng.Intn(int(spread)+1))
+		}
+		original := slices.Clone(values)
+
+		packed, err := PackUint32(NoFOR, nil, nil, values)
+		require.NoError(t, err, "trial %d", trial)
+		unpacked, _, err := UnpackUint32(nil, make([]uint32, 128), packed)
+		require.NoError(t, err, "trial %d", trial)
+		assert.Equal(t, original, unpacked, "trial %d", trial)
+	}
+}
+
+func TestNoFOR_BlockLengthConsistency(t *testing.T) {
+	rng := rand.New(rand.NewSource(202))
+	for trial := range 100 {
+		count := rng.Intn(128) + 1
+		values := make([]uint32, count)
+		for i := range values {
+			values[i] = rng.Uint32()
+		}
+
+		for _, flag := range []byte{NoFOR, Delta | NoFOR} {
+			work := slices.Clone(values)
+			packed, err := PackUint32(flag, nil, nil, work)
+			require.NoError(t, err)
+
+			blockLen, err := BlockLength(packed)
+			require.NoError(t, err)
+			assert.Equal(t, len(packed), blockLen,
+				"trial %d flag 0x%02x: BlockLength mismatch", trial, flag)
+		}
+	}
+}
+
+func TestNoFOR_GetMatchesUnpack(t *testing.T) {
+	values := make([]uint32, 128)
+	for i := range values {
+		values[i] = 1000000 + uint32(i*3)
+	}
+
+	for _, flag := range []byte{NoFOR, Delta | NoFOR} {
+		work := slices.Clone(values)
+		packed, err := PackUint32(flag, nil, nil, work)
+		require.NoError(t, err)
+		unpacked, _, err := UnpackUint32(nil, make([]uint32, 128), packed)
+		require.NoError(t, err)
+
+		for pos := range unpacked {
+			got, err := GetUint32(pos, packed)
+			require.NoError(t, err)
+			assert.Equal(t, unpacked[pos], got, "flag=0x%02x pos=%d", flag, pos)
+		}
+	}
 }

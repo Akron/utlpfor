@@ -18,52 +18,44 @@ func zigzagDecode32(v uint32) int32 {
 	return int32(v>>1) ^ -int32(v&1)
 }
 
-// deltaEncodePerLaneScalar computes per-lane deltas in UTL lane order.
+// deltaEncodePerLaneScalar computes per-lane deltas in-place in UTL lane order.
 // Returns true if zigzag encoding was needed (decreasing values detected).
-func deltaEncodePerLaneScalar(dst, src []uint32) bool {
+func deltaEncodePerLaneScalar(values []uint32) bool {
 	needZigZag := false
-	count := len(src)
+	count := len(values)
 
 	for lane := range utlLaneCount {
-		// Process values from last to first within the lane to avoid
-		// overwriting values we still need (when dst == src).
 		for v := utlValuesPerLane - 1; v > 0; v-- {
 			cur := lane + v*utlLaneCount
 			prev := lane + (v-1)*utlLaneCount
 			if cur >= count || prev >= count {
 				continue
 			}
-			if src[cur] < src[prev] {
+			if values[cur] < values[prev] {
 				needZigZag = true
 			}
-			dst[cur] = src[cur] - src[prev]
-		}
-		// Lane base value is preserved as-is.
-		if lane < count {
-			dst[lane] = src[lane]
+			values[cur] = values[cur] - values[prev]
 		}
 	}
 
 	if needZigZag {
-		for i := range dst[:count] {
-			dst[i] = zigzagEncode32(int32(dst[i]))
+		for i := range values[:count] {
+			values[i] = zigzagEncode32(int32(values[i]))
 		}
 	}
 	return needZigZag
 }
 
-// deltaDecodePerLaneScalar computes per-lane prefix sums in UTL lane order.
-func deltaDecodePerLaneScalar(dst, deltas []uint32, useZigZag bool) {
-	count := len(deltas)
+// deltaDecodePerLaneScalar computes per-lane prefix sums in-place in UTL lane order.
+func deltaDecodePerLaneScalar(values []uint32, useZigZag bool) {
+	count := len(values)
 
 	for lane := range utlLaneCount {
 		if lane >= count {
 			break
 		}
 		if useZigZag {
-			dst[lane] = uint32(zigzagDecode32(deltas[lane]))
-		} else {
-			dst[lane] = deltas[lane]
+			values[lane] = uint32(zigzagDecode32(values[lane]))
 		}
 		for v := 1; v < utlValuesPerLane; v++ {
 			cur := lane + v*utlLaneCount
@@ -71,41 +63,40 @@ func deltaDecodePerLaneScalar(dst, deltas []uint32, useZigZag bool) {
 				break
 			}
 			if useZigZag {
-				dst[cur] = dst[cur-utlLaneCount] + uint32(zigzagDecode32(deltas[cur]))
+				values[cur] = values[cur-utlLaneCount] + uint32(zigzagDecode32(values[cur]))
 			} else {
-				dst[cur] = dst[cur-utlLaneCount] + deltas[cur]
+				values[cur] = values[cur-utlLaneCount] + values[cur]
 			}
 		}
 	}
 }
 
-// deltaDecodePerLaneWithOverflowScalar performs prefix sum with overflow detection.
+// deltaDecodePerLaneWithOverflowScalar performs in-place prefix sum with overflow detection.
 // Returns the lane-order index of the first overflow, or 0 if no overflow.
-func deltaDecodePerLaneWithOverflowScalar(dst, deltas []uint32, useZigZag bool) int {
+func deltaDecodePerLaneWithOverflowScalar(values []uint32, useZigZag bool) int {
 	if useZigZag {
-		deltaDecodePerLaneScalar(dst, deltas, true)
+		deltaDecodePerLaneScalar(values, true)
 		return 0
 	}
 
-	count := len(deltas)
+	count := len(values)
 	var overflowPos int
 
 	for lane := range utlLaneCount {
 		if lane >= count {
 			break
 		}
-		dst[lane] = deltas[lane]
 		for v := 1; v < utlValuesPerLane; v++ {
 			cur := lane + v*utlLaneCount
 			prev := lane + (v-1)*utlLaneCount
 			if cur >= count {
 				break
 			}
-			next := dst[prev] + deltas[cur]
-			if overflowPos == 0 && next < dst[prev] {
+			next := values[prev] + values[cur]
+			if overflowPos == 0 && next < values[prev] {
 				overflowPos = cur
 			}
-			dst[cur] = next
+			values[cur] = next
 		}
 	}
 	return overflowPos

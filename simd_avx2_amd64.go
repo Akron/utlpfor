@@ -46,7 +46,7 @@ func unpackLanesUTLAVX2Generic(dst []uint32, payload []byte, count, bitWidth int
 	}
 
 	bitOffset := 0
-	for v := 0; v < utlValuesPerLane; v++ {
+	for v := range utlValuesPerLane {
 		wordIdx := bitOffset / 32
 		shift := uint64(bitOffset % 32)
 		base := wordIdx * utlSuperWordBytes
@@ -114,7 +114,7 @@ func packLanesUTLAVX2(dst []byte, values []uint32, bitWidth int) {
 // Used as fallback for non-step bitwidths (should not be reached in practice).
 func packLanesUTLAVX2Generic(dst []byte, values []uint32, bitWidth int) {
 	if bitWidth == 32 {
-		for v := 0; v < utlValuesPerLane; v++ {
+		for v := range utlValuesPerLane {
 			inBase := v * utlLaneCount
 			base := v * utlSuperWordBytes
 			archsimd.LoadUint32x8Slice(values[inBase : inBase+8]).Store(
@@ -128,7 +128,7 @@ func packLanesUTLAVX2Generic(dst []byte, values []uint32, bitWidth int) {
 	mask := archsimd.BroadcastUint32x8(uint32((1 << bitWidth) - 1))
 
 	bitOffset := 0
-	for v := 0; v < utlValuesPerLane; v++ {
+	for v := range utlValuesPerLane {
 		inBase := v * utlLaneCount
 		vLo := archsimd.LoadUint32x8Slice(values[inBase : inBase+8]).And(mask)
 		vHi := archsimd.LoadUint32x8Slice(values[inBase+8 : inBase+16]).And(mask)
@@ -173,23 +173,23 @@ func zigzagEncodeAVX2(buf []uint32, n int) {
 	}
 }
 
-// zigzagDecodeAVX2 applies zigzag decoding using AVX2.
+// zigzagDecodeAVX2 applies zigzag decoding in-place using AVX2.
 // Formula: (n >>> 1) ^ -(n & 1) where >>> is logical right shift.
-func zigzagDecodeAVX2(dst, src []uint32) {
+func zigzagDecodeAVX2(values []uint32) {
 	one := archsimd.BroadcastUint32x8(1)
 	zero := archsimd.BroadcastUint32x8(0)
 	// TODO-PERF: Unroll?
-	for i := 0; i <= len(src)-8; i += 8 {
-		v := archsimd.LoadUint32x8Slice(src[i : i+8])
+	for i := 0; i <= len(values)-8; i += 8 {
+		v := archsimd.LoadUint32x8Slice(values[i : i+8])
 		half := v.ShiftAllRight(1)
 		signBit := v.And(one)
 		negSign := zero.Sub(signBit)
 		result := half.Xor(negSign)
-		result.StoreSlice(dst[i : i+8])
+		result.StoreSlice(values[i : i+8])
 	}
 	// TODO-PERF: Use SSE for the tail initially
-	for i := (len(src) / 8) * 8; i < len(src); i++ {
-		dst[i] = uint32(zigzagDecode32(src[i]))
+	for i := (len(values) / 8) * 8; i < len(values); i++ {
+		values[i] = uint32(zigzagDecode32(values[i]))
 	}
 }
 
@@ -198,7 +198,7 @@ func zigzagDecodeAVX2(dst, src []uint32) {
 // Returns true if zigzag encoding was needed (negative deltas detected).
 // Borrow detection is batched: all borrow masks are ORed into a single uint8
 // and checked once after the loop, eliminating branches from the inner loop.
-func deltaEncodePerLaneAVX2(dst, src []uint32) bool {
+func deltaEncodePerLaneAVX2(values []uint32) bool {
 	var anyBorrow uint8
 
 	// TODO-PERF: Unroll!
@@ -206,36 +206,32 @@ func deltaEncodePerLaneAVX2(dst, src []uint32) bool {
 		curBase := v * utlLaneCount
 		prevBase := (v - 1) * utlLaneCount
 
-		cur0 := archsimd.LoadUint32x8Slice(src[curBase : curBase+8])
-		prev0 := archsimd.LoadUint32x8Slice(src[prevBase : prevBase+8])
+		cur0 := archsimd.LoadUint32x8Slice(values[curBase : curBase+8])
+		prev0 := archsimd.LoadUint32x8Slice(values[prevBase : prevBase+8])
 		delta0 := cur0.Sub(prev0)
 
-		cur1 := archsimd.LoadUint32x8Slice(src[curBase+8 : curBase+16])
-		prev1 := archsimd.LoadUint32x8Slice(src[prevBase+8 : prevBase+16])
+		cur1 := archsimd.LoadUint32x8Slice(values[curBase+8 : curBase+16])
+		prev1 := archsimd.LoadUint32x8Slice(values[prevBase+8 : prevBase+16])
 		delta1 := cur1.Sub(prev1)
 
 		anyBorrow |= prev0.Greater(cur0).ToBits()
 		anyBorrow |= prev1.Greater(cur1).ToBits()
 
-		delta0.StoreSlice(dst[curBase : curBase+8])
-		delta1.StoreSlice(dst[curBase+8 : curBase+16])
+		delta0.StoreSlice(values[curBase : curBase+8])
+		delta1.StoreSlice(values[curBase+8 : curBase+16])
 	}
-
-	copy(dst[:utlLaneCount], src[:utlLaneCount])
 
 	needZigZag := anyBorrow != 0
 	if needZigZag {
-		zigzagEncodeAVX2(dst, len(src))
+		zigzagEncodeAVX2(values, len(values))
 	}
 	return needZigZag
 }
 
-// deltaDecodePerLaneAVX2 performs per-lane prefix sums using AVX2.
-func deltaDecodePerLaneAVX2(dst, deltas []uint32, useZigZag bool) {
+// deltaDecodePerLaneAVX2 performs in-place per-lane prefix sums using AVX2.
+func deltaDecodePerLaneAVX2(values []uint32, useZigZag bool) {
 	if useZigZag {
-		zigzagDecodeAVX2(dst, deltas)
-	} else {
-		copy(dst, deltas)
+		zigzagDecodeAVX2(values)
 	}
 
 	// TODO-PERF: Unroll!
@@ -243,27 +239,26 @@ func deltaDecodePerLaneAVX2(dst, deltas []uint32, useZigZag bool) {
 		curBase := v * utlLaneCount
 		prevBase := (v - 1) * utlLaneCount
 
-		prev0 := archsimd.LoadUint32x8Slice(dst[prevBase : prevBase+8])
-		cur0 := archsimd.LoadUint32x8Slice(dst[curBase : curBase+8])
+		prev0 := archsimd.LoadUint32x8Slice(values[prevBase : prevBase+8])
+		cur0 := archsimd.LoadUint32x8Slice(values[curBase : curBase+8])
 		sum0 := prev0.Add(cur0)
-		sum0.StoreSlice(dst[curBase : curBase+8])
+		sum0.StoreSlice(values[curBase : curBase+8])
 
-		prev1 := archsimd.LoadUint32x8Slice(dst[prevBase+8 : prevBase+16])
-		cur1 := archsimd.LoadUint32x8Slice(dst[curBase+8 : curBase+16])
+		prev1 := archsimd.LoadUint32x8Slice(values[prevBase+8 : prevBase+16])
+		cur1 := archsimd.LoadUint32x8Slice(values[curBase+8 : curBase+16])
 		sum1 := prev1.Add(cur1)
-		sum1.StoreSlice(dst[curBase+8 : curBase+16])
+		sum1.StoreSlice(values[curBase+8 : curBase+16])
 	}
 }
 
 // deltaDecodePerLaneWithOverflowAVX2 performs prefix sum with overflow check.
 // Returns the position of the first overflow (0 = no overflow).
-func deltaDecodePerLaneWithOverflowAVX2(dst, deltas []uint32, useZigZag bool) int {
+func deltaDecodePerLaneWithOverflowAVX2(values []uint32, useZigZag bool) int {
 	if useZigZag {
-		deltaDecodePerLaneAVX2(dst, deltas, true)
+		deltaDecodePerLaneAVX2(values, true)
 		return 0
 	}
 
-	copy(dst, deltas)
 	var overflowPos int
 
 	// TODO-PERF: Unroll!
@@ -271,8 +266,8 @@ func deltaDecodePerLaneWithOverflowAVX2(dst, deltas []uint32, useZigZag bool) in
 		curBase := v * utlLaneCount
 		prevBase := (v - 1) * utlLaneCount
 
-		prev0 := archsimd.LoadUint32x8Slice(dst[prevBase : prevBase+8])
-		cur0 := archsimd.LoadUint32x8Slice(dst[curBase : curBase+8])
+		prev0 := archsimd.LoadUint32x8Slice(values[prevBase : prevBase+8])
+		cur0 := archsimd.LoadUint32x8Slice(values[curBase : curBase+8])
 		sum0 := prev0.Add(cur0)
 
 		overflow0 := sum0.Less(prev0)
@@ -281,10 +276,10 @@ func deltaDecodePerLaneWithOverflowAVX2(dst, deltas []uint32, useZigZag bool) in
 			overflowPos = curBase + lane
 		}
 
-		sum0.StoreSlice(dst[curBase : curBase+8])
+		sum0.StoreSlice(values[curBase : curBase+8])
 
-		prev1 := archsimd.LoadUint32x8Slice(dst[prevBase+8 : prevBase+16])
-		cur1 := archsimd.LoadUint32x8Slice(dst[curBase+8 : curBase+16])
+		prev1 := archsimd.LoadUint32x8Slice(values[prevBase+8 : prevBase+16])
+		cur1 := archsimd.LoadUint32x8Slice(values[curBase+8 : curBase+16])
 		sum1 := prev1.Add(cur1)
 
 		overflow1 := sum1.Less(prev1)
@@ -293,7 +288,7 @@ func deltaDecodePerLaneWithOverflowAVX2(dst, deltas []uint32, useZigZag bool) in
 			overflowPos = curBase + 8 + lane
 		}
 
-		sum1.StoreSlice(dst[curBase+8 : curBase+16])
+		sum1.StoreSlice(values[curBase+8 : curBase+16])
 	}
 
 	return overflowPos
@@ -308,19 +303,23 @@ func packUint32AVX2(flag byte, dst []byte, scratch []uint32, values []uint32) ([
 
 	headerFlags := headerTypeUint32Flag
 
-	useFOR, baseValue, forW := selectBitWidthWithFORAVX2(values)
-
-	if useFOR {
-		forSubtractAVX2(values, values, baseValue)
-		headerFlags |= uint32(forW) << forWidthShift
+	var useFOR bool
+	var baseValue uint32
+	var forW int
+	if flag&NoFOR == 0 {
+		useFOR, baseValue, forW = selectBitWidthWithFORAVX2(values)
+		if useFOR {
+			forSubtractAVX2(values, values, baseValue)
+			headerFlags |= uint32(forW) << forWidthShift
+		}
 	}
 
 	if flag&Delta != 0 {
 		var needZZ bool
 		if len(values) == blockSize {
-			needZZ = deltaEncodePerLaneAVX2(values, values)
+			needZZ = deltaEncodePerLaneAVX2(values)
 		} else {
-			needZZ = deltaEncodePerLaneScalar(values, values)
+			needZZ = deltaEncodePerLaneScalar(values)
 		}
 		if needZZ {
 			headerFlags |= headerZigZagFlag
@@ -449,18 +448,18 @@ func unpackUint32AVX2(dst []uint32, scratch []uint32, buf []byte) ([]uint32, int
 	if hasDelta {
 		if hasZigZag {
 			if count == blockSize {
-				deltaDecodePerLaneAVX2(dst, dst, true)
+				deltaDecodePerLaneAVX2(dst, true)
 				archsimd.ClearAVXUpperBits()
 			} else {
-				deltaDecodePerLaneScalar(dst, dst, true)
+				deltaDecodePerLaneScalar(dst, true)
 			}
 		} else {
 			var overflowPos int
 			if count == blockSize {
-				overflowPos = deltaDecodePerLaneWithOverflowAVX2(dst, dst, false)
+				overflowPos = deltaDecodePerLaneWithOverflowAVX2(dst, false)
 				archsimd.ClearAVXUpperBits()
 			} else {
-				overflowPos = deltaDecodePerLaneWithOverflowScalar(dst, dst, false)
+				overflowPos = deltaDecodePerLaneWithOverflowScalar(dst, false)
 			}
 			if overflowPos > 0 {
 				return nil, 0, &ErrOverflow{Position: overflowPos}
@@ -563,12 +562,12 @@ func findMinMaxAVX2(values []uint32) (uint32, uint32) {
 
 	p := unsafe.Pointer(&values[0])
 	min0 := archsimd.LoadUint32x8((*[8]uint32)(p))
-	min1 := archsimd.LoadUint32x8((*[8]uint32)(unsafe.Pointer(uintptr(p) + 32)))
+	min1 := archsimd.LoadUint32x8((*[8]uint32)(unsafe.Add(p, 32)))
 	max0, max1 := min0, min1
 
 	end := uintptr(n) * 4
 	for off := uintptr(64); off+64 <= end; off += 64 {
-		c0 := archsimd.LoadUint32x8((*[8]uint32)(unsafe.Pointer(uintptr(p) + off)))
+		c0 := archsimd.LoadUint32x8((*[8]uint32)(unsafe.Add(p, off)))
 		c1 := archsimd.LoadUint32x8((*[8]uint32)(unsafe.Pointer(uintptr(p) + off + 32)))
 		min0 = min0.Min(c0)
 		max0 = max0.Max(c0)

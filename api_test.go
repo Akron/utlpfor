@@ -46,3 +46,8 @@ func TestPackUint32_ReturnsError(t *testing.T) {
 func TestDeltaFlagConstant(t *testing.T) {
 	assert.Equal(t, byte(1), utlpfor.Delta)
 }
+
+func TestNoFORFlagConstant(t *testing.T) {
+	assert.Equal(t, byte(2), utlpfor.NoFOR)
+	assert.Equal(t, byte(0), utlpfor.Delta&utlpfor.NoFOR, "flags must not overlap")
+}

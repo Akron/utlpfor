@@ -46,12 +46,12 @@ func unpackLanesUTLSSE2Generic(dst []uint32, payload []byte, count, bitWidth int
 	}
 
 	bitOffset := 0
-	for v := 0; v < utlValuesPerLane; v++ {
+	for v := range utlValuesPerLane {
 		wordIdx := bitOffset / 32
 		shift := uint64(bitOffset % 32)
 		base := wordIdx * utlSuperWordBytes
 
-		for group := 0; group < 4; group++ {
+		for group := range 4 {
 			off := base + group*16
 			vec := archsimd.LoadUint32x4(
 				(*[4]uint32)(unsafe.Pointer(&payload[off])))
@@ -108,8 +108,8 @@ func packLanesUTLSSE2(dst []byte, values []uint32, bitWidth int) {
 // Used as fallback for non-step bitwidths.
 func packLanesUTLSSE2Generic(dst []byte, values []uint32, bitWidth int) {
 	if bitWidth == 32 {
-		for v := 0; v < utlValuesPerLane; v++ {
-			for group := 0; group < 4; group++ {
+		for v := range utlValuesPerLane {
+			for group := range 4 {
 				inBase := v*utlLaneCount + group*4
 				off := v*utlSuperWordBytes + group*16
 				archsimd.LoadUint32x4Slice(values[inBase : inBase+4]).Store(
@@ -124,12 +124,12 @@ func packLanesUTLSSE2Generic(dst []byte, values []uint32, bitWidth int) {
 	clear(dst)
 
 	bitOffset := 0
-	for v := 0; v < utlValuesPerLane; v++ {
+	for v := range utlValuesPerLane {
 		wordIdx := bitOffset / 32
 		shift := uint64(bitOffset % 32)
 		base := wordIdx * utlSuperWordBytes
 
-		for group := 0; group < 4; group++ {
+		for group := range 4 {
 			inBase := v*utlLaneCount + group*4
 			val := archsimd.LoadUint32x4Slice(values[inBase : inBase+4]).And(mask)
 
@@ -164,21 +164,21 @@ func zigzagEncodeSSE2(buf []uint32, n int) {
 	}
 }
 
-// zigzagDecodeSSE2 applies zigzag decoding using SSE2 (Uint32x4).
+// zigzagDecodeSSE2 applies zigzag decoding in-place using SSE2 (Uint32x4).
 // Formula: (n >>> 1) ^ -(n & 1).
-func zigzagDecodeSSE2(dst, src []uint32) {
+func zigzagDecodeSSE2(values []uint32) {
 	one := archsimd.BroadcastUint32x4(1)
 	zero := archsimd.BroadcastUint32x4(0)
-	for i := 0; i <= len(src)-4; i += 4 {
-		v := archsimd.LoadUint32x4Slice(src[i : i+4])
+	for i := 0; i <= len(values)-4; i += 4 {
+		v := archsimd.LoadUint32x4Slice(values[i : i+4])
 		half := v.ShiftAllRight(1)
 		signBit := v.And(one)
 		negSign := zero.Sub(signBit)
 		result := half.Xor(negSign)
-		result.StoreSlice(dst[i : i+4])
+		result.StoreSlice(values[i : i+4])
 	}
-	for i := (len(src) / 4) * 4; i < len(src); i++ {
-		dst[i] = uint32(zigzagDecode32(src[i]))
+	for i := (len(values) / 4) * 4; i < len(values); i++ {
+		values[i] = uint32(zigzagDecode32(values[i]))
 	}
 }
 
@@ -186,7 +186,7 @@ func zigzagDecodeSSE2(dst, src []uint32) {
 // Processes all 16 lanes in four register groups.
 // Returns true if zigzag encoding was needed (negative deltas detected).
 // Borrow detection is batched to eliminate branches from the inner loop.
-func deltaEncodePerLaneSSE2(dst, src []uint32) bool {
+func deltaEncodePerLaneSSE2(values []uint32) bool {
 	var anyBorrow uint8
 
 	for v := utlValuesPerLane - 1; v > 0; v-- {
@@ -194,33 +194,29 @@ func deltaEncodePerLaneSSE2(dst, src []uint32) bool {
 		prevBase := (v - 1) * utlLaneCount
 
 		// TODO-PERF: Maybe unroll
-		for group := 0; group < 4; group++ {
+		for group := range 4 {
 			off := group * 4
-			cur := archsimd.LoadUint32x4Slice(src[curBase+off : curBase+off+4])
-			prev := archsimd.LoadUint32x4Slice(src[prevBase+off : prevBase+off+4])
+			cur := archsimd.LoadUint32x4Slice(values[curBase+off : curBase+off+4])
+			prev := archsimd.LoadUint32x4Slice(values[prevBase+off : prevBase+off+4])
 			delta := cur.Sub(prev)
 
 			anyBorrow |= prev.Greater(cur).ToBits()
 
-			delta.StoreSlice(dst[curBase+off : curBase+off+4])
+			delta.StoreSlice(values[curBase+off : curBase+off+4])
 		}
 	}
 
-	copy(dst[:utlLaneCount], src[:utlLaneCount])
-
 	needZigZag := anyBorrow != 0
 	if needZigZag {
-		zigzagEncodeSSE2(dst, len(src))
+		zigzagEncodeSSE2(values, len(values))
 	}
 	return needZigZag
 }
 
-// deltaDecodePerLaneSSE2 performs per-lane prefix sums using SSE2 (Uint32x4).
-func deltaDecodePerLaneSSE2(dst, deltas []uint32, useZigZag bool) {
+// deltaDecodePerLaneSSE2 performs in-place per-lane prefix sums using SSE2 (Uint32x4).
+func deltaDecodePerLaneSSE2(values []uint32, useZigZag bool) {
 	if useZigZag {
-		zigzagDecodeSSE2(dst, deltas)
-	} else {
-		copy(dst, deltas)
+		zigzagDecodeSSE2(values)
 	}
 
 	for v := 1; v < utlValuesPerLane; v++ {
@@ -228,35 +224,34 @@ func deltaDecodePerLaneSSE2(dst, deltas []uint32, useZigZag bool) {
 		prevBase := (v - 1) * utlLaneCount
 
 		// TODO-PERF: Maybe unroll
-		for group := 0; group < 4; group++ {
+		for group := range 4 {
 			off := group * 4
-			prev := archsimd.LoadUint32x4Slice(dst[prevBase+off : prevBase+off+4])
-			cur := archsimd.LoadUint32x4Slice(dst[curBase+off : curBase+off+4])
+			prev := archsimd.LoadUint32x4Slice(values[prevBase+off : prevBase+off+4])
+			cur := archsimd.LoadUint32x4Slice(values[curBase+off : curBase+off+4])
 			sum := prev.Add(cur)
-			sum.StoreSlice(dst[curBase+off : curBase+off+4])
+			sum.StoreSlice(values[curBase+off : curBase+off+4])
 		}
 	}
 }
 
 // deltaDecodePerLaneWithOverflowSSE2 performs prefix sum with overflow check
 // using SSE2 (Uint32x4). Returns position of first overflow (0 = none).
-func deltaDecodePerLaneWithOverflowSSE2(dst, deltas []uint32, useZigZag bool) int {
+func deltaDecodePerLaneWithOverflowSSE2(values []uint32, useZigZag bool) int {
 	if useZigZag {
-		deltaDecodePerLaneSSE2(dst, deltas, true)
+		deltaDecodePerLaneSSE2(values, true)
 		return 0
 	}
 
-	copy(dst, deltas)
 	var overflowPos int
 
 	for v := 1; v < utlValuesPerLane; v++ {
 		curBase := v * utlLaneCount
 		prevBase := (v - 1) * utlLaneCount
 
-		for group := 0; group < 4; group++ {
+		for group := range 4 {
 			off := group * 4
-			prev := archsimd.LoadUint32x4Slice(dst[prevBase+off : prevBase+off+4])
-			cur := archsimd.LoadUint32x4Slice(dst[curBase+off : curBase+off+4])
+			prev := archsimd.LoadUint32x4Slice(values[prevBase+off : prevBase+off+4])
+			cur := archsimd.LoadUint32x4Slice(values[curBase+off : curBase+off+4])
 			sum := prev.Add(cur)
 
 			overflow := sum.Less(prev)
@@ -265,7 +260,7 @@ func deltaDecodePerLaneWithOverflowSSE2(dst, deltas []uint32, useZigZag bool) in
 				overflowPos = curBase + off + lane
 			}
 
-			sum.StoreSlice(dst[curBase+off : curBase+off+4])
+			sum.StoreSlice(values[curBase+off : curBase+off+4])
 		}
 	}
 
@@ -281,19 +276,23 @@ func packUint32SSE2(flag byte, dst []byte, scratch []uint32, values []uint32) ([
 
 	headerFlags := headerTypeUint32Flag
 
-	useFOR, baseValue, forW := selectBitWidthWithFORSSE2(values)
-
-	if useFOR {
-		forSubtractSSE2(values, values, baseValue)
-		headerFlags |= uint32(forW) << forWidthShift
+	var useFOR bool
+	var baseValue uint32
+	var forW int
+	if flag&NoFOR == 0 {
+		useFOR, baseValue, forW = selectBitWidthWithFORSSE2(values)
+		if useFOR {
+			forSubtractSSE2(values, values, baseValue)
+			headerFlags |= uint32(forW) << forWidthShift
+		}
 	}
 
 	if flag&Delta != 0 {
 		var needZZ bool
 		if len(values) == blockSize {
-			needZZ = deltaEncodePerLaneSSE2(values, values)
+			needZZ = deltaEncodePerLaneSSE2(values)
 		} else {
-			needZZ = deltaEncodePerLaneScalar(values, values)
+			needZZ = deltaEncodePerLaneScalar(values)
 		}
 		if needZZ {
 			headerFlags |= headerZigZagFlag
@@ -412,16 +411,16 @@ func unpackUint32SSE2(dst []uint32, scratch []uint32, buf []byte) ([]uint32, int
 	if hasDelta {
 		if hasZigZag {
 			if count == blockSize {
-				deltaDecodePerLaneSSE2(dst, dst, true)
+				deltaDecodePerLaneSSE2(dst, true)
 			} else {
-				deltaDecodePerLaneScalar(dst, dst, true)
+				deltaDecodePerLaneScalar(dst, true)
 			}
 		} else {
 			var overflowPos int
 			if count == blockSize {
-				overflowPos = deltaDecodePerLaneWithOverflowSSE2(dst, dst, false)
+				overflowPos = deltaDecodePerLaneWithOverflowSSE2(dst, false)
 			} else {
-				overflowPos = deltaDecodePerLaneWithOverflowScalar(dst, dst, false)
+				overflowPos = deltaDecodePerLaneWithOverflowScalar(dst, false)
 			}
 			if overflowPos > 0 {
 				return nil, 0, &ErrOverflow{Position: overflowPos}
@@ -521,7 +520,7 @@ func findMinMaxSSE2(values []uint32) (uint32, uint32) {
 
 	end := uintptr(n) * 4
 	for off := uintptr(16); off+16 <= end; off += 16 {
-		chunk := archsimd.LoadUint32x4((*[4]uint32)(unsafe.Pointer(uintptr(p) + off)))
+		chunk := archsimd.LoadUint32x4((*[4]uint32)(unsafe.Add(p, off)))
 		minVec = minVec.Min(chunk)
 		maxVec = maxVec.Max(chunk)
 	}
