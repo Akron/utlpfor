@@ -8,30 +8,27 @@ library with SSE2 assembly.
 
 UTL-PFOR replaces the SSE2-only lane layout for bitpacking with the
 [FastLanes](https://www.vldb.org/pvldb/vol16/p2132-afroozeh.pdf) [4]
-Unified Transposed Layout (UTL): 16 lanes x 8 values in 64-byte super-words.
-This single wire format works across SSE2, AVx2, and AVx-512 without
+*Unified Transposed Layout* (UTL): 16 lanes x 8 values in 64-byte super-words.
+This single wire format works across SSE2, AVX2, and AVX-512 without
 data transposition.
 
-In addition to the `fastpfor` compression scheme, UTL-PFOR uses real Frame-of-Reference (`FOR`) encoding, storing a per-block minimum value and compressing only the residuals, if beneficial.
+In addition to the `fastpfor` compression scheme, UTL-PFOR uses real *Frame-of-Reference* (the `for` in `pfor`) encoding, storing a minimum value per block and compressing only the residuals, if beneficial.
 Outliers, that would harm bitpacking are stored as exceptions, that are patched on decompression (the `p` in `pfor`).
-Exceptions are encoded using [StreamVByte](https://github.com/mhr3/streamvbyte) [3], a variable-byte encoding scheme optimized for SIMD.
-Delta-Encoding allows to only store the difference between values.
-Zigzag-Encoding is used to encode negative values after Delta-Encoding.
+Exceptions are encoded using [StreamVByte](https://github.com/mhr3/streamvbyte) [3], a variable-byte encoding scheme optimized for SIMD (specifically SSE2).
+*Delta-Encoding* allows to only store the difference between values.
+*Zigzag-Encoding* is used to encode negative values after Delta-Encoding.
 
+## Status
 
-## Native SIMD
+Work in progress. The library is functional but not yet final.
+
+## Requirements
 
 This library uses Go's native SIMD support (`simd/archsimd`) introduced
 in Go 1.26 (via `GOExPERIMENT=simd`).
 
 Runtime dispatch selects the best path at startup:
 AVX-512 > AVX2 > SSE2 > scalar fallback.
-
-## Status
-
-Work in progress. The library is functional but not yet released.
-
-## Requirements
 
 - **Go 1.26+** with `GOExPERIMENT=simd` for SIMD acceleration
 - Scalar fallback works without the experiment flag on any architecture
@@ -48,11 +45,7 @@ func PackUint32(flag byte, dst []byte, scratch []uint32, values []uint32) ([]byt
 func UnpackUint32(dst []uint32, scratch []uint32, buf []byte) ([]uint32, int, error)
 func GetUint32(pos int, buf []byte) (uint32, error)
 func BlockLength(buf []byte) (int, error)
-
-const ScratchLen = 128 // minimum scratch buffer capacity for zero-allocation operation
 ```
-
-Pass `scratch` with capacity >= `ScratchLen` and a pre-allocated `dst` for zero heap allocations. Pass `nil` for `scratch` to use internal allocations.
 
 ## Quick Start
 
@@ -61,19 +54,15 @@ Pass `scratch` with capacity >= `ScratchLen` and a pre-allocated `dst` for zero 
 gotip test ./...
 
 # With SIMD acceleration
-GOExPERIMENT=simd gotip test ./...
+GOEXPERIMENT=simd gotip test ./...
 
 # Benchmarks
-GOExPERIMENT=simd gotip test -bench=. -benchmem -count=5 ./...
+GOEXPERIMENT=simd gotip test -bench=. -benchmem -count=5 ./...
 ```
 
 ## Disclaimer
 
-This library was developed with AI assistance (Claude Opus 4.6).
-
-## License
-
-See LICENSE file.
+This library was developed with AI assistance (Claude Opus 4.6 and Codex 5.3).
 
 ## Literature
 
