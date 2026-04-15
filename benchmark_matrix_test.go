@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -24,7 +25,6 @@ type matrixConfig struct {
 
 // name returns the fixed-width benchmark name for this configuration.
 func (c matrixConfig) name() string {
-	forStr := fmt.Sprintf("%dfor", c.forWidth)
 	deltaStr, zzStr := "-delta", "-zz"
 	if c.useDelta {
 		deltaStr = "+delta"
@@ -32,6 +32,12 @@ func (c matrixConfig) name() string {
 	if c.useZZ {
 		zzStr = "+zz"
 	}
+	if c.method == "get" {
+		return fmt.Sprintf("%s_%02dbit_%02dexc_%s_%s",
+			c.method, c.bitWidth, c.excCount,
+			deltaStr, zzStr)
+	}
+	forStr := fmt.Sprintf("%dfor", c.forWidth)
 	return fmt.Sprintf("%s_%02dbit_%02dexc_%s_%s_%s",
 		c.method, c.bitWidth, c.excCount,
 		forStr, deltaStr, zzStr)
@@ -137,9 +143,9 @@ func lenMatrixConfigs() []matrixConfig {
 }
 
 // allMatrixConfigs generates all benchmark configurations.
-// pac, unp, get: full matrix (144 each). len: reduced set (4 configs).
+// pac/unp: full matrix (144 each). get: no FOR dimension (36). len: reduced set (4).
 func allMatrixConfigs() []matrixConfig {
-	fullMethods := []string{"pac", "unp", "get"}
+	fullMethods := []string{"pac", "unp"}
 	bitWidths := []int{4, 16, 28}
 	excCounts := []int{0, 8, 16, 32}
 	forWidths := []int{0, 1, 2, 4}
@@ -167,6 +173,20 @@ func allMatrixConfigs() []matrixConfig {
 						})
 					}
 				}
+			}
+		}
+	}
+	for _, bw := range bitWidths {
+		for _, exc := range excCounts {
+			for _, dz := range deltaOpts {
+				configs = append(configs, matrixConfig{
+					method:   "get",
+					bitWidth: bw,
+					excCount: exc,
+					forWidth: 0,
+					useDelta: dz.delta,
+					useZZ:    dz.zz,
+				})
 			}
 		}
 	}
@@ -214,7 +234,7 @@ func BenchmarkMatrix(b *testing.B) {
 				}
 				var sink uint32
 				b.ReportAllocs()
-				b.SetBytes(int64(blockSize * 4))
+				b.SetBytes(4)
 				b.ResetTimer()
 				for i := 0; i < b.N; i++ {
 					for pos := range blockSize {
@@ -222,6 +242,7 @@ func BenchmarkMatrix(b *testing.B) {
 						sink += v
 					}
 				}
+				b.ReportMetric(float64(b.Elapsed())/float64(time.Nanosecond)/float64(b.N*blockSize), "ns/get")
 				benchSink = sink
 
 			case "len":
@@ -280,11 +301,11 @@ func quickCompareConfigs() []matrixConfig {
 		{method: "unp", bitWidth: 4, excCount: 8, forWidth: 1, useDelta: true, useZZ: false},
 		{method: "unp", bitWidth: 16, excCount: 16, forWidth: 4, useDelta: true, useZZ: true},
 
-		// Get-only probes (small fixed position set for quick turnaround)
+		// Get-only probes over full block (report includes per-get metric)
 		{method: "get", bitWidth: 4, excCount: 0, forWidth: 0, useDelta: false, useZZ: false},
 		{method: "get", bitWidth: 16, excCount: 16, forWidth: 0, useDelta: false, useZZ: false},
 		{method: "get", bitWidth: 4, excCount: 0, forWidth: 0, useDelta: true, useZZ: false},
-		{method: "get", bitWidth: 4, excCount: 8, forWidth: 1, useDelta: true, useZZ: true},
+		{method: "get", bitWidth: 4, excCount: 8, forWidth: 0, useDelta: true, useZZ: true},
 
 		// Mixed pack+unpack+get on same block (pipeline realism)
 		{method: "mix", bitWidth: 16, excCount: 0, forWidth: 0, useDelta: false, useZZ: false},
@@ -338,17 +359,17 @@ func BenchmarkQuickCompare(b *testing.B) {
 				if err != nil {
 					b.Fatalf("pack failed: %v", err)
 				}
-				positions := [4]int{0, 17, 64, 127}
 				var sink uint32
 				b.ReportAllocs()
-				b.SetBytes(int64(len(positions) * 4))
+				b.SetBytes(4)
 				b.ResetTimer()
 				for i := 0; i < b.N; i++ {
-					for _, pos := range positions {
+					for pos := range blockSize {
 						v, _ := GetUint32(pos, packed)
 						sink += v
 					}
 				}
+				b.ReportMetric(float64(b.Elapsed())/float64(time.Nanosecond)/float64(b.N*blockSize), "ns/get")
 				benchSink = sink
 
 			case "mix":
