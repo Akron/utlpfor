@@ -9,8 +9,6 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-// --- selectBitWidth SIMD-matches-scalar Tests ---
-
 func TestSelectBitWidth_SIMDMatchesScalar(t *testing.T) {
 	rng := rand.New(rand.NewPCG(77, 0))
 	for trial := range 500 {
@@ -68,8 +66,6 @@ func TestSelectBitWidth_SIMDMatchesScalar_WithOutliers(t *testing.T) {
 	}
 }
 
-// --- selectBitWidthWithFOR SIMD-matches-scalar Tests ---
-
 func TestSelectBitWidthWithFOR_SIMDMatchesScalar(t *testing.T) {
 	rng := rand.New(rand.NewPCG(33, 0))
 	for trial := range 500 {
@@ -123,8 +119,6 @@ func TestSelectBitWidthWithFOR_SIMDMatchesScalar_Clustered(t *testing.T) {
 		assert.Equal(t, sfw, ifw, "forWidth trial %d", trial)
 	}
 }
-
-// --- SIMD Benchmarks ---
 
 func BenchmarkSelectBitWidth_SIMD(b *testing.B) {
 	values := make([]uint32, 128)

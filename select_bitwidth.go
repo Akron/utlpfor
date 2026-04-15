@@ -3,7 +3,7 @@ package utlpfor
 import "math/bits"
 
 // stepWidth converts a step index (0-8) to the corresponding bitwidth.
-// Equivalent to the old stepBitWidths LUT but avoids memory access.
+// Will be inlined by the compiler.
 func stepWidth(si int) int { return si << 2 }
 
 // roundUpToStep rounds a raw bitwidth up to the nearest step bitwidth.

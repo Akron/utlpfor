@@ -10,8 +10,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// --- Zigzag round-trip tests (3.4) ---
-
 func TestZigzagEncodeDecode_AllValues(t *testing.T) {
 	testCases := []int32{0, 1, -1, 127, -128, 32767, -32768, math.MaxInt32, math.MinInt32}
 	for _, v := range testCases {
@@ -20,8 +18,6 @@ func TestZigzagEncodeDecode_AllValues(t *testing.T) {
 		assert.Equal(t, v, decoded, "zigzag roundtrip for %d", v)
 	}
 }
-
-// --- Per-lane delta unit tests (3.4) ---
 
 func TestDeltaRoundTrip_PerLane(t *testing.T) {
 	values := make([]uint32, 128)
@@ -64,8 +60,6 @@ func TestDeltaRoundTrip_PerLane_SingleValue(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, expected, unpacked)
 }
-
-// --- Per-lane delta specific tests (3.2) ---
 
 func TestDeltaEncodePerLane_LaneIndependence(t *testing.T) {
 	values := make([]uint32, 128)
@@ -157,8 +151,6 @@ func TestDeltaRoundTrip_PerLane_AllBlockSizes(t *testing.T) {
 	}
 }
 
-// --- Basic delta round-trip tests (3.2) ---
-
 func TestPackUint32_DeltaFlag(t *testing.T) {
 	values := []uint32{10, 20, 30, 40, 50}
 	expected := append([]uint32(nil), values...)
@@ -233,8 +225,6 @@ func TestPackUint32_DeltaPath_NoAllocsWithPreallocatedDst(t *testing.T) {
 	})
 	assert.Equal(t, 0.0, allocs)
 }
-
-// --- Overflow detection test ---
 
 func TestDeltaDecodePerLane_OverflowDetection(t *testing.T) {
 	values := make([]uint32, 128)

@@ -1,7 +1,7 @@
 todo.md
 *-plan.md
 testdata/sandbox
-cmd/sim/
+internal/sim/
 benchmarks
 coverage.out
 *.tar.gz
