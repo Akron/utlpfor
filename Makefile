@@ -32,19 +32,19 @@ test:
 	go test ./... -count=1
 
 test-simd:
-	GOEXPERIMENT=simd go test ./... -count=1
+	GOEXPERIMENT=simd gotip test ./... -count=1
 
 test-force-scalar:
-	GOEXPERIMENT=simd UTL_SIMD_LEVEL=scalar go test ./... -count=1
+	GOEXPERIMENT=simd UTL_SIMD_LEVEL=scalar gotip test ./... -count=1
 
 test-force-sse2:
-	GOEXPERIMENT=simd UTL_SIMD_LEVEL=sse2 go test ./... -count=1
+	GOEXPERIMENT=simd UTL_SIMD_LEVEL=sse2 gotip test ./... -count=1
 
 test-force-avx2:
-	GOEXPERIMENT=simd UTL_SIMD_LEVEL=avx2 go test ./... -count=1
+	GOEXPERIMENT=simd UTL_SIMD_LEVEL=avx2 gotip test ./... -count=1
 
 test-force-avx512:
-	GOEXPERIMENT=simd UTL_SIMD_LEVEL=avx512 go test ./... -count=1
+	GOEXPERIMENT=simd UTL_SIMD_LEVEL=avx512 gotip test ./... -count=1
 
 # --- Benchmarks ---
 
@@ -52,7 +52,7 @@ bench:
 	$(TASKSET) go test -bench=. -benchmem -count=$(BENCHCOUNT) -run='^$$' ./...
 
 bench-simd:
-	GOEXPERIMENT=simd $(TASKSET) go test -bench=. -benchmem -count=$(BENCHCOUNT) -run='^$$' ./...
+	GOEXPERIMENT=simd $(TASKSET) gotip test -bench=. -benchmem -count=$(BENCHCOUNT) -run='^$$' ./...
 
 bench-save-scalar:
 	@mkdir -p benchmarks
@@ -61,7 +61,7 @@ bench-save-scalar:
 
 bench-save-simd:
 	@mkdir -p benchmarks
-	GOEXPERIMENT=simd $(TASKSET) go test -bench=. -benchmem -count=$(BENCHCOUNT) -run='^$$' ./... > benchmarks/simd-baseline.txt
+	GOEXPERIMENT=simd $(TASKSET) gotip test -bench=. -benchmem -count=$(BENCHCOUNT) -run='^$$' ./... > benchmarks/simd-baseline.txt
 	@echo "Saved to benchmarks/simd-baseline.txt"
 
 bench-compare:
