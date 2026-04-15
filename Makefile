@@ -204,4 +204,4 @@ SIM_RUNS ?= 10
 SIM_WARMUP ?= 5
 
 sim:
-	GOEXPERIMENT=simd go run ./cmd/sim -runs $(SIM_RUNS) -warmup $(SIM_WARMUP)
+	GOEXPERIMENT=simd go run ./internal/sim -runs $(SIM_RUNS) -warmup $(SIM_WARMUP)
