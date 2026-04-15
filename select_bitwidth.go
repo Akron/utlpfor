@@ -8,9 +8,6 @@ func stepWidth(si int) int { return si << 2 }
 
 // roundUpToStep rounds a raw bitwidth up to the nearest step bitwidth.
 func roundUpToStep(bw int) int {
-	if bw <= 0 {
-		return 0
-	}
 	return ((bw + 3) / 4) * 4
 }
 
