@@ -77,6 +77,7 @@ func main() {
 	w("//go:build goexperiment.simd && amd64\n\n")
 	w("package utlpfor\n\n")
 	w("import (\n")
+	w("\t\"math/bits\"\n")
 	w("\t\"simd/archsimd\"\n")
 	w("\t\"unsafe\"\n")
 	w(")\n\n")
@@ -104,6 +105,13 @@ func main() {
 		generatePackAVX512(&b, bw)
 		w("\n")
 	}
+
+	w("// --- buildExcCounts per SIMD level ---\n\n")
+	generateBuildExcCounts(&b, "SSE2", "Uint32x4", 4, "OnesCount8")
+	w("\n")
+	generateBuildExcCounts(&b, "AVX2", "Uint32x8", 8, "OnesCount8")
+	w("\n")
+	generateBuildExcCounts(&b, "AVX512", "Uint32x16", 16, "OnesCount16")
 
 	os.Stdout.WriteString(b.String())
 }
@@ -654,5 +662,44 @@ func generatePackAVX512(b *strings.Builder, bw int) {
 		}
 	}
 
+	w("}\n")
+}
+
+// Step thresholds for the 8 non-trivial step widths (bw 4,8,...,28).
+// exc[i] counts values exceeding threshold[i]. exc[8] is always 0.
+var excThresholds = [8]uint32{0, 0xF, 0xFF, 0xFFF, 0xFFFF, 0xFFFFF, 0xFFFFFF, 0xFFFFFFF}
+
+// generateBuildExcCounts generates a buildExcCounts function for a given
+// SIMD level. simdSuffix is "SSE2"/"AVX2"/"AVX512", vecType is the
+// archsimd type name, step is the number of uint32 lanes per vector,
+// and popCountFn is "OnesCount8" or "OnesCount16".
+func generateBuildExcCounts(b *strings.Builder, simdSuffix, vecType string, step int, popCountFn string) {
+	w := func(format string, args ...any) { fmt.Fprintf(b, format, args...) }
+
+	w("// buildExcCounts%s computes cumulative exception counts using %s\n", simdSuffix, simdSuffix)
+	w("// threshold comparisons in a single pass over the data.\n")
+	w("func buildExcCounts%s(values []uint32) (exc [9]int) {\n", simdSuffix)
+
+	for i, t := range excThresholds {
+		w("\tt%d := archsimd.Broadcast%s(0x%X)\n", i, vecType, t)
+	}
+	w("\n")
+
+	w("\ti := 0\n")
+	w("\tfor ; i+%d <= len(values); i += %d {\n", step, step)
+	w("\t\tv := archsimd.Load%sSlice(values[i:])\n", vecType)
+	for i := range 8 {
+		w("\t\texc[%d] += bits.%s(v.Greater(t%d).ToBits())\n", i, popCountFn, i)
+	}
+	w("\t}\n")
+
+	w("\tfor ; i < len(values); i++ {\n")
+	w("\t\tv := values[i]\n")
+	for i, t := range excThresholds {
+		w("\t\texc[%d] += gtCountU32(v, 0x%X)\n", i, t)
+	}
+	w("\t}\n")
+
+	w("\treturn\n")
 	w("}\n")
 }

@@ -369,20 +369,15 @@ func selectBitWidthWithFORAVX512(values []uint32) (useFOR bool, baseValue uint32
 			exc[7] += bits.OnesCount16(v.Greater(t7).ToBits())
 		}
 
-		var minLanes, maxLanes [16]uint32
-		minVec.Store(&minLanes)
-		maxVec.Store(&maxLanes)
-		minVal, maxVal = minLanes[0], maxLanes[0]
-		for _, v := range minLanes[1:] {
-			if v < minVal {
-				minVal = v
-			}
-		}
-		for _, v := range maxLanes[1:] {
-			if v > maxVal {
-				maxVal = v
-			}
-		}
+		minR8 := minVec.GetLo().Min(minVec.GetHi())
+		maxR8 := maxVec.GetLo().Max(maxVec.GetHi())
+		minR4 := minR8.GetLo().Min(minR8.GetHi())
+		maxR4 := maxR8.GetLo().Max(maxR8.GetHi())
+		var minL, maxL [4]uint32
+		minR4.Store(&minL)
+		maxR4.Store(&maxL)
+		minVal = min(min(minL[0], minL[1]), min(minL[2], minL[3]))
+		maxVal = max(max(maxL[0], maxL[1]), max(maxL[2], maxL[3]))
 		tail := (n / 16) * 16
 		for i := tail; i < n; i++ {
 			v := values[i]
@@ -431,46 +426,6 @@ func selectBitWidthWithFORAVX512(values []uint32) (useFOR bool, baseValue uint32
 	return true, minVal, selectFORWidth(minVal)
 }
 
-// buildExcCountsAVX512 computes cumulative exception counts using AVX-512
-// threshold comparisons. All 8 thresholds fit in a single pass because
-// AVX-512 has 32 ZMM registers (only 9 needed: 8 thresholds + 1 value).
-func buildExcCountsAVX512(values []uint32) (exc [9]int) {
-	t0 := archsimd.BroadcastUint32x16(0)
-	t1 := archsimd.BroadcastUint32x16(0xF)
-	t2 := archsimd.BroadcastUint32x16(0xFF)
-	t3 := archsimd.BroadcastUint32x16(0xFFF)
-	t4 := archsimd.BroadcastUint32x16(0xFFFF)
-	t5 := archsimd.BroadcastUint32x16(0xFFFFF)
-	t6 := archsimd.BroadcastUint32x16(0xFFFFFF)
-	t7 := archsimd.BroadcastUint32x16(0xFFFFFFF)
-
-	i := 0
-	for ; i+16 <= len(values); i += 16 {
-		v := archsimd.LoadUint32x16Slice(values[i:])
-		exc[0] += bits.OnesCount16(v.Greater(t0).ToBits())
-		exc[1] += bits.OnesCount16(v.Greater(t1).ToBits())
-		exc[2] += bits.OnesCount16(v.Greater(t2).ToBits())
-		exc[3] += bits.OnesCount16(v.Greater(t3).ToBits())
-		exc[4] += bits.OnesCount16(v.Greater(t4).ToBits())
-		exc[5] += bits.OnesCount16(v.Greater(t5).ToBits())
-		exc[6] += bits.OnesCount16(v.Greater(t6).ToBits())
-		exc[7] += bits.OnesCount16(v.Greater(t7).ToBits())
-	}
-	for ; i < len(values); i++ {
-		v := values[i]
-		// Branchless scalar tail: each comparison contributes 0 or 1 to the cumulative exception counters.
-		exc[0] += gtCountU32(v, 0)
-		exc[1] += gtCountU32(v, 0xF)
-		exc[2] += gtCountU32(v, 0xFF)
-		exc[3] += gtCountU32(v, 0xFFF)
-		exc[4] += gtCountU32(v, 0xFFFF)
-		exc[5] += gtCountU32(v, 0xFFFFF)
-		exc[6] += gtCountU32(v, 0xFFFFFF)
-		exc[7] += gtCountU32(v, 0xFFFFFFF)
-	}
-	return
-}
-
 // selectBitWidthNoPatchAVX512 computes the minimum step bitwidth using AVX-512
 // OR-reduction. No exception analysis is performed.
 func selectBitWidthNoPatchAVX512(values []uint32) int {
@@ -503,11 +458,13 @@ func findMinMaxAVX512(values []uint32) (uint32, uint32) {
 		return findMinMaxScalar(values)
 	}
 
+	// Prime two independent 16-lane accumulators from the first 32 values.
 	p := unsafe.Pointer(&values[0])
 	min0 := archsimd.LoadUint32x16((*[16]uint32)(p))
 	min1 := archsimd.LoadUint32x16((*[16]uint32)(unsafe.Add(p, 64)))
 	max0, max1 := min0, min1
 
+	// Process two 64-byte vectors per iteration to maximize throughput.
 	end := uintptr(n) * 4
 	for off := uintptr(128); off+128 <= end; off += 128 {
 		c0 := archsimd.LoadUint32x16((*[16]uint32)(unsafe.Add(p, off)))
@@ -518,24 +475,21 @@ func findMinMaxAVX512(values []uint32) (uint32, uint32) {
 		max1 = max1.Max(c1)
 	}
 
-	minVec := min0.Min(min1)
-	maxVec := max0.Max(max1)
+	minVec16 := min0.Min(min1)
+	maxVec16 := max0.Max(max1)
+	// Fold 16 lanes -> 8 lanes -> 4 lanes before final scalar reduction.
+	minR8 := minVec16.GetLo().Min(minVec16.GetHi())
+	maxR8 := maxVec16.GetLo().Max(maxVec16.GetHi())
+	minR4 := minR8.GetLo().Min(minR8.GetHi())
+	maxR4 := maxR8.GetLo().Max(maxR8.GetHi())
+	var minL, maxL [4]uint32
+	minR4.Store(&minL)
+	maxR4.Store(&maxL)
+	minResult := min(min(minL[0], minL[1]), min(minL[2], minL[3]))
+	maxResult := max(max(maxL[0], maxL[1]), max(maxL[2], maxL[3]))
 
-	var minLanes, maxLanes [16]uint32
-	minVec.Store(&minLanes)
-	maxVec.Store(&maxLanes)
-	minResult, maxResult := minLanes[0], maxLanes[0]
-	for _, v := range minLanes[1:] {
-		if v < minResult {
-			minResult = v
-		}
-	}
-	for _, v := range maxLanes[1:] {
-		if v > maxResult {
-			maxResult = v
-		}
-	}
-
+	// TODO-PERF: Use AVX2 for the tail!
+	// Handle the remaining values that do not complete a 32-value block.
 	tail := (n / 32) * 32
 	for i := tail; i < n; i++ {
 		if values[i] < minResult {

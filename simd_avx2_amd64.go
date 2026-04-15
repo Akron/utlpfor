@@ -513,48 +513,6 @@ func selectBitWidthWithFORAVX2(values []uint32) (useFOR bool, baseValue uint32, 
 	return true, minVal, selectFORWidth(minVal)
 }
 
-// buildExcCountsAVX2 computes cumulative exception counts using AVX2
-// threshold comparisons in a single pass over the data. All 8 thresholds
-// are compared per iteration, requiring 9 YMM registers (8 thresholds +
-// 1 value vector) of 16 available -- matching the SSE2 single-pass
-// approach but with 8-wide operations.
-func buildExcCountsAVX2(values []uint32) (exc [9]int) {
-	t0 := archsimd.BroadcastUint32x8(0)
-	t1 := archsimd.BroadcastUint32x8(0xF)
-	t2 := archsimd.BroadcastUint32x8(0xFF)
-	t3 := archsimd.BroadcastUint32x8(0xFFF)
-	t4 := archsimd.BroadcastUint32x8(0xFFFF)
-	t5 := archsimd.BroadcastUint32x8(0xFFFFF)
-	t6 := archsimd.BroadcastUint32x8(0xFFFFFF)
-	t7 := archsimd.BroadcastUint32x8(0xFFFFFFF)
-
-	i := 0
-	for ; i+8 <= len(values); i += 8 {
-		v := archsimd.LoadUint32x8Slice(values[i:])
-		exc[0] += bits.OnesCount8(v.Greater(t0).ToBits())
-		exc[1] += bits.OnesCount8(v.Greater(t1).ToBits())
-		exc[2] += bits.OnesCount8(v.Greater(t2).ToBits())
-		exc[3] += bits.OnesCount8(v.Greater(t3).ToBits())
-		exc[4] += bits.OnesCount8(v.Greater(t4).ToBits())
-		exc[5] += bits.OnesCount8(v.Greater(t5).ToBits())
-		exc[6] += bits.OnesCount8(v.Greater(t6).ToBits())
-		exc[7] += bits.OnesCount8(v.Greater(t7).ToBits())
-	}
-	// TODO-PERF: Use SSE for the tail initially
-	for ; i < len(values); i++ {
-		v := values[i]
-		exc[0] += gtCountU32(v, 0)
-		exc[1] += gtCountU32(v, 0xF)
-		exc[2] += gtCountU32(v, 0xFF)
-		exc[3] += gtCountU32(v, 0xFFF)
-		exc[4] += gtCountU32(v, 0xFFFF)
-		exc[5] += gtCountU32(v, 0xFFFFF)
-		exc[6] += gtCountU32(v, 0xFFFFFF)
-		exc[7] += gtCountU32(v, 0xFFFFFFF)
-	}
-	return
-}
-
 // findMinMaxAVX2 computes min/max using AVX2 8-wide operations with 2
 // independent accumulator pairs for instruction-level parallelism.
 // Uses pointer-based loads to avoid per-iteration slice bounds checking.
@@ -565,11 +523,13 @@ func findMinMaxAVX2(values []uint32) (uint32, uint32) {
 		return findMinMaxSSE2(values)
 	}
 
+	// Prime two independent 8-lane accumulators from the first 16 values.
 	p := unsafe.Pointer(&values[0])
 	min0 := archsimd.LoadUint32x8((*[8]uint32)(p))
 	min1 := archsimd.LoadUint32x8((*[8]uint32)(unsafe.Add(p, 32)))
 	max0, max1 := min0, min1
 
+	// Process two vectors per iteration to keep both accumulator chains busy.
 	end := uintptr(n) * 4
 	for off := uintptr(64); off+64 <= end; off += 64 {
 		c0 := archsimd.LoadUint32x8((*[8]uint32)(unsafe.Add(p, off)))
@@ -583,24 +543,17 @@ func findMinMaxAVX2(values []uint32) (uint32, uint32) {
 	minVec := min0.Min(min1)
 	maxVec := max0.Max(max1)
 
-	var minLanes, maxLanes [8]uint32
-	minVec.Store(&minLanes)
-	maxVec.Store(&maxLanes)
-	minResult, maxResult := minLanes[0], maxLanes[0]
+	// Horizontally reduce 8-lane vectors down to scalar min/max values.
+	minR4 := minVec.GetLo().Min(minVec.GetHi())
+	maxR4 := maxVec.GetLo().Max(maxVec.GetHi())
+	var minL, maxL [4]uint32
+	minR4.Store(&minL)
+	maxR4.Store(&maxL)
+	minResult := min(min(minL[0], minL[1]), min(minL[2], minL[3]))
+	maxResult := max(max(maxL[0], maxL[1]), max(maxL[2], maxL[3]))
 
-	// TODO-PERF: Unroll?
-	for _, v := range minLanes[1:] {
-		if v < minResult {
-			minResult = v
-		}
-	}
-	for _, v := range maxLanes[1:] {
-		if v > maxResult {
-			maxResult = v
-		}
-	}
-
-	// TODO-PERF: Use SSE for the tail initially
+	// TODO-PERF: Use SSE2 for the tail
+	// Handle the leftover elements that do not fill a 16-value AVX2 block.
 	tail := (n / 16) * 16
 	for i := tail; i < n; i++ {
 		if values[i] < minResult {

@@ -5,6 +5,7 @@
 package utlpfor
 
 import (
+	"math/bits"
 	"simd/archsimd"
 	"unsafe"
 )
@@ -1855,4 +1856,120 @@ func packAVX512BW32(dst *byte, values *uint32) {
 	archsimd.LoadUint32x16((*[16]uint32)(unsafe.Add(p, 320))).Store((*[16]uint32)(unsafe.Add(d, 320)))
 	archsimd.LoadUint32x16((*[16]uint32)(unsafe.Add(p, 384))).Store((*[16]uint32)(unsafe.Add(d, 384)))
 	archsimd.LoadUint32x16((*[16]uint32)(unsafe.Add(p, 448))).Store((*[16]uint32)(unsafe.Add(d, 448)))
+}
+
+// --- buildExcCounts per SIMD level ---
+
+// buildExcCountsSSE2 computes cumulative exception counts using SSE2
+// threshold comparisons in a single pass over the data.
+func buildExcCountsSSE2(values []uint32) (exc [9]int) {
+	t0 := archsimd.BroadcastUint32x4(0x0)
+	t1 := archsimd.BroadcastUint32x4(0xF)
+	t2 := archsimd.BroadcastUint32x4(0xFF)
+	t3 := archsimd.BroadcastUint32x4(0xFFF)
+	t4 := archsimd.BroadcastUint32x4(0xFFFF)
+	t5 := archsimd.BroadcastUint32x4(0xFFFFF)
+	t6 := archsimd.BroadcastUint32x4(0xFFFFFF)
+	t7 := archsimd.BroadcastUint32x4(0xFFFFFFF)
+
+	i := 0
+	for ; i+4 <= len(values); i += 4 {
+		v := archsimd.LoadUint32x4Slice(values[i:])
+		exc[0] += bits.OnesCount8(v.Greater(t0).ToBits())
+		exc[1] += bits.OnesCount8(v.Greater(t1).ToBits())
+		exc[2] += bits.OnesCount8(v.Greater(t2).ToBits())
+		exc[3] += bits.OnesCount8(v.Greater(t3).ToBits())
+		exc[4] += bits.OnesCount8(v.Greater(t4).ToBits())
+		exc[5] += bits.OnesCount8(v.Greater(t5).ToBits())
+		exc[6] += bits.OnesCount8(v.Greater(t6).ToBits())
+		exc[7] += bits.OnesCount8(v.Greater(t7).ToBits())
+	}
+	for ; i < len(values); i++ {
+		v := values[i]
+		exc[0] += gtCountU32(v, 0x0)
+		exc[1] += gtCountU32(v, 0xF)
+		exc[2] += gtCountU32(v, 0xFF)
+		exc[3] += gtCountU32(v, 0xFFF)
+		exc[4] += gtCountU32(v, 0xFFFF)
+		exc[5] += gtCountU32(v, 0xFFFFF)
+		exc[6] += gtCountU32(v, 0xFFFFFF)
+		exc[7] += gtCountU32(v, 0xFFFFFFF)
+	}
+	return
+}
+
+// buildExcCountsAVX2 computes cumulative exception counts using AVX2
+// threshold comparisons in a single pass over the data.
+func buildExcCountsAVX2(values []uint32) (exc [9]int) {
+	t0 := archsimd.BroadcastUint32x8(0x0)
+	t1 := archsimd.BroadcastUint32x8(0xF)
+	t2 := archsimd.BroadcastUint32x8(0xFF)
+	t3 := archsimd.BroadcastUint32x8(0xFFF)
+	t4 := archsimd.BroadcastUint32x8(0xFFFF)
+	t5 := archsimd.BroadcastUint32x8(0xFFFFF)
+	t6 := archsimd.BroadcastUint32x8(0xFFFFFF)
+	t7 := archsimd.BroadcastUint32x8(0xFFFFFFF)
+
+	i := 0
+	for ; i+8 <= len(values); i += 8 {
+		v := archsimd.LoadUint32x8Slice(values[i:])
+		exc[0] += bits.OnesCount8(v.Greater(t0).ToBits())
+		exc[1] += bits.OnesCount8(v.Greater(t1).ToBits())
+		exc[2] += bits.OnesCount8(v.Greater(t2).ToBits())
+		exc[3] += bits.OnesCount8(v.Greater(t3).ToBits())
+		exc[4] += bits.OnesCount8(v.Greater(t4).ToBits())
+		exc[5] += bits.OnesCount8(v.Greater(t5).ToBits())
+		exc[6] += bits.OnesCount8(v.Greater(t6).ToBits())
+		exc[7] += bits.OnesCount8(v.Greater(t7).ToBits())
+	}
+	for ; i < len(values); i++ {
+		v := values[i]
+		exc[0] += gtCountU32(v, 0x0)
+		exc[1] += gtCountU32(v, 0xF)
+		exc[2] += gtCountU32(v, 0xFF)
+		exc[3] += gtCountU32(v, 0xFFF)
+		exc[4] += gtCountU32(v, 0xFFFF)
+		exc[5] += gtCountU32(v, 0xFFFFF)
+		exc[6] += gtCountU32(v, 0xFFFFFF)
+		exc[7] += gtCountU32(v, 0xFFFFFFF)
+	}
+	return
+}
+
+// buildExcCountsAVX512 computes cumulative exception counts using AVX512
+// threshold comparisons in a single pass over the data.
+func buildExcCountsAVX512(values []uint32) (exc [9]int) {
+	t0 := archsimd.BroadcastUint32x16(0x0)
+	t1 := archsimd.BroadcastUint32x16(0xF)
+	t2 := archsimd.BroadcastUint32x16(0xFF)
+	t3 := archsimd.BroadcastUint32x16(0xFFF)
+	t4 := archsimd.BroadcastUint32x16(0xFFFF)
+	t5 := archsimd.BroadcastUint32x16(0xFFFFF)
+	t6 := archsimd.BroadcastUint32x16(0xFFFFFF)
+	t7 := archsimd.BroadcastUint32x16(0xFFFFFFF)
+
+	i := 0
+	for ; i+16 <= len(values); i += 16 {
+		v := archsimd.LoadUint32x16Slice(values[i:])
+		exc[0] += bits.OnesCount16(v.Greater(t0).ToBits())
+		exc[1] += bits.OnesCount16(v.Greater(t1).ToBits())
+		exc[2] += bits.OnesCount16(v.Greater(t2).ToBits())
+		exc[3] += bits.OnesCount16(v.Greater(t3).ToBits())
+		exc[4] += bits.OnesCount16(v.Greater(t4).ToBits())
+		exc[5] += bits.OnesCount16(v.Greater(t5).ToBits())
+		exc[6] += bits.OnesCount16(v.Greater(t6).ToBits())
+		exc[7] += bits.OnesCount16(v.Greater(t7).ToBits())
+	}
+	for ; i < len(values); i++ {
+		v := values[i]
+		exc[0] += gtCountU32(v, 0x0)
+		exc[1] += gtCountU32(v, 0xF)
+		exc[2] += gtCountU32(v, 0xFF)
+		exc[3] += gtCountU32(v, 0xFFF)
+		exc[4] += gtCountU32(v, 0xFFFF)
+		exc[5] += gtCountU32(v, 0xFFFFF)
+		exc[6] += gtCountU32(v, 0xFFFFFF)
+		exc[7] += gtCountU32(v, 0xFFFFFFF)
+	}
+	return
 }

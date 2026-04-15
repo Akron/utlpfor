@@ -472,45 +472,6 @@ func selectBitWidthWithFORSSE2(values []uint32) (useFOR bool, baseValue uint32, 
 	return true, minVal, selectFORWidth(minVal)
 }
 
-// buildExcCountsSSE2 computes cumulative exception counts using SSE2
-// threshold comparisons in a single pass.
-func buildExcCountsSSE2(values []uint32) (exc [9]int) {
-	tA0 := archsimd.BroadcastUint32x4(0)
-	tA1 := archsimd.BroadcastUint32x4(0xF)
-	tA2 := archsimd.BroadcastUint32x4(0xFF)
-	tA3 := archsimd.BroadcastUint32x4(0xFFF)
-	tB0 := archsimd.BroadcastUint32x4(0xFFFF)
-	tB1 := archsimd.BroadcastUint32x4(0xFFFFF)
-	tB2 := archsimd.BroadcastUint32x4(0xFFFFFF)
-	tB3 := archsimd.BroadcastUint32x4(0xFFFFFFF)
-
-	i := 0
-	for ; i+4 <= len(values); i += 4 {
-		v := archsimd.LoadUint32x4Slice(values[i:])
-		exc[0] += bits.OnesCount8(v.Greater(tA0).ToBits())
-		exc[1] += bits.OnesCount8(v.Greater(tA1).ToBits())
-		exc[2] += bits.OnesCount8(v.Greater(tA2).ToBits())
-		exc[3] += bits.OnesCount8(v.Greater(tA3).ToBits())
-		exc[4] += bits.OnesCount8(v.Greater(tB0).ToBits())
-		exc[5] += bits.OnesCount8(v.Greater(tB1).ToBits())
-		exc[6] += bits.OnesCount8(v.Greater(tB2).ToBits())
-		exc[7] += bits.OnesCount8(v.Greater(tB3).ToBits())
-	}
-	for ; i < len(values); i++ {
-		v := values[i]
-		// Branchless scalar tail: each comparison contributes 0 or 1 to the cumulative exception counters.
-		exc[0] += gtCountU32(v, 0)
-		exc[1] += gtCountU32(v, 0xF)
-		exc[2] += gtCountU32(v, 0xFF)
-		exc[3] += gtCountU32(v, 0xFFF)
-		exc[4] += gtCountU32(v, 0xFFFF)
-		exc[5] += gtCountU32(v, 0xFFFFF)
-		exc[6] += gtCountU32(v, 0xFFFFFF)
-		exc[7] += gtCountU32(v, 0xFFFFFFF)
-	}
-	return
-}
-
 // findMinMaxSSE2 computes min/max using SSE2 4-wide operations.
 // Uses pointer-based loads to avoid per-iteration slice bounds checking.
 func findMinMaxSSE2(values []uint32) (uint32, uint32) {
@@ -519,10 +480,12 @@ func findMinMaxSSE2(values []uint32) (uint32, uint32) {
 		return findMinMaxScalar(values)
 	}
 
+	// Seed both SIMD accumulators from the first 4-value chunk.
 	p := unsafe.Pointer(&values[0])
 	minVec := archsimd.LoadUint32x4((*[4]uint32)(p))
 	maxVec := minVec
 
+	// Scan full SSE2-width chunks and keep running lane-wise min/max.
 	end := uintptr(n) * 4
 	for off := uintptr(16); off+16 <= end; off += 16 {
 		chunk := archsimd.LoadUint32x4((*[4]uint32)(unsafe.Add(p, off)))
@@ -530,21 +493,14 @@ func findMinMaxSSE2(values []uint32) (uint32, uint32) {
 		maxVec = maxVec.Max(chunk)
 	}
 
-	var minLanes, maxLanes [4]uint32
-	minVec.Store(&minLanes)
-	maxVec.Store(&maxLanes)
-	minResult, maxResult := minLanes[0], maxLanes[0]
-	for _, v := range minLanes[1:] {
-		if v < minResult {
-			minResult = v
-		}
-	}
-	for _, v := range maxLanes[1:] {
-		if v > maxResult {
-			maxResult = v
-		}
-	}
+	// Collapse the vector accumulators into scalar candidates.
+	var minL, maxL [4]uint32
+	minVec.Store(&minL)
+	maxVec.Store(&maxL)
+	minResult := min(min(minL[0], minL[1]), min(minL[2], minL[3]))
+	maxResult := max(max(maxL[0], maxL[1]), max(maxL[2], maxL[3]))
 
+	// Finish any remaining elements that did not fill a full SIMD chunk.
 	tail := (n / 4) * 4
 	for i := tail; i < n; i++ {
 		if values[i] < minResult {
