@@ -420,3 +420,70 @@ func TestPackUint32_NoPatch_BlockLengthConsistency(t *testing.T) {
 		assert.Equal(t, len(packed), blockLen, "flag=%d", flag)
 	}
 }
+
+func TestPackUint32_ZeroAllocs(t *testing.T) {
+	values := make([]uint32, blockSize)
+	for i := range values {
+		values[i] = uint32(i % 200)
+	}
+	scratch := make([]uint32, ScratchLen)
+	dst := make([]byte, 0, 1024)
+
+	allocs := testing.AllocsPerRun(100, func() {
+		dst, _ = PackUint32(0, dst[:0], scratch, values)
+	})
+	assert.Equal(t, float64(0), allocs)
+}
+
+func TestPackUint32_ZeroAllocs_WithExceptions(t *testing.T) {
+	values := make([]uint32, blockSize)
+	for i := range values {
+		values[i] = uint32(i % 10)
+	}
+	values[10] = 0x10000000
+	values[50] = 0x20000000
+	values[99] = 0xFFFFFF
+	scratch := make([]uint32, ScratchLen)
+	dst := make([]byte, 0, 1024)
+
+	allocs := testing.AllocsPerRun(100, func() {
+		dst, _ = PackUint32(0, dst[:0], scratch, values)
+	})
+	assert.Equal(t, float64(0), allocs)
+}
+
+func TestPackUint32_ZeroAllocs_Delta(t *testing.T) {
+	source := make([]uint32, blockSize)
+	for i := range source {
+		source[i] = 1000 + uint32(i*3)
+	}
+	values := make([]uint32, blockSize)
+	scratch := make([]uint32, ScratchLen)
+	dst := make([]byte, 0, 1024)
+
+	allocs := testing.AllocsPerRun(100, func() {
+		copy(values, source)
+		dst, _ = PackUint32(Delta, dst[:0], scratch, values)
+	})
+	assert.Equal(t, float64(0), allocs)
+}
+
+func TestPackUint32_ZeroAllocs_DstAndScratchReuse(t *testing.T) {
+	scratch := make([]uint32, ScratchLen)
+	dst := make([]byte, 0, 1024)
+
+	for trial := range 10 {
+		values := make([]uint32, blockSize)
+		for i := range values {
+			values[i] = uint32(trial*blockSize + i)
+		}
+		original := slices.Clone(values)
+		var err error
+		dst, err = PackUint32(0, dst[:0], scratch, values)
+		require.NoError(t, err)
+
+		unpacked, _, uErr := UnpackUint32(nil, scratch, dst)
+		require.NoError(t, uErr)
+		assert.Equal(t, original, unpacked)
+	}
+}

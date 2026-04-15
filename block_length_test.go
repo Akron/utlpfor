@@ -112,3 +112,14 @@ func TestBlockLength_CountAboveBlockSizeReturnsError(t *testing.T) {
 	_, err := BlockLength(buf)
 	assert.Error(t, err)
 }
+
+func TestBlockLength_ZeroAllocs(t *testing.T) {
+	values := make([]uint32, blockSize)
+	packed, err := PackUint32(0, nil, nil, values)
+	require.NoError(t, err)
+
+	allocs := testing.AllocsPerRun(100, func() {
+		BlockLength(packed)
+	})
+	assert.Equal(t, float64(0), allocs)
+}

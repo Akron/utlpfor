@@ -120,3 +120,17 @@ func TestGetUint32_AllMax(t *testing.T) {
 		assert.Equal(t, uint32(0xFFFFFFFF), got, "pos=%d", pos)
 	}
 }
+
+func TestGetUint32_ZeroAllocs(t *testing.T) {
+	values := make([]uint32, blockSize)
+	for i := range values {
+		values[i] = uint32(i)
+	}
+	packed, err := PackUint32(0, nil, nil, values)
+	require.NoError(t, err)
+
+	allocs := testing.AllocsPerRun(100, func() {
+		GetUint32(42, packed)
+	})
+	assert.Equal(t, float64(0), allocs)
+}
