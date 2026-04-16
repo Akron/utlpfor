@@ -23,7 +23,7 @@ func BenchmarkPackUint32(b *testing.B) {
 			b.SetBytes(int64(blockSize * 4))
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				dst, _ = PackUint32(0, dst[:0], nil, values)
+				dst, _ = PackUint32(0, values, dst[:0], nil)
 			}
 		})
 	}
@@ -40,7 +40,7 @@ func BenchmarkUnpackUint32(b *testing.B) {
 			for i := range values {
 				values[i] = uint32(i*7) & mask
 			}
-			packed, _ := PackUint32(0, nil, nil, values)
+			packed, _ := PackUint32(0, values, nil, nil)
 			dst := make([]uint32, blockSize)
 			scratch := make([]uint32, blockSize)
 
@@ -48,7 +48,7 @@ func BenchmarkUnpackUint32(b *testing.B) {
 			b.SetBytes(int64(blockSize * 4))
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				UnpackUint32(dst, scratch, packed)
+				UnpackUint32(packed, dst, scratch)
 			}
 		})
 	}
@@ -65,7 +65,7 @@ func BenchmarkGetUint32(b *testing.B) {
 			for i := range values {
 				values[i] = uint32(i*7) & mask
 			}
-			packed, _ := PackUint32(0, nil, nil, values)
+			packed, _ := PackUint32(0, values, nil, nil)
 
 			scratch := make([]uint32, ScratchLen)
 			b.ReportAllocs()
@@ -82,7 +82,7 @@ func BenchmarkBlockLength(b *testing.B) {
 	for i := range values {
 		values[i] = uint32(i)
 	}
-	packed, _ := PackUint32(0, nil, nil, values)
+	packed, _ := PackUint32(0, values, nil, nil)
 
 	b.ReportAllocs()
 
@@ -112,7 +112,7 @@ func BenchmarkPackWithExceptions(b *testing.B) {
 			b.SetBytes(int64(blockSize * 4))
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				dst, _ = PackUint32(0, dst[:0], nil, values)
+				dst, _ = PackUint32(0, values, dst[:0], nil)
 			}
 		})
 	}
@@ -133,7 +133,7 @@ func BenchmarkUnpackWithExceptions(b *testing.B) {
 				}
 				values[idx] = 0x10000000 + uint32(i)
 			}
-			packed, _ := PackUint32(0, nil, nil, values)
+			packed, _ := PackUint32(0, values, nil, nil)
 			dst := make([]uint32, blockSize)
 			scratch := make([]uint32, blockSize)
 
@@ -141,7 +141,7 @@ func BenchmarkUnpackWithExceptions(b *testing.B) {
 			b.SetBytes(int64(blockSize * 4))
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				UnpackUint32(dst, scratch, packed)
+				UnpackUint32(packed, dst, scratch)
 			}
 		})
 	}
@@ -159,7 +159,7 @@ func BenchmarkPackDeltaUint32(b *testing.B) {
 
 	for b.Loop() {
 		clone := slices.Clone(values)
-		dst, _ = PackUint32(Delta, dst[:0], nil, clone)
+		dst, _ = PackUint32(Delta, clone, dst[:0], nil)
 	}
 }
 
@@ -169,7 +169,7 @@ func BenchmarkUnpackDeltaUint32(b *testing.B) {
 		values[i] = uint32(i * 100)
 	}
 	clone := slices.Clone(values)
-	packed, _ := PackUint32(Delta, nil, nil, clone)
+	packed, _ := PackUint32(Delta, clone, nil, nil)
 	dst := make([]uint32, blockSize)
 	scratch := make([]uint32, blockSize)
 
@@ -177,7 +177,7 @@ func BenchmarkUnpackDeltaUint32(b *testing.B) {
 	b.SetBytes(int64(blockSize * 4))
 
 	for b.Loop() {
-		UnpackUint32(dst, scratch, packed)
+		UnpackUint32(packed, dst, scratch)
 	}
 }
 
@@ -192,12 +192,12 @@ func BenchmarkPackSequential(b *testing.B) {
 	b.SetBytes(int64(blockSize * 4))
 
 	for b.Loop() {
-		dst, _ = PackUint32(0, dst[:0], nil, data)
+		dst, _ = PackUint32(0, data, dst[:0], nil)
 	}
 }
 
 func BenchmarkUnpackSequential(b *testing.B) {
-	packed, _ := PackUint32(0, nil, nil, genSequential(blockSize))
+	packed, _ := PackUint32(0, genSequential(blockSize), nil, nil)
 	dst := make([]uint32, blockSize)
 	scratch := make([]uint32, blockSize)
 
@@ -205,7 +205,7 @@ func BenchmarkUnpackSequential(b *testing.B) {
 	b.SetBytes(int64(blockSize * 4))
 
 	for b.Loop() {
-		_, _, _ = UnpackUint32(dst, scratch, packed)
+		_, _, _ = UnpackUint32(packed, dst, scratch)
 	}
 }
 
@@ -219,13 +219,13 @@ func BenchmarkPackDeltaMonotonic(b *testing.B) {
 
 	for b.Loop() {
 		copy(data, source)
-		dst, _ = PackUint32(Delta, dst[:0], nil, data)
+		dst, _ = PackUint32(Delta, data, dst[:0], nil)
 	}
 }
 
 func BenchmarkUnpackDeltaMonotonic(b *testing.B) {
 	source := slices.Clone(genMonotonic(blockSize))
-	packed, _ := PackUint32(Delta, nil, nil, source)
+	packed, _ := PackUint32(Delta, source, nil, nil)
 	dst := make([]uint32, blockSize)
 	scratch := make([]uint32, blockSize)
 
@@ -233,7 +233,7 @@ func BenchmarkUnpackDeltaMonotonic(b *testing.B) {
 	b.SetBytes(int64(blockSize * 4))
 
 	for b.Loop() {
-		UnpackUint32(dst, scratch, packed)
+		UnpackUint32(packed, dst, scratch)
 	}
 }
 
@@ -247,13 +247,13 @@ func BenchmarkPackDeltaMixed(b *testing.B) {
 
 	for b.Loop() {
 		copy(data, source)
-		dst, _ = PackUint32(Delta, dst[:0], nil, data)
+		dst, _ = PackUint32(Delta, data, dst[:0], nil)
 	}
 }
 
 func BenchmarkUnpackDeltaMixed(b *testing.B) {
 	source := slices.Clone(genMixed(blockSize))
-	packed, _ := PackUint32(Delta, nil, nil, source)
+	packed, _ := PackUint32(Delta, source, nil, nil)
 	dst := make([]uint32, blockSize)
 	scratch := make([]uint32, blockSize)
 
@@ -261,7 +261,7 @@ func BenchmarkUnpackDeltaMixed(b *testing.B) {
 	b.SetBytes(int64(blockSize * 4))
 
 	for b.Loop() {
-		UnpackUint32(dst, scratch, packed)
+		UnpackUint32(packed, dst, scratch)
 	}
 }
 
@@ -273,12 +273,12 @@ func BenchmarkPackWithSmallExceptions(b *testing.B) {
 	b.SetBytes(int64(blockSize * 4))
 
 	for b.Loop() {
-		dst, _ = PackUint32(0, dst[:0], nil, data)
+		dst, _ = PackUint32(0, data, dst[:0], nil)
 	}
 }
 
 func BenchmarkUnpackWithSmallExceptions(b *testing.B) {
-	packed, _ := PackUint32(0, nil, nil, genDataWithSmallExceptions())
+	packed, _ := PackUint32(0, genDataWithSmallExceptions(), nil, nil)
 	dst := make([]uint32, blockSize)
 	scratch := make([]uint32, blockSize)
 
@@ -286,7 +286,7 @@ func BenchmarkUnpackWithSmallExceptions(b *testing.B) {
 	b.SetBytes(int64(blockSize * 4))
 
 	for b.Loop() {
-		UnpackUint32(dst, scratch, packed)
+		UnpackUint32(packed, dst, scratch)
 	}
 }
 
@@ -298,12 +298,12 @@ func BenchmarkPackWithLargeExceptions(b *testing.B) {
 	b.SetBytes(int64(blockSize * 4))
 
 	for b.Loop() {
-		dst, _ = PackUint32(0, dst[:0], nil, data)
+		dst, _ = PackUint32(0, data, dst[:0], nil)
 	}
 }
 
 func BenchmarkUnpackWithLargeExceptions(b *testing.B) {
-	packed, _ := PackUint32(0, nil, nil, genDataWithLargeExceptions())
+	packed, _ := PackUint32(0, genDataWithLargeExceptions(), nil, nil)
 	dst := make([]uint32, blockSize)
 	scratch := make([]uint32, blockSize)
 
@@ -311,7 +311,7 @@ func BenchmarkUnpackWithLargeExceptions(b *testing.B) {
 	b.SetBytes(int64(blockSize * 4))
 
 	for b.Loop() {
-		UnpackUint32(dst, scratch, packed)
+		UnpackUint32(packed, dst, scratch)
 	}
 }
 
@@ -338,7 +338,7 @@ func BenchmarkExceptionPenaltyCalibration(b *testing.B) {
 				}
 				values[idx] = 0x10000000 + uint32(i)
 			}
-			packed, _ := PackUint32(0, nil, nil, values)
+			packed, _ := PackUint32(0, values, nil, nil)
 			dst := make([]uint32, blockSize)
 			scratch := make([]uint32, blockSize)
 
@@ -347,7 +347,7 @@ func BenchmarkExceptionPenaltyCalibration(b *testing.B) {
 			b.ReportMetric(float64(len(packed)), "packed_bytes")
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				UnpackUint32(dst, scratch, packed)
+				UnpackUint32(packed, dst, scratch)
 			}
 		})
 	}
@@ -390,7 +390,7 @@ func BenchmarkCompressionRatio(b *testing.B) {
 	for _, p := range patterns {
 		b.Run(p.name, func(b *testing.B) {
 			values := p.gen()
-			packed, _ := PackUint32(0, nil, nil, values)
+			packed, _ := PackUint32(0, values, nil, nil)
 			rawSize := len(values) * 4
 			ratio := float64(len(packed)) / float64(rawSize) * 100
 			b.ReportMetric(ratio, "ratio%")
@@ -401,7 +401,7 @@ func BenchmarkCompressionRatio(b *testing.B) {
 	b.Run("monotonic_delta_compressed", func(b *testing.B) {
 		values := genMonotonic(blockSize)
 		clone := slices.Clone(values)
-		packed, _ := PackUint32(Delta, nil, nil, clone)
+		packed, _ := PackUint32(Delta, clone, nil, nil)
 		rawSize := len(values) * 4
 		ratio := float64(len(packed)) / float64(rawSize) * 100
 		b.ReportMetric(ratio, "ratio%")
@@ -411,7 +411,7 @@ func BenchmarkCompressionRatio(b *testing.B) {
 	b.Run("mixed_delta_compressed", func(b *testing.B) {
 		values := genMixed(blockSize)
 		clone := slices.Clone(values)
-		packed, _ := PackUint32(Delta, nil, nil, clone)
+		packed, _ := PackUint32(Delta, clone, nil, nil)
 		rawSize := len(values) * 4
 		ratio := float64(len(packed)) / float64(rawSize) * 100
 		b.ReportMetric(ratio, "ratio%")
@@ -421,7 +421,7 @@ func BenchmarkCompressionRatio(b *testing.B) {
 
 func BenchmarkGetUint32WithExceptions(b *testing.B) {
 	values := genDataWithSmallExceptions()
-	packed, _ := PackUint32(0, nil, nil, values)
+	packed, _ := PackUint32(0, values, nil, nil)
 
 	scratch := make([]uint32, ScratchLen)
 	b.ReportAllocs()
@@ -434,7 +434,7 @@ func BenchmarkGetUint32WithExceptions(b *testing.B) {
 func BenchmarkGetUint32Delta(b *testing.B) {
 	values := genMonotonic(blockSize)
 	clone := slices.Clone(values)
-	packed, _ := PackUint32(Delta, nil, nil, clone)
+	packed, _ := PackUint32(Delta, clone, nil, nil)
 
 	scratch := make([]uint32, ScratchLen)
 	b.ReportAllocs()

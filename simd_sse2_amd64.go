@@ -561,4 +561,3 @@ func forAddSSE2(output []uint32, count int, baseValue uint32) {
 		output[i] += baseValue
 	}
 }
-

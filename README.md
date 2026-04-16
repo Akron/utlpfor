@@ -41,10 +41,10 @@ AVX-512 > AVX2 > SSE2 > scalar fallback.
 ## API
 
 ```go
-func PackUint32(flag byte, dst []byte, scratch []uint32, values []uint32) ([]byte, error)
-func UnpackUint32(dst []uint32, scratch []uint32, buf []byte) ([]uint32, int, error)
-func GetUint32(pos int, buf []byte, scratch []uint32) (uint32, error)
-func BlockLength(buf []byte) (int, error)
+func PackUint32(flag byte, values []uint32, dst []byte, scratch []uint32) ([]byte, error)
+func UnpackUint32(src []byte, values []uint32, scratch []uint32) ([]uint32, int, error)
+func GetUint32(pos int, src []byte, scratch []uint32) (uint32, error)
+func BlockLength(src []byte) (int, error)
 ```
 
 ## Quick Start

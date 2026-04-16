@@ -13,9 +13,9 @@ func TestAPISignatures(t *testing.T) {
 	var scratch []uint32
 
 	_, _ = utlpfor.BlockLength(buf)
-	_, _, _ = utlpfor.UnpackUint32(dst, scratch, buf)
+	_, _, _ = utlpfor.UnpackUint32(buf, dst, scratch)
 	_, _ = utlpfor.GetUint32(0, buf, scratch)
-	_, _ = utlpfor.PackUint32(0, buf, nil, []uint32{})
+	_, _ = utlpfor.PackUint32(0, []uint32{}, buf, nil)
 }
 
 func TestBlockLength_EmptyBuffer(t *testing.T) {
@@ -39,7 +39,7 @@ func TestGetUint32_EmptyBuffer(t *testing.T) {
 }
 
 func TestPackUint32_ReturnsError(t *testing.T) {
-	_, err := utlpfor.PackUint32(0, nil, nil, []uint32{})
+	_, err := utlpfor.PackUint32(0, []uint32{}, nil, nil)
 	assert.Error(t, err)
 }
 

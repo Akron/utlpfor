@@ -102,10 +102,10 @@ func TestPackUnpack_SIMDScalarDifferential_Random(t *testing.T) {
 		}
 		original := slices.Clone(values)
 
-		packed, err := PackUint32(0, nil, nil, values)
+		packed, err := PackUint32(0, values, nil, nil)
 		require.NoError(t, err, "seed=%d", seed)
 
-		unpacked, _, err := UnpackUint32(nil, make([]uint32, blockSize), packed)
+		unpacked, _, err := UnpackUint32(packed, nil, make([]uint32, blockSize))
 		require.NoError(t, err, "seed=%d", seed)
 		assert.Equal(t, original, unpacked, "seed=%d", seed)
 	}
@@ -116,7 +116,7 @@ func TestGetUint32_SIMDMatchesScalar(t *testing.T) {
 	for i := range values {
 		values[i] = uint32(i*13 + 7)
 	}
-	packed, err := PackUint32(0, nil, nil, values)
+	packed, err := PackUint32(0, values, nil, nil)
 	require.NoError(t, err)
 
 	scratch := make([]uint32, ScratchLen)
@@ -549,9 +549,9 @@ func TestPackUnpack_SIMDEdgeBitWidths(t *testing.T) {
 				}
 			}
 
-			packed, err := PackUint32(0, nil, nil, values)
+			packed, err := PackUint32(0, values, nil, nil)
 			require.NoError(t, err)
-			unpacked, _, err := UnpackUint32(nil, make([]uint32, blockSize), packed)
+			unpacked, _, err := UnpackUint32(packed, nil, make([]uint32, blockSize))
 			require.NoError(t, err)
 			assert.Equal(t, values, unpacked)
 		})

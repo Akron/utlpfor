@@ -13,9 +13,9 @@ func TestUnpackUint32_ReturnsConsumedLength(t *testing.T) {
 	for i := range values {
 		values[i] = uint32(i)
 	}
-	packed, _ := PackUint32(0, nil, nil, values)
+	packed, _ := PackUint32(0, values, nil, nil)
 
-	_, consumed, err := UnpackUint32(nil, make([]uint32, 128), packed)
+	_, consumed, err := UnpackUint32(packed, nil, make([]uint32, 128))
 	require.NoError(t, err)
 	assert.Equal(t, len(packed), consumed)
 }
@@ -26,10 +26,10 @@ func TestUnpackUint32_ScratchBufferReuse(t *testing.T) {
 	for i := range values {
 		values[i] = uint32(i * 3)
 	}
-	packed, _ := PackUint32(0, nil, nil, values)
+	packed, _ := PackUint32(0, values, nil, nil)
 
-	unpacked1, _, _ := UnpackUint32(nil, scratch, packed)
-	unpacked2, _, _ := UnpackUint32(nil, scratch, packed)
+	unpacked1, _, _ := UnpackUint32(packed, nil, scratch)
+	unpacked2, _, _ := UnpackUint32(packed, nil, scratch)
 	assert.Equal(t, unpacked1, unpacked2)
 }
 
@@ -50,7 +50,7 @@ func TestUnpackUint32_MalformedInput(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, _, err := UnpackUint32(nil, make([]uint32, 128), tt.buf)
+			_, _, err := UnpackUint32(tt.buf, nil, make([]uint32, 128))
 			assert.Error(t, err)
 		})
 	}
@@ -61,12 +61,12 @@ func TestUnpackUint32_ZeroAllocations(t *testing.T) {
 	for i := range values {
 		values[i] = uint32(i)
 	}
-	packed, _ := PackUint32(0, nil, nil, values)
+	packed, _ := PackUint32(0, values, nil, nil)
 	dst := make([]uint32, 128)
 	scratch := make([]uint32, 128)
 
 	allocs := testing.AllocsPerRun(100, func() {
-		UnpackUint32(dst, scratch, packed)
+		UnpackUint32(packed, dst, scratch)
 	})
 	assert.Equal(t, float64(0), allocs, "expected zero allocations")
 }
@@ -75,7 +75,7 @@ func TestUnpackUint32_UnsupportedType(t *testing.T) {
 	h := encodeHeader(128, 8, 0, uint32(IntTypeUint64)<<headerTypeShift)
 	buf := make([]byte, 4+128)
 	bo.PutUint32(buf, h)
-	_, _, err := UnpackUint32(nil, make([]uint32, 128), buf)
+	_, _, err := UnpackUint32(buf, nil, make([]uint32, 128))
 	assert.ErrorIs(t, err, ErrUnsupportedType)
 }
 
@@ -84,7 +84,7 @@ func TestUnpackUint32_Uint16TypeAccepted(t *testing.T) {
 	payloadBytes := utlPayloadBytes(8)
 	buf := make([]byte, headerBytes+payloadBytes)
 	bo.PutUint32(buf, h)
-	_, _, err := UnpackUint32(nil, make([]uint32, 128), buf)
+	_, _, err := UnpackUint32(buf, nil, make([]uint32, 128))
 	assert.NoError(t, err)
 }
 
@@ -92,7 +92,7 @@ func TestUnpackUint32_Uint8TypeRejected(t *testing.T) {
 	h := encodeHeader(128, 8, 0, uint32(IntTypeUint8)<<headerTypeShift)
 	buf := make([]byte, 4+128)
 	bo.PutUint32(buf, h)
-	_, _, err := UnpackUint32(nil, make([]uint32, 128), buf)
+	_, _, err := UnpackUint32(buf, nil, make([]uint32, 128))
 	assert.ErrorIs(t, err, ErrUnsupportedType)
 }
 
@@ -101,13 +101,13 @@ func TestUnpackUint32_ZeroAllocs(t *testing.T) {
 	for i := range values {
 		values[i] = uint32(i)
 	}
-	packed, err := PackUint32(0, nil, nil, values)
+	packed, err := PackUint32(0, values, nil, nil)
 	require.NoError(t, err)
 	dst := make([]uint32, blockSize)
 	scratch := make([]uint32, blockSize)
 
 	allocs := testing.AllocsPerRun(100, func() {
-		UnpackUint32(dst, scratch, packed)
+		UnpackUint32(packed, dst, scratch)
 	})
 	assert.Equal(t, float64(0), allocs)
 }
@@ -119,13 +119,13 @@ func TestUnpackUint32_ZeroAllocs_WithExceptions(t *testing.T) {
 	}
 	values[0] = 0xFFFFFFF
 	values[64] = 0xFFFFFFF
-	packed, err := PackUint32(0, nil, nil, values)
+	packed, err := PackUint32(0, values, nil, nil)
 	require.NoError(t, err)
 	dst := make([]uint32, blockSize)
 	scratch := make([]uint32, blockSize)
 
 	allocs := testing.AllocsPerRun(100, func() {
-		UnpackUint32(dst, scratch, packed)
+		UnpackUint32(packed, dst, scratch)
 	})
 	assert.Equal(t, float64(0), allocs)
 }
@@ -137,7 +137,7 @@ func TestUnpackUint32_ScratchNotMutatedOnError(t *testing.T) {
 	}
 	original := slices.Clone(scratch)
 
-	_, _, err := UnpackUint32(nil, scratch, []byte{0xFF})
+	_, _, err := UnpackUint32([]byte{0xFF}, nil, scratch)
 	assert.Error(t, err)
 	assert.Equal(t, original, scratch)
 }
@@ -152,11 +152,11 @@ func TestUnpackUint32_DstReuseAcrossCalls(t *testing.T) {
 			values[i] = uint32(trial*blockSize + i)
 		}
 		original := slices.Clone(values)
-		packed, err := PackUint32(0, nil, nil, values)
+		packed, err := PackUint32(0, values, nil, nil)
 		require.NoError(t, err)
 
 		var uErr error
-		dst, _, uErr = UnpackUint32(dst, scratch, packed)
+		dst, _, uErr = UnpackUint32(packed, dst, scratch)
 		require.NoError(t, uErr)
 		assert.Equal(t, original, dst)
 	}

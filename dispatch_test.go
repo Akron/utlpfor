@@ -92,7 +92,7 @@ func TestDispatch_AllLevelsProduceIdenticalOutput(t *testing.T) {
 	scalarPacked, err := packUint32Scalar(0, nil, scratch, values)
 	require.NoError(t, err)
 
-	apiPacked, err := PackUint32(0, nil, nil, values)
+	apiPacked, err := PackUint32(0, values, nil, nil)
 	require.NoError(t, err)
 	assert.Equal(t, scalarPacked, apiPacked,
 		"API output must match scalar output")
@@ -109,7 +109,7 @@ func TestDispatch_AllLevelsProduceIdenticalOutput_Delta(t *testing.T) {
 	require.NoError(t, err)
 
 	apiWork := append([]uint32(nil), values...)
-	apiPacked, err := PackUint32(Delta, nil, nil, apiWork)
+	apiPacked, err := PackUint32(Delta, apiWork, nil, nil)
 	require.NoError(t, err)
 	assert.Equal(t, scalarPacked, apiPacked,
 		"API delta output must match scalar delta output")
@@ -122,13 +122,13 @@ func TestDispatch_UnpackMatchesScalar(t *testing.T) {
 	}
 	values[10] = 0x100000
 
-	packed, err := PackUint32(0, nil, nil, values)
+	packed, err := PackUint32(0, values, nil, nil)
 	require.NoError(t, err)
 
 	scalarOut, scalarConsumed, err := unpackUint32Scalar(nil, make([]uint32, 128), packed)
 	require.NoError(t, err)
 
-	apiOut, apiConsumed, err := UnpackUint32(nil, make([]uint32, 128), packed)
+	apiOut, apiConsumed, err := UnpackUint32(packed, nil, make([]uint32, 128))
 	require.NoError(t, err)
 
 	assert.Equal(t, scalarOut, apiOut)
@@ -142,7 +142,7 @@ func TestDispatch_GetMatchesScalar(t *testing.T) {
 	}
 	values[10] = 0x100000
 
-	packed, err := PackUint32(0, nil, nil, values)
+	packed, err := PackUint32(0, values, nil, nil)
 	require.NoError(t, err)
 
 	scratch := make([]uint32, ScratchLen)
@@ -196,7 +196,7 @@ func BenchmarkDispatchOverhead(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		dst, _ = PackUint32(0, dst[:0], nil, values)
+		dst, _ = PackUint32(0, values, dst[:0], nil)
 	}
 }
 

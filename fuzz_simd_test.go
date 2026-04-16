@@ -29,7 +29,7 @@ func FuzzSIMDScalarConsistency(f *testing.F) {
 		if err != nil {
 			return
 		}
-		simdPacked, err := PackUint32(0, nil, nil, simdValues)
+		simdPacked, err := PackUint32(0, simdValues, nil, nil)
 		if err != nil {
 			return
 		}

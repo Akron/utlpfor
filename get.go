@@ -64,18 +64,18 @@ func extractPackedValueUTL(pos int, payload []byte, bitWidth int) uint32 {
 // delta-encoded blocks; pass nil if zero-alloc is not required.
 // Single code path; SIMD acceleration is applied internally via dispatched
 // UnpackUint32 (full-unpack fallback for delta blocks with high posInLane).
-func GetUint32(pos int, buf []byte, scratch []uint32) (uint32, error) {
-	return getUint32Scalar(pos, buf, scratch)
+func GetUint32(pos int, src []byte, scratch []uint32) (uint32, error) {
+	return getUint32Scalar(pos, src, scratch)
 }
 
 // getUint32Scalar implements GetUint32. Single-lane extraction is scalar;
 // the full-unpack path dispatches through UnpackUint32 for SIMD acceleration.
-func getUint32Scalar(pos int, buf []byte, scratch []uint32) (uint32, error) {
-	if len(buf) < headerBytes {
+func getUint32Scalar(pos int, src []byte, scratch []uint32) (uint32, error) {
+	if len(src) < headerBytes {
 		return 0, ErrInvalidBuffer
 	}
 
-	header := bo.Uint32(buf)
+	header := bo.Uint32(src)
 	count, bitWidth, intType, excCount, forWidth, hasExceptions, hasDelta, hasZigZag := decodeHeader(header)
 	hasFOR := forWidth > 0
 
@@ -94,19 +94,19 @@ func getUint32Scalar(pos int, buf []byte, scratch []uint32) (uint32, error) {
 	pOff := payloadOffset(0, hasExceptions)
 	var forBase uint32
 	if hasFOR {
-		forBase = readFORBase(buf, pOff, forWidth)
+		forBase = readFORBase(src, pOff, forWidth)
 		pOff += forBaseBytes(forWidth)
 	}
 
 	payloadBytes := utlPayloadBytes(bitWidth)
-	if len(buf) < pOff+payloadBytes {
+	if len(src) < pOff+payloadBytes {
 		return 0, ErrInvalidBuffer
 	}
 
-	payload := buf[pOff : pOff+payloadBytes]
+	payload := src[pOff : pOff+payloadBytes]
 
 	if !hasDelta {
-		value, err := getValueDirect(pos, buf, payload, pOff+payloadBytes, bitWidth, count, excCount, hasExceptions)
+		value, err := getValueDirect(pos, src, payload, pOff+payloadBytes, bitWidth, count, excCount, hasExceptions)
 		if err != nil {
 			return 0, err
 		}
@@ -116,10 +116,10 @@ func getUint32Scalar(pos int, buf []byte, scratch []uint32) (uint32, error) {
 	// Delta path: choose between full unpack and single-lane.
 	posInLane := pos / utlLaneCount
 	if posInLane > deltaFullUnpackThreshold(bitWidth) {
-		return getUint32FullUnpack(pos, buf, scratch)
+		return getUint32FullUnpack(pos, src, scratch)
 	}
 
-	value, err := getValueWithDelta(pos, buf, payload,
+	value, err := getValueWithDelta(pos, src, payload,
 		pOff+payloadBytes, bitWidth, count, excCount,
 		hasExceptions, hasZigZag)
 	if err != nil {
@@ -240,12 +240,12 @@ func applyLaneExceptions(laneValues []uint32, buf []byte,
 // getUint32FullUnpack performs a full block unpack to extract a single value.
 // Outlined from getUint32Scalar to keep the common path lean (avoids the
 // 512-byte stack allocation when single-lane extraction suffices).
-func getUint32FullUnpack(pos int, buf []byte, scratch []uint32) (uint32, error) {
+func getUint32FullUnpack(pos int, src []byte, scratch []uint32) (uint32, error) {
 	if len(scratch) < blockSize {
 		scratch = make([]uint32, blockSize)
 	}
 	var dst [blockSize]uint32
-	unpacked, _, err := UnpackUint32(dst[:0], scratch, buf)
+	unpacked, _, err := UnpackUint32(src, dst[:0], scratch)
 	if err != nil {
 		return 0, err
 	}

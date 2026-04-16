@@ -14,7 +14,7 @@ func TestGetUint32_AllPositions(t *testing.T) {
 	for i := range values {
 		values[i] = uint32(i*17 + 3)
 	}
-	packed, _ := PackUint32(0, nil, nil, values)
+	packed, _ := PackUint32(0, values, nil, nil)
 
 	scratch := make([]uint32, ScratchLen)
 	for pos := range 128 {
@@ -36,7 +36,7 @@ func TestGetUint32_AllPositions_AllBitWidths(t *testing.T) {
 			for i := range values {
 				values[i] = uint32(i*13+7) & mask
 			}
-			packed, _ := PackUint32(0, nil, nil, values)
+			packed, _ := PackUint32(0, values, nil, nil)
 
 			for pos := range 128 {
 				got, err := GetUint32(pos, packed, scratch)
@@ -52,10 +52,10 @@ func TestGetUint32_MatchesUnpack(t *testing.T) {
 	for i := range values {
 		values[i] = uint32(i * i)
 	}
-	packed, _ := PackUint32(0, nil, nil, values)
+	packed, _ := PackUint32(0, values, nil, nil)
 
 	scratch := make([]uint32, ScratchLen)
-	unpacked, _, _ := UnpackUint32(nil, make([]uint32, 128), packed)
+	unpacked, _, _ := UnpackUint32(packed, nil, make([]uint32, 128))
 	for pos := range unpacked {
 		got, err := GetUint32(pos, packed, scratch)
 		require.NoError(t, err)
@@ -65,7 +65,7 @@ func TestGetUint32_MatchesUnpack(t *testing.T) {
 
 func TestGetUint32_OutOfRange(t *testing.T) {
 	values := make([]uint32, 50)
-	packed, _ := PackUint32(0, nil, nil, values)
+	packed, _ := PackUint32(0, values, nil, nil)
 
 	_, err := GetUint32(50, packed, nil)
 	assert.ErrorIs(t, err, ErrPositionOutOfRange)
@@ -76,7 +76,7 @@ func TestGetUint32_OutOfRange(t *testing.T) {
 
 func TestGetUint32_NegativePosition(t *testing.T) {
 	values := make([]uint32, 128)
-	packed, _ := PackUint32(0, nil, nil, values)
+	packed, _ := PackUint32(0, values, nil, nil)
 
 	_, err := GetUint32(-1, packed, nil)
 	assert.ErrorIs(t, err, ErrPositionOutOfRange)
@@ -92,7 +92,7 @@ func TestGetUint32_ZeroAllocations(t *testing.T) {
 	for i := range values {
 		values[i] = uint32(i)
 	}
-	packed, _ := PackUint32(0, nil, nil, values)
+	packed, _ := PackUint32(0, values, nil, nil)
 
 	scratch := make([]uint32, ScratchLen)
 	allocs := testing.AllocsPerRun(100, func() {
@@ -103,7 +103,7 @@ func TestGetUint32_ZeroAllocations(t *testing.T) {
 
 func TestGetUint32_AllZeros(t *testing.T) {
 	values := make([]uint32, 128)
-	packed, _ := PackUint32(0, nil, nil, values)
+	packed, _ := PackUint32(0, values, nil, nil)
 
 	scratch := make([]uint32, ScratchLen)
 	for pos := range 128 {
@@ -118,7 +118,7 @@ func TestGetUint32_AllMax(t *testing.T) {
 	for i := range values {
 		values[i] = 0xFFFFFFFF
 	}
-	packed, _ := PackUint32(0, nil, nil, values)
+	packed, _ := PackUint32(0, values, nil, nil)
 
 	scratch := make([]uint32, ScratchLen)
 	for pos := range 128 {
@@ -133,7 +133,7 @@ func TestGetUint32_ZeroAllocs(t *testing.T) {
 	for i := range values {
 		values[i] = uint32(i)
 	}
-	packed, err := PackUint32(0, nil, nil, values)
+	packed, err := PackUint32(0, values, nil, nil)
 	require.NoError(t, err)
 
 	scratch := make([]uint32, ScratchLen)
@@ -150,7 +150,7 @@ func TestGetUint32_ZeroAllocs_WithExceptions(t *testing.T) {
 	}
 	values[50] = 0xFFFF0000
 	values[100] = 0x00FF0000
-	packed, err := PackUint32(0, nil, nil, values)
+	packed, err := PackUint32(0, values, nil, nil)
 	require.NoError(t, err)
 
 	scratch := make([]uint32, ScratchLen)
@@ -170,7 +170,7 @@ func TestGetUint32_ZeroAllocs_WithDelta(t *testing.T) {
 	for i := range values {
 		values[i] = 1000 + uint32(i*3)
 	}
-	packed, err := PackUint32(Delta, nil, nil, values)
+	packed, err := PackUint32(Delta, values, nil, nil)
 	require.NoError(t, err)
 
 	scratch := make([]uint32, ScratchLen)
@@ -186,7 +186,7 @@ func TestGetUint32_ZeroAllocs_WithDeltaAndExceptions(t *testing.T) {
 		values[i] = 1000 + uint32(i*3)
 	}
 	values[64] = 0xFFFF0000
-	packed, err := PackUint32(Delta, nil, nil, values)
+	packed, err := PackUint32(Delta, values, nil, nil)
 	require.NoError(t, err)
 
 	scratch := make([]uint32, ScratchLen)
@@ -201,7 +201,7 @@ func TestGetUint32_ZeroAllocs_WithFOR(t *testing.T) {
 	for i := range values {
 		values[i] = 1000000 + uint32(i*3)
 	}
-	packed, err := PackUint32(Delta, nil, nil, values)
+	packed, err := PackUint32(Delta, values, nil, nil)
 	require.NoError(t, err)
 
 	scratch := make([]uint32, ScratchLen)
@@ -216,10 +216,10 @@ func TestGetUint32_NilScratch_StillCorrect(t *testing.T) {
 	for i := range values {
 		values[i] = 1000 + uint32(i*3)
 	}
-	packed, err := PackUint32(Delta, nil, nil, values)
+	packed, err := PackUint32(Delta, values, nil, nil)
 	require.NoError(t, err)
 
-	unpacked, _, _ := UnpackUint32(nil, make([]uint32, ScratchLen), packed)
+	unpacked, _, _ := UnpackUint32(packed, nil, make([]uint32, ScratchLen))
 	for pos := range len(unpacked) {
 		got, err := GetUint32(pos, packed, nil)
 		require.NoError(t, err)
@@ -298,10 +298,10 @@ func TestGetUint32_Optimized_AllConfigs(t *testing.T) {
 		t.Run(cfg.name, func(t *testing.T) {
 			for trial := range 50 {
 				values := cfg.gen(rng)
-				packed, err := PackUint32(cfg.flag, nil, nil, values)
+				packed, err := PackUint32(cfg.flag, values, nil, nil)
 				require.NoError(t, err, "trial %d", trial)
 
-				unpacked, _, err := UnpackUint32(nil, make([]uint32, ScratchLen), packed)
+				unpacked, _, err := UnpackUint32(packed, nil, make([]uint32, ScratchLen))
 				require.NoError(t, err, "trial %d", trial)
 
 				for pos := range len(unpacked) {
@@ -392,7 +392,7 @@ func BenchmarkGetUint32_Approaches(b *testing.B) {
 	for _, cfg := range configs {
 		values := make([]uint32, 128)
 		cfg.genFn(values)
-		packed, _ := PackUint32(cfg.flag, nil, nil, values)
+		packed, _ := PackUint32(cfg.flag, values, nil, nil)
 
 		scratch := make([]uint32, ScratchLen)
 		for _, pr := range ranges {

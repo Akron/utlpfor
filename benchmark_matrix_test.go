@@ -208,12 +208,12 @@ func BenchmarkMatrix(b *testing.B) {
 				b.ResetTimer()
 				for i := 0; i < b.N; i++ {
 					copy(values, original)
-					dst, _ = PackUint32(flag, dst[:0], nil, values)
+					dst, _ = PackUint32(flag, values, dst[:0], nil)
 				}
 
 			case "unp":
 				work := slices.Clone(original)
-				packed, err := PackUint32(flag, nil, nil, work)
+				packed, err := PackUint32(flag, work, nil, nil)
 				if err != nil {
 					b.Fatalf("pack failed: %v", err)
 				}
@@ -223,12 +223,12 @@ func BenchmarkMatrix(b *testing.B) {
 				b.SetBytes(int64(blockSize * 4))
 				b.ResetTimer()
 				for i := 0; i < b.N; i++ {
-					UnpackUint32(dst, scratch, packed)
+					UnpackUint32(packed, dst, scratch)
 				}
 
 			case "get":
 				work := slices.Clone(original)
-				packed, err := PackUint32(flag, nil, nil, work)
+				packed, err := PackUint32(flag, work, nil, nil)
 				if err != nil {
 					b.Fatalf("pack failed: %v", err)
 				}
@@ -248,7 +248,7 @@ func BenchmarkMatrix(b *testing.B) {
 
 			case "len":
 				work := slices.Clone(original)
-				packed, err := PackUint32(flag, nil, nil, work)
+				packed, err := PackUint32(flag, work, nil, nil)
 				if err != nil {
 					b.Fatalf("pack failed: %v", err)
 				}
@@ -336,12 +336,12 @@ func BenchmarkQuickCompare(b *testing.B) {
 				b.ResetTimer()
 				for i := 0; i < b.N; i++ {
 					copy(values, original)
-					dst, _ = PackUint32(flag, dst[:0], nil, values)
+					dst, _ = PackUint32(flag, values, dst[:0], nil)
 				}
 
 			case "unp":
 				work := slices.Clone(original)
-				packed, err := PackUint32(flag, nil, nil, work)
+				packed, err := PackUint32(flag, work, nil, nil)
 				if err != nil {
 					b.Fatalf("pack failed: %v", err)
 				}
@@ -351,12 +351,12 @@ func BenchmarkQuickCompare(b *testing.B) {
 				b.SetBytes(int64(blockSize * 4))
 				b.ResetTimer()
 				for i := 0; i < b.N; i++ {
-					UnpackUint32(dst, scratch, packed)
+					UnpackUint32(packed, dst, scratch)
 				}
 
 			case "get":
 				work := slices.Clone(original)
-				packed, err := PackUint32(flag, nil, nil, work)
+				packed, err := PackUint32(flag, work, nil, nil)
 				if err != nil {
 					b.Fatalf("pack failed: %v", err)
 				}
@@ -385,8 +385,8 @@ func BenchmarkQuickCompare(b *testing.B) {
 				b.ResetTimer()
 				for i := 0; i < b.N; i++ {
 					copy(values, original)
-					packed, _ := PackUint32(flag, packDst[:0], nil, values)
-					UnpackUint32(unpackDst, scratch, packed)
+					packed, _ := PackUint32(flag, values, packDst[:0], nil)
+					UnpackUint32(packed, unpackDst, scratch)
 					for _, pos := range positions {
 						v, _ := GetUint32(pos, packed, scratch)
 						sink += v
@@ -424,7 +424,7 @@ func TestMatrixDataGeneration(t *testing.T) {
 						t.Run(cfg.name(), func(t *testing.T) {
 							values, flag := generateMatrixData(cfg)
 							work := slices.Clone(values)
-							packed, err := PackUint32(flag, nil, nil, work)
+							packed, err := PackUint32(flag, work, nil, nil)
 							require.NoError(t, err)
 							require.GreaterOrEqual(t, len(packed), headerBytes)
 

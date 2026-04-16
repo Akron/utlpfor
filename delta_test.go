@@ -54,9 +54,9 @@ func TestDeltaRoundTrip_PerLane_AllZeros(t *testing.T) {
 func TestDeltaRoundTrip_PerLane_SingleValue(t *testing.T) {
 	values := []uint32{42}
 	expected := append([]uint32(nil), values...)
-	packed, err := PackUint32(Delta, nil, nil, values)
+	packed, err := PackUint32(Delta, values, nil, nil)
 	require.NoError(t, err)
-	unpacked, _, err := UnpackUint32(nil, make([]uint32, 128), packed)
+	unpacked, _, err := UnpackUint32(packed, nil, make([]uint32, 128))
 	require.NoError(t, err)
 	assert.Equal(t, expected, unpacked)
 }
@@ -125,9 +125,9 @@ func TestDeltaEncodeDecodePerLane_AllPatterns(t *testing.T) {
 		t.Run(p.name, func(t *testing.T) {
 			values := p.gen()
 			expected := append([]uint32(nil), values...)
-			packed, err := PackUint32(Delta, nil, nil, values)
+			packed, err := PackUint32(Delta, values, nil, nil)
 			require.NoError(t, err)
-			unpacked, _, err := UnpackUint32(nil, make([]uint32, 128), packed)
+			unpacked, _, err := UnpackUint32(packed, nil, make([]uint32, 128))
 			require.NoError(t, err)
 			assert.Equal(t, expected, unpacked)
 		})
@@ -142,9 +142,9 @@ func TestDeltaRoundTrip_PerLane_AllBlockSizes(t *testing.T) {
 				values[i] = uint32(i * 7)
 			}
 			expected := append([]uint32(nil), values...)
-			packed, err := PackUint32(Delta, nil, nil, values)
+			packed, err := PackUint32(Delta, values, nil, nil)
 			require.NoError(t, err)
-			unpacked, _, err := UnpackUint32(nil, make([]uint32, 128), packed)
+			unpacked, _, err := UnpackUint32(packed, nil, make([]uint32, 128))
 			require.NoError(t, err)
 			assert.Equal(t, expected, unpacked)
 		})
@@ -154,9 +154,9 @@ func TestDeltaRoundTrip_PerLane_AllBlockSizes(t *testing.T) {
 func TestPackUint32_DeltaFlag(t *testing.T) {
 	values := []uint32{10, 20, 30, 40, 50}
 	expected := append([]uint32(nil), values...)
-	packed, err := PackUint32(Delta, nil, nil, values)
+	packed, err := PackUint32(Delta, values, nil, nil)
 	require.NoError(t, err)
-	unpacked, _, err := UnpackUint32(nil, make([]uint32, 128), packed)
+	unpacked, _, err := UnpackUint32(packed, nil, make([]uint32, 128))
 	require.NoError(t, err)
 	assert.Equal(t, expected, unpacked)
 }
@@ -167,9 +167,9 @@ func TestPackUint32_DeltaFlag_Sorted128(t *testing.T) {
 		values[i] = uint32(i * 100)
 	}
 	expected := append([]uint32(nil), values...)
-	packed, err := PackUint32(Delta, nil, nil, values)
+	packed, err := PackUint32(Delta, values, nil, nil)
 	require.NoError(t, err)
-	unpacked, _, err := UnpackUint32(nil, make([]uint32, 128), packed)
+	unpacked, _, err := UnpackUint32(packed, nil, make([]uint32, 128))
 	require.NoError(t, err)
 	assert.Equal(t, expected, unpacked)
 }
@@ -177,9 +177,9 @@ func TestPackUint32_DeltaFlag_Sorted128(t *testing.T) {
 func TestPackUint32_DeltaFlag_Unsorted(t *testing.T) {
 	values := []uint32{100, 50, 200, 10, 300}
 	expected := append([]uint32(nil), values...)
-	packed, err := PackUint32(Delta, nil, nil, values)
+	packed, err := PackUint32(Delta, values, nil, nil)
 	require.NoError(t, err)
-	unpacked, _, err := UnpackUint32(nil, make([]uint32, 128), packed)
+	unpacked, _, err := UnpackUint32(packed, nil, make([]uint32, 128))
 	require.NoError(t, err)
 	assert.Equal(t, expected, unpacked)
 }
@@ -191,7 +191,7 @@ func TestPackUint32_DeltaMutatesInputInPlace(t *testing.T) {
 	}
 	original := append([]uint32(nil), values...)
 
-	_, err := PackUint32(Delta, make([]byte, 0, headerBytes+utlPayloadBytes(32)), nil, values)
+	_, err := PackUint32(Delta, values, make([]byte, 0, headerBytes+utlPayloadBytes(32)), nil)
 	require.NoError(t, err)
 
 	assert.NotEqual(t, original, values, "delta path should encode in place")
@@ -204,8 +204,8 @@ func TestPackUint32_DeltaCompressesSortedData(t *testing.T) {
 	for i := range values {
 		values[i] = uint32(i * 10)
 	}
-	plainPacked, _ := PackUint32(0, nil, nil, values)
-	deltaPacked, _ := PackUint32(Delta, nil, nil, values)
+	plainPacked, _ := PackUint32(0, values, nil, nil)
+	deltaPacked, _ := PackUint32(Delta, values, nil, nil)
 	assert.Less(t, len(deltaPacked), len(plainPacked),
 		"delta should compress sorted data better than plain")
 }
@@ -220,7 +220,7 @@ func TestPackUint32_DeltaPath_NoAllocsWithPreallocatedDst(t *testing.T) {
 
 	allocs := testing.AllocsPerRun(1000, func() {
 		copy(work, template)
-		_, err := PackUint32(Delta, dst[:0], nil, work)
+		_, err := PackUint32(Delta, work, dst[:0], nil)
 		require.NoError(t, err)
 	})
 	assert.Equal(t, 0.0, allocs)

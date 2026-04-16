@@ -3,12 +3,12 @@ package utlpfor
 // BlockLength returns the total byte length of the encoded block
 // starting at the beginning of buf. Only the first 4-6 bytes of the
 // buffer are read, enabling efficient block skipping in MMAP-backed files.
-func BlockLength(buf []byte) (int, error) {
-	if len(buf) < headerBytes {
+func BlockLength(src []byte) (int, error) {
+	if len(src) < headerBytes {
 		return 0, ErrInvalidBuffer
 	}
 
-	header := bo.Uint32(buf)
+	header := bo.Uint32(src)
 	count, bitWidth, _, excCount, forWidth, hasExceptions, _, _ := decodeHeader(header)
 
 	if count > blockSize {
@@ -25,10 +25,10 @@ func BlockLength(buf []byte) (int, error) {
 		return headerBytes + forBaseBytes + payloadBytes, nil
 	}
 
-	if len(buf) < headerBytes+svbLenBytes {
+	if len(src) < headerBytes+svbLenBytes {
 		return 0, ErrInvalidBuffer
 	}
-	svbLen := int(bo.Uint16(buf[headerBytes:]))
+	svbLen := int(bo.Uint16(src[headerBytes:]))
 
 	excIdxSize := excCount
 	if excCount > excBitmapThreshold {

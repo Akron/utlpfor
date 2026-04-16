@@ -363,9 +363,9 @@ func TestDeltaRoundTrip_SIMD_AllPatterns(t *testing.T) {
 		t.Run(p.name, func(t *testing.T) {
 			values := p.gen()
 			expected := append([]uint32(nil), values...)
-			packed, err := PackUint32(Delta, nil, nil, values)
+			packed, err := PackUint32(Delta, values, nil, nil)
 			require.NoError(t, err)
-			unpacked, _, err := UnpackUint32(nil, make([]uint32, blockSize), packed)
+			unpacked, _, err := UnpackUint32(packed, nil, make([]uint32, blockSize))
 			require.NoError(t, err)
 			assert.Equal(t, expected, unpacked)
 		})
@@ -382,10 +382,10 @@ func TestDeltaRoundTrip_SIMD_Random(t *testing.T) {
 		}
 		expected := append([]uint32(nil), values...)
 
-		packed, err := PackUint32(Delta, nil, nil, values)
+		packed, err := PackUint32(Delta, values, nil, nil)
 		require.NoError(t, err, "seed=%d", seed)
 
-		unpacked, _, err := UnpackUint32(nil, make([]uint32, blockSize), packed)
+		unpacked, _, err := UnpackUint32(packed, nil, make([]uint32, blockSize))
 		require.NoError(t, err, "seed=%d", seed)
 		assert.Equal(t, expected, unpacked, "seed=%d", seed)
 	}

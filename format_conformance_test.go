@@ -212,7 +212,7 @@ func TestFormatConformance_ExceptionTableLayout_SortedPositions(t *testing.T) {
 	values[10] = 0x10000
 	values[50] = 0x1000000
 
-	packed, err := PackUint32(0, nil, nil, values)
+	packed, err := PackUint32(0, values, nil, nil)
 	require.NoError(t, err)
 
 	header := bo.Uint32(packed)
@@ -242,7 +242,7 @@ func TestFormatConformance_ExceptionTableLayout_Bitmap(t *testing.T) {
 		values[i*6] = 0x10000000 + uint32(i)
 	}
 
-	packed, err := PackUint32(0, nil, nil, values)
+	packed, err := PackUint32(0, values, nil, nil)
 	require.NoError(t, err)
 
 	header := bo.Uint32(packed)
@@ -277,7 +277,7 @@ func TestFormatConformance_BlockLengthMatchesActual(t *testing.T) {
 			values[i] = uint32(i) & mask
 		}
 
-		packed, err := PackUint32(0, nil, nil, values)
+		packed, err := PackUint32(0, values, nil, nil)
 		require.NoError(t, err)
 
 		blockLen, err := BlockLength(packed)
@@ -298,7 +298,7 @@ func TestFormatConformance_BlockLengthMatchesActual_WithExceptions(t *testing.T)
 			values[idx] = 0x10000000 + uint32(i)
 		}
 
-		packed, err := PackUint32(0, nil, nil, values)
+		packed, err := PackUint32(0, values, nil, nil)
 		require.NoError(t, err)
 
 		blockLen, err := BlockLength(packed)
@@ -320,7 +320,7 @@ func TestFormatConformance_BlockLengthMatchesActual_WithDelta(t *testing.T) {
 		}
 
 		work := append([]uint32(nil), values...)
-		packed, err := PackUint32(Delta, nil, nil, work)
+		packed, err := PackUint32(Delta, work, nil, nil)
 		require.NoError(t, err)
 
 		blockLen, err := BlockLength(packed)
@@ -335,7 +335,7 @@ func TestFormatConformance_WireLayout_NoExceptions(t *testing.T) {
 	for i := range values {
 		values[i] = uint32(i)
 	}
-	packed, err := PackUint32(0, nil, nil, values)
+	packed, err := PackUint32(0, values, nil, nil)
 	require.NoError(t, err)
 
 	header := bo.Uint32(packed)
@@ -355,7 +355,7 @@ func TestFormatConformance_WireLayout_WithExceptions(t *testing.T) {
 	values[10] = 0x10000
 	values[50] = 0x1000000
 
-	packed, err := PackUint32(0, nil, nil, values)
+	packed, err := PackUint32(0, values, nil, nil)
 	require.NoError(t, err)
 
 	header := bo.Uint32(packed)
@@ -382,7 +382,7 @@ func TestFormatConformance_ReservedBitsZero(t *testing.T) {
 
 	for _, flag := range []byte{0, Delta} {
 		work := append([]uint32(nil), values...)
-		packed, err := PackUint32(flag, nil, nil, work)
+		packed, err := PackUint32(flag, work, nil, nil)
 		require.NoError(t, err)
 
 		header := bo.Uint32(packed)
@@ -397,7 +397,7 @@ func TestKaitai_HeaderFields_Plain(t *testing.T) {
 	for i := range values {
 		values[i] = uint32(128 + i)
 	}
-	packed, err := PackUint32(0, nil, nil, values)
+	packed, err := PackUint32(0, values, nil, nil)
 	require.NoError(t, err)
 
 	b := parseKaitaiBlock(t, packed)
@@ -416,7 +416,7 @@ func TestKaitai_HeaderFields_Delta(t *testing.T) {
 		values[i] = uint32(i * 100)
 	}
 	work := append([]uint32(nil), values...)
-	packed, err := PackUint32(Delta, nil, nil, work)
+	packed, err := PackUint32(Delta, work, nil, nil)
 	require.NoError(t, err)
 
 	b := parseKaitaiBlock(t, packed)
@@ -433,7 +433,7 @@ func TestKaitai_HeaderFields_WithExceptions(t *testing.T) {
 	}
 	values[10] = 0x10000
 	values[50] = 0x1000000
-	packed, err := PackUint32(0, nil, nil, values)
+	packed, err := PackUint32(0, values, nil, nil)
 	require.NoError(t, err)
 
 	b := parseKaitaiBlock(t, packed)
@@ -455,7 +455,7 @@ func TestKaitai_BitmapExceptions(t *testing.T) {
 	for i := range 20 {
 		values[i*6] = 0x10000000 + uint32(i)
 	}
-	packed, err := PackUint32(0, nil, nil, values)
+	packed, err := PackUint32(0, values, nil, nil)
 	require.NoError(t, err)
 
 	b := parseKaitaiBlock(t, packed)
@@ -480,7 +480,7 @@ func TestKaitai_PayloadSizeAllStepBitWidths(t *testing.T) {
 		for i := range values {
 			values[i] = uint32(i) & mask
 		}
-		packed, err := PackUint32(0, nil, nil, values)
+		packed, err := PackUint32(0, values, nil, nil)
 		require.NoError(t, err, "bw=%d", bw)
 
 		b := parseKaitaiBlock(t, packed)
@@ -500,7 +500,7 @@ func TestKaitai_ReservedBitsZero(t *testing.T) {
 	}
 	for _, flag := range []byte{0, Delta} {
 		work := append([]uint32(nil), values...)
-		packed, err := PackUint32(flag, nil, nil, work)
+		packed, err := PackUint32(flag, work, nil, nil)
 		require.NoError(t, err)
 
 		b := parseKaitaiBlock(t, packed)
@@ -553,7 +553,7 @@ func TestKaitai_WireLayoutMatchesBlockLength(t *testing.T) {
 	for _, ds := range datasets {
 		t.Run(ds.name, func(t *testing.T) {
 			work := append([]uint32(nil), ds.values...)
-			packed, err := PackUint32(ds.flag, nil, nil, work)
+			packed, err := PackUint32(ds.flag, work, nil, nil)
 			require.NoError(t, err)
 
 			b := parseKaitaiBlock(t, packed)
@@ -649,7 +649,7 @@ func TestGoldenVectors(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			work := append([]uint32(nil), tt.values...)
-			packed, err := PackUint32(tt.flag, nil, nil, work)
+			packed, err := PackUint32(tt.flag, work, nil, nil)
 			require.NoError(t, err)
 
 			golden, err := os.ReadFile(tt.file)
@@ -677,10 +677,10 @@ func TestGoldenVectors_RoundTrip(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			work := append([]uint32(nil), tt.values...)
-			packed, err := PackUint32(tt.flag, nil, nil, work)
+			packed, err := PackUint32(tt.flag, work, nil, nil)
 			require.NoError(t, err)
 
-			unpacked, consumed, err := UnpackUint32(nil, make([]uint32, 128), packed)
+			unpacked, consumed, err := UnpackUint32(packed, nil, make([]uint32, 128))
 			require.NoError(t, err)
 			assert.Equal(t, tt.values, unpacked)
 

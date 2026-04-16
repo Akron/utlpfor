@@ -43,10 +43,10 @@ func FuzzPackUnpackUint32RoundTrip(f *testing.F) {
 		}
 
 		original := slices.Clone(values)
-		packed, err := PackUint32(0, nil, nil, values)
+		packed, err := PackUint32(0, values, nil, nil)
 		require.NoError(t, err)
 
-		unpacked, consumed, err := UnpackUint32(nil, make([]uint32, blockSize), packed)
+		unpacked, consumed, err := UnpackUint32(packed, nil, make([]uint32, blockSize))
 		require.NoError(t, err)
 		require.Equal(t, len(packed), consumed)
 		require.Equal(t, original, unpacked)
@@ -65,10 +65,10 @@ func FuzzPackDeltaUint32RoundTrip(f *testing.F) {
 		}
 
 		original := slices.Clone(values)
-		packed, err := PackUint32(Delta, nil, nil, values)
+		packed, err := PackUint32(Delta, values, nil, nil)
 		require.NoError(t, err)
 
-		unpacked, _, err := UnpackUint32(nil, make([]uint32, blockSize), packed)
+		unpacked, _, err := UnpackUint32(packed, nil, make([]uint32, blockSize))
 		require.NoError(t, err)
 		require.Equal(t, original, unpacked)
 	})
@@ -83,10 +83,10 @@ func FuzzGetUint32MatchesUnpack(f *testing.F) {
 			return
 		}
 
-		packed, err := PackUint32(0, nil, nil, values)
+		packed, err := PackUint32(0, values, nil, nil)
 		require.NoError(t, err)
 
-		unpacked, _, err := UnpackUint32(nil, make([]uint32, blockSize), packed)
+		unpacked, _, err := UnpackUint32(packed, nil, make([]uint32, blockSize))
 		require.NoError(t, err)
 
 		scratch := make([]uint32, ScratchLen)
@@ -117,12 +117,12 @@ func FuzzCorruptDeltaOverflow(f *testing.F) {
 			return
 		}
 
-		packed, err := PackUint32(Delta, nil, nil, values)
+		packed, err := PackUint32(Delta, values, nil, nil)
 		if err != nil {
 			return
 		}
 
-		_, _, err = UnpackUint32(nil, make([]uint32, blockSize), packed)
+		_, _, err = UnpackUint32(packed, nil, make([]uint32, blockSize))
 		assert.NoError(t, err)
 	})
 }
@@ -138,12 +138,12 @@ func FuzzDeltaWithExceptions(f *testing.F) {
 		}
 
 		original := slices.Clone(values)
-		packed, err := PackUint32(Delta, nil, nil, values)
+		packed, err := PackUint32(Delta, values, nil, nil)
 		if err != nil {
 			return
 		}
 
-		unpacked, _, err := UnpackUint32(nil, make([]uint32, blockSize), packed)
+		unpacked, _, err := UnpackUint32(packed, nil, make([]uint32, blockSize))
 		require.NoError(t, err)
 		require.Equal(t, original, unpacked,
 			"delta+exceptions round-trip must preserve values")
@@ -168,7 +168,7 @@ func FuzzCompressionRatio(f *testing.F) {
 			}
 		}
 
-		packed, err := PackUint32(0, nil, nil, values)
+		packed, err := PackUint32(0, values, nil, nil)
 		if err != nil {
 			return
 		}

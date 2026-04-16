@@ -20,7 +20,7 @@ func ensureLen(dst []byte, n int) []byte {
 // The flag byte controls encoding options (e.g. Delta for delta encoding).
 // The values slice may be modified in-place (FOR subtraction, delta encoding).
 // Callers that need the original values must copy them before calling PackUint32.
-func PackUint32(flag byte, dst []byte, scratch []uint32, values []uint32) ([]byte, error) {
+func PackUint32(flag byte, values []uint32, dst []byte, scratch []uint32) ([]byte, error) {
 	if len(scratch) < blockSize {
 		scratch = make([]uint32, blockSize)
 	}
