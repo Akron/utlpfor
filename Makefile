@@ -11,8 +11,13 @@ FUZZTIME ?= 30s
 BENCHCOUNT ?= 10
 
 # Pin benchmarks to P-cores on hybrid CPUs (Intel 12th gen+) for stable results.
-# Override with: make bench TASKSET=""  (to disable)
-# or:            make bench TASKSET="taskset -c 0-3"  (custom core set)
+# TASKSET_MICRO: single P-core for micro-benchmarks (lowest variance, ~1-5%).
+# TASKSET:       P-core range for matrix/threshold benchmarks (accept 10-20% variance).
+# For cross-run comparison, use benchstat with >= 10 samples and focus on
+# relative patterns (ratios between test cases) rather than absolute values.
+# Override with: make bench TASKSET_MICRO=""  (to disable)
+# or:            make bench TASKSET_MICRO="taskset -c 2"  (custom core)
+TASKSET_MICRO ?= taskset -c 0
 TASKSET ?= taskset -c 0-7
 
 FUZZ_TARGETS = FuzzPackUnpackUint32RoundTrip \
@@ -50,19 +55,19 @@ test-force-avx512:
 # --- Benchmarks ---
 
 bench:
-	$(TASKSET) go test -bench=. -benchmem -count=$(BENCHCOUNT) -run='^$$' ./...
+	$(TASKSET_MICRO) go test -bench=. -benchmem -count=$(BENCHCOUNT) -run='^$$' ./...
 
 bench-simd:
-	GOEXPERIMENT=simd $(TASKSET) gotip test -bench=. -benchmem -count=$(BENCHCOUNT) -run='^$$' ./...
+	GOEXPERIMENT=simd $(TASKSET_MICRO) gotip test -bench=. -benchmem -count=$(BENCHCOUNT) -run='^$$' ./...
 
 bench-save-scalar:
 	@mkdir -p benchmarks
-	$(TASKSET) go test -bench=. -benchmem -count=$(BENCHCOUNT) -run='^$$' ./... > benchmarks/scalar-baseline.txt
+	$(TASKSET_MICRO) go test -bench=. -benchmem -count=$(BENCHCOUNT) -run='^$$' ./... > benchmarks/scalar-baseline.txt
 	@echo "Saved to benchmarks/scalar-baseline.txt"
 
 bench-save-simd:
 	@mkdir -p benchmarks
-	GOEXPERIMENT=simd $(TASKSET) gotip test -bench=. -benchmem -count=$(BENCHCOUNT) -run='^$$' ./... > benchmarks/simd-baseline.txt
+	GOEXPERIMENT=simd $(TASKSET_MICRO) gotip test -bench=. -benchmem -count=$(BENCHCOUNT) -run='^$$' ./... > benchmarks/simd-baseline.txt
 	@echo "Saved to benchmarks/simd-baseline.txt"
 
 bench-compare:

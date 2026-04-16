@@ -8,17 +8,21 @@ import "math/bits"
 // and bitwidth: for high bitwidths (>=20), lane extraction is expensive
 // (crossing word boundaries), so full unpack wins at lower positions.
 // For low/medium bitwidths, lane walk is very cheap and preferred.
+//
+// Thresholds are derived from BenchmarkGetUint32_Approaches measured
+// across scalar/SSE2/AVX2 (AVX-512 uses AVX2 values as conservative
+// proxy until benchmarked on AVX-512 hardware).
 func deltaFullUnpackThreshold(bitWidth int) int {
 	if bitWidth >= 20 {
 		switch simdLevel {
 		case simdLevelAVX512VBMI, simdLevelAVX512:
-			return 0
+			return 4
 		case simdLevelAVX2:
-			return 1
+			return 4
 		case simdLevelSSE2:
 			return 2
 		default:
-			return 3
+			return 2
 		}
 	}
 	return utlValuesPerLane
@@ -58,8 +62,8 @@ func extractPackedValueUTL(pos int, payload []byte, bitWidth int) uint32 {
 // GetUint32 extracts a single value at the given position from the packed block.
 // scratch with capacity >= ScratchLen enables zero-allocation operation for
 // delta-encoded blocks; pass nil if zero-alloc is not required.
-// SIMD acceleration is applied through the dispatched UnpackUint32 on the
-// full-unpack path; single-lane extraction is always scalar.
+// Single code path; SIMD acceleration is applied internally via dispatched
+// UnpackUint32 (full-unpack fallback for delta blocks with high posInLane).
 func GetUint32(pos int, buf []byte, scratch []uint32) (uint32, error) {
 	return getUint32Scalar(pos, buf, scratch)
 }
@@ -126,6 +130,9 @@ func getUint32Scalar(pos int, buf []byte, scratch []uint32) (uint32, error) {
 
 // getValueDirect extracts a single value without delta decoding.
 // Uses embedded single-value SVB decode instead of bulk decode.
+// Scalar exception index search and SVB decode are used directly;
+// SIMD alternatives have higher setup overhead that exceeds their
+// benefit for the typical small exception counts on this path.
 func getValueDirect(pos int, buf []byte, payload []byte, excStart, bitWidth, count, excCount int, hasExceptions bool) (uint32, error) {
 	var value uint32
 	if bitWidth > 0 {
@@ -187,6 +194,9 @@ func getValueWithDelta(pos int, buf []byte, payload []byte, excStart, bitWidth, 
 // applyLaneExceptions resolves exception high bits for lane positions
 // [0..posInLane] in a single pass over the exception index, calling
 // svbDecodeOneInternal only for positions that belong to the target lane.
+// The single-pass design avoids repeated exception index scans.
+// Scalar SVB decode is used directly; SIMD SVB helpers were benchmarked
+// and showed higher overhead than scalar for all typical exception counts.
 func applyLaneExceptions(laneValues []uint32, buf []byte,
 	excStart, excCount, lane, posInLane, count, bitWidth int,
 	svbData []byte) {

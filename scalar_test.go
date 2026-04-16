@@ -61,7 +61,7 @@ func TestErrOverflow_DescendingDelta_NoOverflow(t *testing.T) {
 }
 
 func TestPackUnpackScalar64RoundTrip_Random(t *testing.T) {
-	for seed := uint64(0); seed < 1000; seed++ {
+	for seed := range uint64(1000) {
 		rng := rand.New(rand.NewPCG(seed, 0))
 		count := rng.IntN(blockSize) + 1
 		values := make([]uint32, count)
