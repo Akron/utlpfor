@@ -1,5 +1,5 @@
 meta:
-  id: utl_pfor_block
+  id: utlpfor_block
   title: UTL-PFOR Compressed Block
   endian: le
   file-extension: bin
@@ -14,7 +14,8 @@ doc: |
     bits  8-12: bw_step_index (0-8 for 128-block, step bitwidth / 4)
     bits 13-14: int_type (0=uint8, 1=uint16, 2=uint32, 3=uint64)
     bits 15-16: for_width (00=no FOR, 01=uint8 1B, 10=uint16 2B, 11=uint32 4B)
-    bits 17-18: reserved (2 contiguous bits, must be 0)
+    bit  17:    SPECIAL flag (silently ignored by current decoder)
+    bit  18:    reserved (must be 0)
     bit  19:    E2 combine-with-next (reserved, must be 0)
     bit  20:    E1 block-length mode (reserved, must be 0)
     bit  21:    E1 block-length all-exception flag (reserved, silently ignored)

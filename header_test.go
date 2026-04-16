@@ -112,6 +112,10 @@ func TestDecodeHeader_FORWidthBitPosition(t *testing.T) {
 	assert.Equal(t, 15, forWidthShift, "FOR width must start at bit 15")
 }
 
+func TestDecodeHeader_SpecialFlagBitPosition(t *testing.T) {
+	assert.Equal(t, uint32(1<<17), headerSpecialFlag, "Special flag must be at bit 17")
+}
+
 func TestDecodeHeader_Block256AllExcFlagBitPosition(t *testing.T) {
 	assert.Equal(t, uint32(1<<21), headerBlock256AllExcFlag, "Block 256 all exceptions flag must be at bit 21")
 }
@@ -134,6 +138,12 @@ func TestDecodeHeader_ZigZagFlagBitPosition(t *testing.T) {
 
 func TestDecodeHeader_DeltaZigZagContiguous(t *testing.T) {
 	assert.Equal(t, headerDeltaFlag<<1, headerZigZagFlag, "Delta and ZigZag must be adjacent")
+}
+
+func TestEncodeHeader_SpecialFlag(t *testing.T) {
+	h := encodeHeader(128, 8, 0, headerTypeUint32Flag|headerSpecialFlag)
+	assert.True(t, h&headerSpecialFlag != 0)
+	assert.True(t, h&headerTypeUint32Flag != 0)
 }
 
 func TestEncodeDecodeHeader_AllFlagCombinations(t *testing.T) {

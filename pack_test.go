@@ -150,6 +150,34 @@ func TestPackUint32_DstReuse(t *testing.T) {
 	assert.True(t, cap(packed) >= cap(dst), "should reuse provided dst buffer")
 }
 
+func TestPackUint32_SpecialFlagSetsHeaderBit(t *testing.T) {
+	values := make([]uint32, blockSize)
+	for i := range values {
+		values[i] = uint32(i)
+	}
+
+	packed, err := PackUint32(Special, values, nil, nil)
+	require.NoError(t, err)
+
+	header := bo.Uint32(packed)
+	assert.True(t, header&headerSpecialFlag != 0, "Special flag must set bit 17")
+}
+
+func TestPackUint32_SpecialFlagRoundTrip(t *testing.T) {
+	values := make([]uint32, blockSize)
+	for i := range values {
+		values[i] = uint32(i * 13)
+	}
+	original := slices.Clone(values)
+
+	packed, err := PackUint32(Special|Delta, values, nil, nil)
+	require.NoError(t, err)
+
+	unpacked, _, err := UnpackUint32(packed, nil, make([]uint32, blockSize))
+	require.NoError(t, err)
+	assert.Equal(t, original, unpacked)
+}
+
 func TestPackUint32_NoPatch_RoundTrip_AllBitWidths(t *testing.T) {
 	for bw := 1; bw <= 32; bw++ {
 		t.Run(fmt.Sprintf("bw%d", bw), func(t *testing.T) {

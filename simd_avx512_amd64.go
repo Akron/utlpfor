@@ -149,6 +149,7 @@ func packUint32AVX512(flag byte, dst []byte, scratch []uint32, values []uint32) 
 	}
 
 	headerFlags := headerTypeUint32Flag
+	headerFlags |= uint32(flag&Special) << 14
 
 	var useFOR bool
 	var baseValue uint32

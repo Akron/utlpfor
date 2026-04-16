@@ -39,9 +39,11 @@ const (
 	forWidthU16   = 2
 	forWidthU32   = 3
 
-	// Bits 17-18: reserved (2 contiguous bits for future extensions).
-	// Must be 0 in current implementation.
-	headerReservedBitsMask = uint32(0x3 << 17)
+	// Bit 17: SPECIAL flag. The current decoder ignores this bit.
+	headerSpecialFlag = uint32(1 << 17)
+
+	// Bit 18: reserved. Must be 0 in current implementation.
+	headerReservedBitsMask = uint32(1 << 18)
 
 	// Bit 19: combine-with-next (uint64 double-block extension).
 	// Must be 0 in current implementation.
@@ -51,9 +53,7 @@ const (
 	// Must be 0 in current implementation.
 	headerBlock256Flag = uint32(1 << 20)
 
-	// Bit 21: 256-block-all-exceptions flag
-	// in specific combinations (e.g. full-block all-exceptions in 256-mode).
-	// Silently ignored in current implementation.
+	// Bit 21: E1 block-length all-exception flag (reserved, silently ignored).
 	headerBlock256AllExcFlag = uint32(1 << 21)
 
 	// Bit 22: delta flag.
@@ -71,11 +71,13 @@ const (
 	// svbLenBytes is the byte size of the StreamVByte length field.
 	svbLenBytes = 2
 
-	// headerReservedMask covers bits 17-18 and 19-20 (reserved + extension bits).
+	// headerReservedMask covers bit 18 and bits 19-20 (reserved + extension bits).
 	// In the current implementation, all these must be zero.
-	// Bit 21 (SPECIAL) is intentionally excluded -- it is silently ignored.
+	// Bit 17 (SPECIAL) and bit 21 (E1 all-exception) are intentionally excluded.
+	// Both are currently ignored by the decoder.
 	headerReservedMask = headerReservedBitsMask | headerCombineFlag | headerBlock256Flag
 )
+
 
 // utlPayloadBytes returns the UTL payload size in bytes for any bitwidth.
 // Formula: ceil(bitWidth / 4) * 64. For step bitwidths (multiples of 4),

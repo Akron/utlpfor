@@ -6,6 +6,7 @@ import (
 	"math/bits"
 	"os"
 	"sort"
+	"strings"
 	"testing"
 
 	"github.com/kaitai-io/kaitai_struct_go_runtime/kaitai"
@@ -13,8 +14,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+const kaitaiSchemaPath = "utlpfor.ksy"
+
 // kaitaiBlock holds parsed fields from a UTL-PFOR block using the Kaitai runtime.
-// Field names and extraction logic correspond to the utl_pfor.ksy definition.
+// Field names and extraction logic correspond to the utlpfor.ksy definition.
 type kaitaiBlock struct {
 	raw           uint32
 	count         int
@@ -35,10 +38,24 @@ type kaitaiBlock struct {
 	svbData       []byte
 }
 
+func requireKaitaiSchema(t *testing.T) string {
+	t.Helper()
+	data, err := os.ReadFile(kaitaiSchemaPath)
+	require.NoError(t, err, "kaitai schema %s must exist and be readable", kaitaiSchemaPath)
+	content := string(data)
+	require.Contains(t, content, "id: utlpfor_block")
+	require.Contains(t, content, "bit  17")
+	require.Contains(t, content, "SPECIAL flag")
+	require.Contains(t, content, "bit  21")
+	require.Contains(t, content, "all-exception flag")
+	return content
+}
+
 // parseKaitaiBlock reads a packed block using the Kaitai stream, mirroring
-// the utl_pfor.ksy schema. Returns parsed fields for conformance checks.
+// the utlpfor.ksy schema. Returns parsed fields for conformance checks.
 func parseKaitaiBlock(t *testing.T, data []byte) kaitaiBlock {
 	t.Helper()
+	requireKaitaiSchema(t)
 	s := kaitai.NewStream(bytes.NewReader(data))
 
 	raw, err := s.ReadU4le()
@@ -105,6 +122,13 @@ func parseKaitaiBlock(t *testing.T, data []byte) kaitaiBlock {
 	return b
 }
 
+func TestKaitaiSchemaFile_CurrentNameAndSpecialBit(t *testing.T) {
+	content := requireKaitaiSchema(t)
+	assert.False(t, strings.Contains(content, "utl_pfor.ksy"), "schema should use the current filename")
+	assert.Contains(t, content, "bit  17:    SPECIAL flag")
+	assert.Contains(t, content, "bit  21:    E1 block-length all-exception flag")
+}
+
 func TestFormatConformance_HeaderLayout(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -138,9 +162,13 @@ func TestFormatConformance_HeaderLayout(t *testing.T) {
 			gotType := int((h >> 13) & 0x03)
 			assert.Equal(t, IntTypeUint32, gotType, "int type mismatch")
 
-			// Bits 17-18: reserved, must be zero.
-			gotReserved := int((h >> 17) & 0x03)
-			assert.Equal(t, 0, gotReserved, "bits 17-18 must be zero")
+			// Bit 18: reserved, must be zero.
+			gotReservedBit18 := int((h >> 18) & 0x01)
+			assert.Equal(t, 0, gotReservedBit18, "bit 18 must be zero")
+
+			// Bit 17: special is clear unless explicitly requested.
+			gotSpecial := h&headerSpecialFlag != 0
+			assert.False(t, gotSpecial, "special must be clear when not requested")
 
 			// Byte 2 bit 6: delta flag (bit 22).
 			gotDelta := buf[2]&(1<<6) != 0
@@ -171,7 +199,8 @@ func TestFormatConformance_HeaderBitPositions(t *testing.T) {
 	assert.Equal(t, 0x80, int(h&0xFF), "count at bits 0-7")
 	assert.Equal(t, 8, int((h>>8)&0x1F), "encoded bitWidth step index at bits 8-12")
 	assert.Equal(t, IntTypeUint32, int((h>>13)&0x03), "intType at bits 13-14")
-	assert.Equal(t, 0, int((h>>17)&0x03), "bits 17-18 must be zero")
+	assert.Equal(t, 0, int((h>>18)&0x01), "bit 18 must be zero")
+	assert.False(t, h&headerSpecialFlag != 0, "special at bit 17 should be clear")
 	assert.True(t, h&headerDeltaFlag != 0, "delta at bit 22")
 	assert.True(t, h&headerZigZagFlag != 0, "zigzag at bit 23")
 	assert.Equal(t, 0xFF, int((h>>24)&0xFF), "excCount at bits 24-31")
@@ -508,6 +537,19 @@ func TestKaitai_ReservedBitsZero(t *testing.T) {
 		assert.Equal(t, uint32(0), reserved,
 			"kaitai: reserved bits must be zero (flag=%d)", flag)
 	}
+}
+
+func TestKaitai_SpecialBitSetWhenRequested(t *testing.T) {
+	values := make([]uint32, 128)
+	for i := range values {
+		values[i] = uint32(i)
+	}
+
+	packed, err := PackUint32(Special, values, nil, nil)
+	require.NoError(t, err)
+
+	b := parseKaitaiBlock(t, packed)
+	assert.True(t, b.raw&headerSpecialFlag != 0, "kaitai: special bit must be set when Special flag is used")
 }
 
 func TestKaitai_WireLayoutMatchesBlockLength(t *testing.T) {
