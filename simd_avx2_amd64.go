@@ -296,7 +296,7 @@ func deltaDecodePerLaneWithOverflowAVX2(values []uint32, useZigZag bool) int {
 
 // packUint32AVX2 is the full AVX2 packing pipeline.
 // Uses AVX2 for bit-packing and delta/zigzag encoding; scalar for exceptions and FOR.
-func packUint32AVX2(flag byte, dst []byte, scratch []uint32, values []uint32) ([]byte, error) {
+func packUint32AVX2(flag Flag, dst []byte, scratch []uint32, values []uint32) ([]byte, error) {
 	if len(values) == 0 || len(values) > blockSize {
 		return nil, ErrInvalidBuffer
 	}
@@ -394,7 +394,7 @@ func unpackUint32AVX2(dst []uint32, scratch []uint32, buf []byte) ([]uint32, int
 	}
 
 	header := bo.Uint32(buf)
-	count, bitWidth, intType, excCount, forWidth, hasExceptions, hasDelta, hasZigZag := decodeHeader(header)
+	count, bitWidth, intType, excCount, forWidth, hasExceptions, hasDelta, hasZigZag, _ := decodeHeader(header)
 	hasFOR := forWidth > 0
 
 	if err := validateIntType(intType); err != nil {

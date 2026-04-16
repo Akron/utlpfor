@@ -25,14 +25,17 @@ import (
 	"fmt"
 )
 
+// Flag controls encoding options passed to PackUint32.
+type Flag byte
+
 // Delta indicates that the values should be delta-encoded before packing.
-const Delta byte = 1 << 0
+const Delta Flag = 1 << 0
 
 // NoFOR disables Frame-of-Reference analysis during packing.
 // When set, the encoder skips the min/max scan and FOR cost evaluation,
 // going directly to bitpacking + patching. This improves packing speed
 // when it is known in advance that FOR will not be beneficial.
-const NoFOR byte = 1 << 1
+const NoFOR Flag = 1 << 1
 
 // NoPatch disables exception analysis and patching during packing.
 // The encoder uses the minimum step bitwidth that fits all values,
@@ -41,11 +44,11 @@ const NoFOR byte = 1 << 1
 // bitwidth. Ideal for dictionary-compressed data where all values
 // share a known maximum range. NoPatch also benefits
 // random access by guaranteeing no exception data needs to be decoded.
-const NoPatch byte = 1 << 2
+const NoPatch Flag = 1 << 2
 
 // Special bit written in header during packing.
 // The current decoder does not interpret this bit yet.
-const Special byte = 1 << 3
+const Special Flag = 1 << 3
 
 // ErrInvalidBuffer is returned when the input buffer is nil, empty, or truncated.
 var ErrInvalidBuffer = errors.New("UTLpfor: invalid buffer")

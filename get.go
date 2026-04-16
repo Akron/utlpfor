@@ -76,7 +76,7 @@ func getUint32Scalar(pos int, src []byte, scratch []uint32) (uint32, error) {
 	}
 
 	header := bo.Uint32(src)
-	count, bitWidth, intType, excCount, forWidth, hasExceptions, hasDelta, hasZigZag := decodeHeader(header)
+	count, bitWidth, intType, excCount, forWidth, hasExceptions, hasDelta, hasZigZag, _ := decodeHeader(header)
 	hasFOR := forWidth > 0
 
 	if err := validateIntType(intType); err != nil {

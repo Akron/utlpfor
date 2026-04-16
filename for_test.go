@@ -24,7 +24,7 @@ func TestHeaderFORWidth_Encode(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			flags := headerTypeUint32Flag | uint32(tt.forWidth<<forWidthShift)
 			header := encodeHeader(128, 8, 0, flags)
-			_, _, _, _, gotWidth, _, _, _ := decodeHeader(header)
+			_, _, _, _, gotWidth, _, _, _, _ := decodeHeader(header)
 			assert.Equal(t, tt.forWidth, gotWidth)
 		})
 	}
@@ -32,7 +32,7 @@ func TestHeaderFORWidth_Encode(t *testing.T) {
 
 func TestHeaderFORWidth_NoFOR(t *testing.T) {
 	header := encodeHeader(128, 8, 0, headerTypeUint32Flag)
-	_, _, _, _, forWidth, _, _, _ := decodeHeader(header)
+	_, _, _, _, forWidth, _, _, _, _ := decodeHeader(header)
 	assert.Equal(t, forWidthNone, forWidth)
 }
 
@@ -579,8 +579,8 @@ func TestForSubtractAddScalar(t *testing.T) {
 }
 
 func TestNoFOR_FlagConstant(t *testing.T) {
-	assert.Equal(t, byte(2), NoFOR)
-	assert.Equal(t, byte(0), Delta&NoFOR, "NoFOR and Delta must not overlap")
+	assert.Equal(t, Flag(2), NoFOR)
+	assert.Equal(t, Flag(0), Delta&NoFOR, "NoFOR and Delta must not overlap")
 }
 
 func TestNoFOR_RoundTrip_Sequential(t *testing.T) {
@@ -732,7 +732,7 @@ func TestNoFOR_BlockLengthConsistency(t *testing.T) {
 			values[i] = rng.Uint32()
 		}
 
-		for _, flag := range []byte{NoFOR, Delta | NoFOR} {
+		for _, flag := range []Flag{NoFOR, Delta | NoFOR} {
 			work := slices.Clone(values)
 			packed, err := PackUint32(flag, work, nil, nil)
 			require.NoError(t, err)
@@ -751,7 +751,7 @@ func TestNoFOR_GetMatchesUnpack(t *testing.T) {
 		values[i] = 1000000 + uint32(i*3)
 	}
 
-	for _, flag := range []byte{NoFOR, Delta | NoFOR} {
+	for _, flag := range []Flag{NoFOR, Delta | NoFOR} {
 		work := slices.Clone(values)
 		packed, err := PackUint32(flag, work, nil, nil)
 		require.NoError(t, err)

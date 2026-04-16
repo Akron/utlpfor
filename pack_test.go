@@ -435,7 +435,7 @@ func TestPackUint32_NoPatch_GetMatchesUnpack(t *testing.T) {
 }
 
 func TestPackUint32_NoPatch_BlockLengthConsistency(t *testing.T) {
-	for _, flag := range []byte{NoPatch, NoPatch | Delta} {
+	for _, flag := range []Flag{NoPatch, NoPatch | Delta} {
 		values := make([]uint32, blockSize)
 		for i := range values {
 			values[i] = uint32(i % 1024)

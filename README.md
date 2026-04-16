@@ -41,11 +41,23 @@ AVX-512 > AVX2 > SSE2 > scalar fallback.
 ## API
 
 ```go
-func PackUint32(flag byte, values []uint32, dst []byte, scratch []uint32) ([]byte, error)
+func PackUint32(flag PackFlag, values []uint32, dst []byte, scratch []uint32) ([]byte, error)
 func UnpackUint32(src []byte, values []uint32, scratch []uint32) ([]uint32, int, error)
 func GetUint32(pos int, src []byte, scratch []uint32) (uint32, error)
 func BlockLength(src []byte) (int, error)
+func Header(src []byte) (count, bitWidth, excCount int, hasDelta, hasFOR, hasZigZag, hasSpecial bool, err error)
 ```
+
+### PackFlag Constants
+
+| Flag |  Description |
+|------|-------------|
+| `Delta` | Delta-encode values before packing |
+| `NoFOR` | Skip Frame-of-Reference analysis |
+| `NoPatch` | Skip exception analysis (no patching) |
+| `Special` | Set the SPECIAL header bit |
+
+Flags can be combined with bitwise OR, e.g. `Delta | NoFOR`.
 
 ## Quick Start
 

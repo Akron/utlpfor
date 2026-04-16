@@ -17,10 +17,10 @@ func ensureLen(dst []byte, n int) []byte {
 // If scratch has capacity >= ScratchLen (128), no heap allocations occur
 // (assuming dst also has sufficient capacity). Pass nil for scratch to use
 // internal allocations.
-// The flag byte controls encoding options (e.g. Delta for delta encoding).
+// The flag parameter controls encoding options (e.g. Delta for delta encoding).
 // The values slice may be modified in-place (FOR subtraction, delta encoding).
 // Callers that need the original values must copy them before calling PackUint32.
-func PackUint32(flag byte, values []uint32, dst []byte, scratch []uint32) ([]byte, error) {
+func PackUint32(flag Flag, values []uint32, dst []byte, scratch []uint32) ([]byte, error) {
 	if len(scratch) < blockSize {
 		scratch = make([]uint32, blockSize)
 	}

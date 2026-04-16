@@ -269,7 +269,7 @@ func deltaDecodePerLaneWithOverflowSSE2(values []uint32, useZigZag bool) int {
 
 // packUint32SSE2 is the full SSE2 packing pipeline.
 // Uses SSE2 for bit-packing and delta/zigzag; scalar for exceptions and FOR.
-func packUint32SSE2(flag byte, dst []byte, scratch []uint32, values []uint32) ([]byte, error) {
+func packUint32SSE2(flag Flag, dst []byte, scratch []uint32, values []uint32) ([]byte, error) {
 	if len(values) == 0 || len(values) > blockSize {
 		return nil, ErrInvalidBuffer
 	}
@@ -363,7 +363,7 @@ func unpackUint32SSE2(dst []uint32, scratch []uint32, buf []byte) ([]uint32, int
 	}
 
 	header := bo.Uint32(buf)
-	count, bitWidth, intType, excCount, forWidth, hasExceptions, hasDelta, hasZigZag := decodeHeader(header)
+	count, bitWidth, intType, excCount, forWidth, hasExceptions, hasDelta, hasZigZag, _ := decodeHeader(header)
 	hasFOR := forWidth > 0
 
 	if err := validateIntType(intType); err != nil {

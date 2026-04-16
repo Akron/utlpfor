@@ -60,8 +60,8 @@ func forBaseForWidth(fw int) uint32 {
 
 // generateMatrixData creates 128 uint32 values targeting a specific
 // combination of bitwidth, exception count, FOR width, and delta/zigzag.
-// Returns (values, flag byte).
-func generateMatrixData(cfg matrixConfig) ([]uint32, byte) {
+// Returns (values, flag).
+func generateMatrixData(cfg matrixConfig) ([]uint32, Flag) {
 	values := make([]uint32, blockSize)
 	bw := cfg.bitWidth
 	forBase := forBaseForWidth(cfg.forWidth)
@@ -121,7 +121,7 @@ func generateMatrixData(cfg matrixConfig) ([]uint32, byte) {
 		}
 	}
 
-	var flag byte
+	var flag Flag
 	if cfg.useDelta {
 		flag = Delta
 	}
@@ -429,7 +429,7 @@ func TestMatrixDataGeneration(t *testing.T) {
 							require.GreaterOrEqual(t, len(packed), headerBytes)
 
 							header := bo.Uint32(packed)
-							_, _, _, hExc, hFORWidth, _, hDelta, hZZ := decodeHeader(header)
+							_, _, _, hExc, hFORWidth, _, hDelta, hZZ, _ := decodeHeader(header)
 
 							if useDelta {
 								assert.True(t, hDelta, "expected delta flag")

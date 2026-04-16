@@ -105,7 +105,7 @@ func encodeHeader(count, bitWidth, excCount int, flags uint32) uint32 {
 // The 5-bit bitwidth field is decoded as: bitWidth = encodedValue * 4.
 // forWidth is the 2-bit FOR width field (bits 15-16): 0=none, 1=u8, 2=u16, 3=u32.
 func decodeHeader(header uint32) (count, bitWidth, intType, excCount, forWidth int,
-	hasExceptions, hasDelta, hasZigZag bool) {
+	hasExceptions, hasDelta, hasZigZag, hasSpecial bool) {
 	count = int(header & headerCountMask)
 	encodedBW := int((header >> headerWidthShift) & headerWidthMask)
 	bitWidth = encodedBW * 4
@@ -115,6 +115,27 @@ func decodeHeader(header uint32) (count, bitWidth, intType, excCount, forWidth i
 	hasExceptions = excCount > 0
 	hasDelta = header&headerDeltaFlag != 0
 	hasZigZag = header&headerZigZagFlag != 0
+	hasSpecial = header&headerSpecialFlag != 0
+	return
+}
+
+// Header reads the 4-byte block header from src and returns the decoded fields.
+//
+// EXPERIMENTAL: This function's return values may change in future versions.
+func Header(src []byte) (count, bitWidth, excCount int,
+	hasDelta, hasFOR, hasZigZag, hasSpecial bool, err error) {
+	if len(src) < headerBytes {
+		return 0, 0, 0, false, false, false, false, ErrInvalidBuffer
+	}
+	header := bo.Uint32(src)
+	var intType, forWidth int
+	var hasExceptions bool
+	count, bitWidth, intType, excCount, forWidth, hasExceptions, hasDelta, hasZigZag, hasSpecial = decodeHeader(header)
+	_ = hasExceptions
+	if err = validateIntType(intType); err != nil {
+		return 0, 0, 0, false, false, false, false, err
+	}
+	hasFOR = forWidth > 0
 	return
 }
 

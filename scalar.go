@@ -116,7 +116,7 @@ func unpackLanePairUTL64(dst []uint32, payload []byte, lane0, bitWidth, count in
 }
 
 // packUint32Scalar is the scalar implementation of PackUint32.
-func packUint32Scalar(flag byte, dst []byte, scratch []uint32, values []uint32) ([]byte, error) {
+func packUint32Scalar(flag Flag, dst []byte, scratch []uint32, values []uint32) ([]byte, error) {
 	if len(values) == 0 || len(values) > blockSize {
 		return nil, ErrInvalidBuffer
 	}
@@ -197,7 +197,7 @@ func unpackUint32Scalar(dst []uint32, scratch []uint32, buf []byte) ([]uint32, i
 	}
 
 	header := bo.Uint32(buf)
-	count, bitWidth, intType, excCount, forWidth, hasExceptions, hasDelta, hasZigZag := decodeHeader(header)
+	count, bitWidth, intType, excCount, forWidth, hasExceptions, hasDelta, hasZigZag, _ := decodeHeader(header)
 	hasFOR := forWidth > 0
 
 	if err := validateIntType(intType); err != nil {

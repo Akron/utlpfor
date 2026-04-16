@@ -9,7 +9,7 @@ func BlockLength(src []byte) (int, error) {
 	}
 
 	header := bo.Uint32(src)
-	count, bitWidth, _, excCount, forWidth, hasExceptions, _, _ := decodeHeader(header)
+	count, bitWidth, _, excCount, forWidth, hasExceptions, _, _, _ := decodeHeader(header)
 
 	if count > blockSize {
 		return 0, ErrInvalidBlockLength

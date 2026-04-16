@@ -231,7 +231,7 @@ func TestGetUint32_Optimized_AllConfigs(t *testing.T) {
 	rng := rand.New(rand.NewPCG(42, 0))
 	configs := []struct {
 		name string
-		flag byte
+		flag Flag
 		gen  func(*rand.Rand) []uint32
 	}{
 		{"plain_no_exc", 0, func(r *rand.Rand) []uint32 {
@@ -325,7 +325,7 @@ func TestGetUint32_Optimized_AllConfigs(t *testing.T) {
 func BenchmarkGetUint32_Approaches(b *testing.B) {
 	configs := []struct {
 		name  string
-		flag  byte
+		flag  Flag
 		genFn func([]uint32)
 	}{
 		{"plain", 0, func(v []uint32) {

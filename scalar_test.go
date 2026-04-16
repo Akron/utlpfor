@@ -128,7 +128,7 @@ func TestFullPipeline_BlockLengthConsistency(t *testing.T) {
 			values[i] = rng.Uint32()
 		}
 
-		for _, flag := range []byte{0, Delta} {
+		for _, flag := range []Flag{0, Delta} {
 			work := append([]uint32(nil), values...)
 			packed, err := PackUint32(flag, work, nil, nil)
 			require.NoError(t, err)
@@ -149,7 +149,7 @@ func TestFullPipeline_GetMatchesUnpack(t *testing.T) {
 	values[10] = 0x100000
 	values[100] = 0xFFFFFF
 
-	for _, flag := range []byte{0, Delta} {
+	for _, flag := range []Flag{0, Delta} {
 		work := append([]uint32(nil), values...)
 		packed, err := PackUint32(flag, work, nil, nil)
 		require.NoError(t, err)
@@ -197,7 +197,7 @@ func TestFullPipeline_CompressionRatio(t *testing.T) {
 	datasets := []struct {
 		name   string
 		values []uint32
-		flag   byte
+		flag   Flag
 	}{
 		{"small_plain", func() []uint32 {
 			v := make([]uint32, 128)

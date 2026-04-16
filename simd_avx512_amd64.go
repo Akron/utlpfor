@@ -143,7 +143,7 @@ func packLanesUTLAVX512Generic(dst []byte, values []uint32, bitWidth int) {
 
 // packUint32AVX512 is the full AVX-512 packing pipeline.
 // Uses AVX-512 for bit-packing; AVX2 for delta/zigzag; scalar for exceptions and FOR.
-func packUint32AVX512(flag byte, dst []byte, scratch []uint32, values []uint32) ([]byte, error) {
+func packUint32AVX512(flag Flag, dst []byte, scratch []uint32, values []uint32) ([]byte, error) {
 	if len(values) == 0 || len(values) > blockSize {
 		return nil, ErrInvalidBuffer
 	}
@@ -239,7 +239,7 @@ func unpackUint32AVX512(dst []uint32, scratch []uint32, buf []byte) ([]uint32, i
 	}
 
 	header := bo.Uint32(buf)
-	count, bitWidth, intType, excCount, forWidth, hasExceptions, hasDelta, hasZigZag := decodeHeader(header)
+	count, bitWidth, intType, excCount, forWidth, hasExceptions, hasDelta, hasZigZag, _ := decodeHeader(header)
 	hasFOR := forWidth > 0
 
 	if err := validateIntType(intType); err != nil {
