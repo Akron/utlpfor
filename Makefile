@@ -2,6 +2,7 @@
        bench bench-simd bench-save-scalar bench-save-simd bench-compare \
        compare-with-fastpfor bench-matrix bench-matrix-table bench-matrix-compare \
        bench-quick bench-quick-save \
+       bench-threshold threshold-analyze bench-threshold-full \
        fuzz fuzz-simd fuzz-regression fuzz-regression-simd \
        generate-native generate \
        sim
@@ -205,3 +206,31 @@ SIM_WARMUP ?= 5
 
 sim:
 	GOEXPERIMENT=simd go run ./internal/sim -runs $(SIM_RUNS) -warmup $(SIM_WARMUP)
+
+# --- GetUint32 Threshold Tuning ---
+
+THRESHOLD_COUNT ?= 5
+
+bench-threshold:
+	@mkdir -p benchmarks
+	@for level in scalar sse2 avx2 avx512; do \
+		printf '=== Running %s GetUint32_Approaches ===\n' "$$level"; \
+		GOEXPERIMENT=simd UTL_SIMD_LEVEL=$$level $(TASKSET) gotip test \
+			-bench=BenchmarkGetUint32_Approaches -benchmem -count=$(THRESHOLD_COUNT) \
+			-run='^$$' -timeout=300s ./... \
+			> benchmarks/get-$$level.txt 2>&1 || true; \
+		if grep -q 'BenchmarkGetUint32_Approaches/' benchmarks/get-$$level.txt; then \
+			printf '  saved benchmarks/get-%s.txt\n' "$$level"; \
+		else \
+			printf '  [skip] %s unsupported on this CPU\n' "$$level"; \
+		fi; \
+	done
+
+threshold-analyze:
+	@go run ./internal/threshold \
+		benchmarks/get-scalar.txt \
+		benchmarks/get-sse2.txt \
+		benchmarks/get-avx2.txt \
+		benchmarks/get-avx512.txt
+
+bench-threshold-full: bench-threshold threshold-analyze
