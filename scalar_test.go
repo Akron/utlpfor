@@ -156,8 +156,9 @@ func TestFullPipeline_GetMatchesUnpack(t *testing.T) {
 		unpacked, _, err := UnpackUint32(nil, make([]uint32, 128), packed)
 		require.NoError(t, err)
 
+		scratch := make([]uint32, ScratchLen)
 		for pos := range unpacked {
-			got, err := GetUint32(pos, packed)
+			got, err := GetUint32(pos, packed, scratch)
 			require.NoError(t, err)
 			assert.Equal(t, unpacked[pos], got, "flag=%d pos=%d", flag, pos)
 		}
@@ -245,8 +246,9 @@ func TestFullPipeline_GetMatchesUnpack_Delta(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, expected, unpacked)
 
+	scratch := make([]uint32, ScratchLen)
 	for pos := range unpacked {
-		got, err := GetUint32(pos, packed)
+		got, err := GetUint32(pos, packed, scratch)
 		require.NoError(t, err)
 		assert.Equal(t, unpacked[pos], got, "pos=%d", pos)
 	}
@@ -269,8 +271,9 @@ func TestFullPipeline_GetMatchesUnpack_DeltaWithExceptions(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, expected, unpacked)
 
+	scratch := make([]uint32, ScratchLen)
 	for pos := range unpacked {
-		got, err := GetUint32(pos, packed)
+		got, err := GetUint32(pos, packed, scratch)
 		require.NoError(t, err)
 		assert.Equal(t, unpacked[pos], got, "pos=%d", pos)
 	}
@@ -290,8 +293,9 @@ func TestFullPipeline_GetMatchesUnpack_DeltaDescending(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, expected, unpacked)
 
+	scratch := make([]uint32, ScratchLen)
 	for pos := range unpacked {
-		got, err := GetUint32(pos, packed)
+		got, err := GetUint32(pos, packed, scratch)
 		require.NoError(t, err)
 		assert.Equal(t, unpacked[pos], got, "pos=%d", pos)
 	}
@@ -314,8 +318,9 @@ func TestFullPipeline_GetMatchesUnpack_RandomDelta(t *testing.T) {
 		require.NoError(t, err, "trial %d", trial)
 		assert.Equal(t, expected, unpacked, "trial %d: unpack mismatch", trial)
 
+		scratch := make([]uint32, ScratchLen)
 		for pos := range unpacked {
-			got, err := GetUint32(pos, packed)
+			got, err := GetUint32(pos, packed, scratch)
 			require.NoError(t, err, "trial %d pos %d", trial, pos)
 			assert.Equal(t, unpacked[pos], got, "trial %d pos %d", trial, pos)
 		}
@@ -330,7 +335,7 @@ func TestFullPipeline_IntTypeValidation(t *testing.T) {
 	_, _, err := UnpackUint32(nil, make([]uint32, 128), buf)
 	assert.ErrorIs(t, err, ErrUnsupportedType)
 
-	_, err = GetUint32(0, buf)
+	_, err = GetUint32(0, buf, nil)
 	assert.ErrorIs(t, err, ErrUnsupportedType)
 
 	h = encodeHeader(128, 8, 0, uint32(IntTypeUint8)<<headerTypeShift)
@@ -339,7 +344,7 @@ func TestFullPipeline_IntTypeValidation(t *testing.T) {
 	_, _, err = UnpackUint32(nil, make([]uint32, 128), buf)
 	assert.ErrorIs(t, err, ErrUnsupportedType)
 
-	_, err = GetUint32(0, buf)
+	_, err = GetUint32(0, buf, nil)
 	assert.ErrorIs(t, err, ErrUnsupportedType)
 }
 

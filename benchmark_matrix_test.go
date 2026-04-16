@@ -233,12 +233,13 @@ func BenchmarkMatrix(b *testing.B) {
 					b.Fatalf("pack failed: %v", err)
 				}
 				var sink uint32
+				scratch := make([]uint32, ScratchLen)
 				b.ReportAllocs()
 				b.SetBytes(4)
 				b.ResetTimer()
 				for i := 0; i < b.N; i++ {
 					for pos := range blockSize {
-						v, _ := GetUint32(pos, packed)
+						v, _ := GetUint32(pos, packed, scratch)
 						sink += v
 					}
 				}
@@ -360,12 +361,13 @@ func BenchmarkQuickCompare(b *testing.B) {
 					b.Fatalf("pack failed: %v", err)
 				}
 				var sink uint32
+				scratch := make([]uint32, ScratchLen)
 				b.ReportAllocs()
 				b.SetBytes(4)
 				b.ResetTimer()
 				for i := 0; i < b.N; i++ {
 					for pos := range blockSize {
-						v, _ := GetUint32(pos, packed)
+						v, _ := GetUint32(pos, packed, scratch)
 						sink += v
 					}
 				}
@@ -386,7 +388,7 @@ func BenchmarkQuickCompare(b *testing.B) {
 					packed, _ := PackUint32(flag, packDst[:0], nil, values)
 					UnpackUint32(unpackDst, scratch, packed)
 					for _, pos := range positions {
-						v, _ := GetUint32(pos, packed)
+						v, _ := GetUint32(pos, packed, scratch)
 						sink += v
 					}
 				}

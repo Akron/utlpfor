@@ -264,8 +264,9 @@ func BenchmarkCompare_Unpack_Mixed_BP128(b *testing.B) {
 func BenchmarkCompare_Get_Plain_UTL(b *testing.B) {
 	values := makeCompPlainValues()
 	packed, _ := PackUint32(0, nil, nil, values)
+	scratch := make([]uint32, ScratchLen)
 	for b.Loop() {
-		GetUint32(64, packed)
+		GetUint32(64, packed, scratch)
 	}
 }
 
@@ -281,8 +282,9 @@ func BenchmarkCompare_Get_Delta_UTL(b *testing.B) {
 	source := makeCompDeltaValues()
 	data := slices.Clone(source)
 	packed, _ := PackUint32(Delta, nil, nil, data)
+	scratch := make([]uint32, ScratchLen)
 	for b.Loop() {
-		GetUint32(64, packed)
+		GetUint32(64, packed, scratch)
 	}
 }
 
@@ -298,8 +300,9 @@ func BenchmarkCompare_Get_Delta_BP128(b *testing.B) {
 func BenchmarkCompare_Get_Exceptions_UTL(b *testing.B) {
 	values := makeCompExceptionValues()
 	packed, _ := PackUint32(0, nil, nil, values)
+	scratch := make([]uint32, ScratchLen)
 	for b.Loop() {
-		GetUint32(50, packed)
+		GetUint32(50, packed, scratch)
 	}
 }
 

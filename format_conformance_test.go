@@ -689,8 +689,9 @@ func TestGoldenVectors_RoundTrip(t *testing.T) {
 			assert.Equal(t, consumed, blockLen, "consumed must match BlockLength")
 			assert.Equal(t, len(packed), blockLen, "packed length must match BlockLength")
 
+			scratch := make([]uint32, ScratchLen)
 			for pos, want := range unpacked {
-				got, err := GetUint32(pos, packed)
+				got, err := GetUint32(pos, packed, scratch)
 				require.NoError(t, err)
 				assert.Equal(t, want, got, "GetUint32 mismatch at pos=%d", pos)
 			}

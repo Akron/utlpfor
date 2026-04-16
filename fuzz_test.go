@@ -89,8 +89,9 @@ func FuzzGetUint32MatchesUnpack(f *testing.F) {
 		unpacked, _, err := UnpackUint32(nil, make([]uint32, blockSize), packed)
 		require.NoError(t, err)
 
+		scratch := make([]uint32, ScratchLen)
 		for pos := range unpacked {
-			got, err := GetUint32(pos, packed)
+			got, err := GetUint32(pos, packed, scratch)
 			require.NoError(t, err)
 			require.Equal(t, unpacked[pos], got, "pos=%d", pos)
 		}

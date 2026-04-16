@@ -145,11 +145,12 @@ func TestDispatch_GetMatchesScalar(t *testing.T) {
 	packed, err := PackUint32(0, nil, nil, values)
 	require.NoError(t, err)
 
+	scratch := make([]uint32, ScratchLen)
 	for pos := range values {
-		scalarVal, err := getUint32Scalar(pos, packed)
+		scalarVal, err := getUint32Scalar(pos, packed, scratch)
 		require.NoError(t, err)
 
-		apiVal, err := GetUint32(pos, packed)
+		apiVal, err := GetUint32(pos, packed, scratch)
 		require.NoError(t, err)
 
 		assert.Equal(t, scalarVal, apiVal, "pos=%d", pos)

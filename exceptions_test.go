@@ -125,11 +125,12 @@ func TestGetUint32_WithExceptions(t *testing.T) {
 	values[42] = 0x100000
 	packed, _ := PackUint32(0, nil, nil, values)
 
-	got, err := GetUint32(10, packed)
+	scratch := make([]uint32, ScratchLen)
+	got, err := GetUint32(10, packed, scratch)
 	require.NoError(t, err)
 	assert.Equal(t, uint32(10), got)
 
-	got, err = GetUint32(42, packed)
+	got, err = GetUint32(42, packed, scratch)
 	require.NoError(t, err)
 	assert.Equal(t, uint32(0x100000), got)
 }
@@ -174,8 +175,9 @@ func TestGetUint32_WithExceptions_AllPositions(t *testing.T) {
 	values[100] = 0xFFFFFF
 	packed, _ := PackUint32(0, nil, nil, values)
 
+	scratch := make([]uint32, ScratchLen)
 	for pos := range 128 {
-		got, err := GetUint32(pos, packed)
+		got, err := GetUint32(pos, packed, scratch)
 		require.NoError(t, err, "pos=%d", pos)
 		assert.Equal(t, values[pos], got, "pos=%d", pos)
 	}
@@ -191,8 +193,9 @@ func TestGetUint32_WithBitmapExceptions(t *testing.T) {
 	}
 	packed, _ := PackUint32(0, nil, nil, values)
 
+	scratch := make([]uint32, ScratchLen)
 	for pos := range 128 {
-		got, err := GetUint32(pos, packed)
+		got, err := GetUint32(pos, packed, scratch)
 		require.NoError(t, err, "pos=%d", pos)
 		assert.Equal(t, values[pos], got, "pos=%d", pos)
 	}

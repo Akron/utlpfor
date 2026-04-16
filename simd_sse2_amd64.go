@@ -562,7 +562,3 @@ func forAddSSE2(output []uint32, count int, baseValue uint32) {
 	}
 }
 
-// getUint32SSE2 delegates to scalar for random access.
-func getUint32SSE2(pos int, buf []byte) (uint32, error) {
-	return getUint32Scalar(pos, buf)
-}

@@ -530,7 +530,3 @@ func forAddAVX512(output []uint32, count int, baseValue uint32) {
 	}
 }
 
-// getUint32AVX512 delegates to scalar for random access.
-func getUint32AVX512(pos int, buf []byte) (uint32, error) {
-	return getUint32Scalar(pos, buf)
-}

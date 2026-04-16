@@ -119,8 +119,9 @@ func TestGetUint32_SIMDMatchesScalar(t *testing.T) {
 	packed, err := PackUint32(0, nil, nil, values)
 	require.NoError(t, err)
 
+	scratch := make([]uint32, ScratchLen)
 	for pos := range blockSize {
-		got, err := GetUint32(pos, packed)
+		got, err := GetUint32(pos, packed, scratch)
 		require.NoError(t, err, "pos=%d", pos)
 		assert.Equal(t, values[pos], got, "pos=%d", pos)
 	}

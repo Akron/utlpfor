@@ -321,8 +321,9 @@ func TestGetUint32_WithFOR(t *testing.T) {
 	original := slices.Clone(values)
 	packed, err := PackUint32(0, nil, nil, values)
 	require.NoError(t, err)
+	scratch := make([]uint32, ScratchLen)
 	for pos := range original {
-		got, err := GetUint32(pos, packed)
+		got, err := GetUint32(pos, packed, scratch)
 		require.NoError(t, err)
 		assert.Equal(t, original[pos], got, "pos=%d", pos)
 	}
@@ -337,8 +338,9 @@ func TestGetUint32_WithFORAndDelta(t *testing.T) {
 	require.NoError(t, err)
 	unpacked, _, err := UnpackUint32(nil, make([]uint32, 128), packed)
 	require.NoError(t, err)
+	scratch := make([]uint32, ScratchLen)
 	for pos := range unpacked {
-		got, err := GetUint32(pos, packed)
+		got, err := GetUint32(pos, packed, scratch)
 		require.NoError(t, err)
 		assert.Equal(t, unpacked[pos], got, "pos=%d", pos)
 	}
@@ -353,8 +355,9 @@ func TestGetUint32_WithFORAndExceptions(t *testing.T) {
 	original := slices.Clone(values)
 	packed, err := PackUint32(0, nil, nil, values)
 	require.NoError(t, err)
+	scratch := make([]uint32, ScratchLen)
 	for pos := range original {
-		got, err := GetUint32(pos, packed)
+		got, err := GetUint32(pos, packed, scratch)
 		require.NoError(t, err)
 		assert.Equal(t, original[pos], got, "pos=%d", pos)
 	}
@@ -755,8 +758,9 @@ func TestNoFOR_GetMatchesUnpack(t *testing.T) {
 		unpacked, _, err := UnpackUint32(nil, make([]uint32, 128), packed)
 		require.NoError(t, err)
 
+		scratch := make([]uint32, ScratchLen)
 		for pos := range unpacked {
-			got, err := GetUint32(pos, packed)
+			got, err := GetUint32(pos, packed, scratch)
 			require.NoError(t, err)
 			assert.Equal(t, unpacked[pos], got, "flag=0x%02x pos=%d", flag, pos)
 		}

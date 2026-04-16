@@ -67,10 +67,11 @@ func BenchmarkGetUint32(b *testing.B) {
 			}
 			packed, _ := PackUint32(0, nil, nil, values)
 
+			scratch := make([]uint32, ScratchLen)
 			b.ReportAllocs()
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				GetUint32(i%blockSize, packed)
+				GetUint32(i%blockSize, packed, scratch)
 			}
 		})
 	}
@@ -422,10 +423,11 @@ func BenchmarkGetUint32WithExceptions(b *testing.B) {
 	values := genDataWithSmallExceptions()
 	packed, _ := PackUint32(0, nil, nil, values)
 
+	scratch := make([]uint32, ScratchLen)
 	b.ReportAllocs()
 
 	for i := 0; b.Loop(); i++ {
-		GetUint32(i%blockSize, packed)
+		GetUint32(i%blockSize, packed, scratch)
 	}
 }
 
@@ -434,10 +436,11 @@ func BenchmarkGetUint32Delta(b *testing.B) {
 	clone := slices.Clone(values)
 	packed, _ := PackUint32(Delta, nil, nil, clone)
 
+	scratch := make([]uint32, ScratchLen)
 	b.ReportAllocs()
 
 	for i := 0; b.Loop(); i++ {
-		GetUint32(i%blockSize, packed)
+		GetUint32(i%blockSize, packed, scratch)
 	}
 }
 
