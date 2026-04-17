@@ -1,5 +1,10 @@
 // Command benchfmt reads raw Go benchmark output files (one per SIMD level)
-// and prints a formatted comparison table with median ns/op values.
+// and prints a Markdown comparison table with median ns/op values.
+//
+// The output table has option columns (bit-width, excCount, for, delta,
+// zigzag, nofor+nopatch) and result columns (Scalar, SSE2, AVX2, AVX512).
+// Scalar-only operations (Header, BlockLength) show "=" in SIMD columns.
+// Different FOR widths are combined into a single "for: +/-" column.
 package main
 
 import (
@@ -13,8 +18,67 @@ import (
 	"strings"
 )
 
+// benchRe matches Go benchmark output lines from BenchmarkMatrix or BenchmarkQuickCompare.
 var benchRe = regexp.MustCompile(
-	`^BenchmarkMatrix/(.+?)(?:-\d+)?\s+\d+\s+(\d+(?:\.\d+)?)\s+ns/op`)
+	`^Benchmark(?:Matrix|QuickCompare)/(.+?)(?:-\d+)?\s+\d+\s+(\d+(?:\.\d+)?)\s+ns/op`)
+
+// nameRe parses the structured benchmark name format:
+// method_XXbit_XXexc_Xfor_+/-delta_+/-zz_+/-nfnp
+var nameRe = regexp.MustCompile(
+	`^(\w+)_(\d+)bit_(\d+)exc_(\d+)for_([+-])delta_([+-])zz_([+-])nfnp$`)
+
+// rowKey identifies a unique row in the output table.
+// FOR width is collapsed to a boolean (any non-zero width -> true).
+type rowKey struct {
+	method   string
+	bitWidth int
+	excCount int
+	hasFOR   bool
+	hasDelta bool
+	hasZZ    bool
+	hasNFNP  bool
+}
+
+func (k rowKey) sortTuple() string {
+	return fmt.Sprintf("%02d_%03d_%03d_%t_%t_%t_%t",
+		methodSortOrder(k.method), k.bitWidth, k.excCount,
+		k.hasFOR, k.hasDelta, k.hasZZ, k.hasNFNP)
+}
+
+func methodSortOrder(m string) int {
+	order := map[string]int{
+		"pac": 0, "unp": 1, "get": 2, "hdr": 3, "len": 4, "mix": 5,
+	}
+	if v, ok := order[m]; ok {
+		return v
+	}
+	return 99
+}
+
+var methodDisplayNames = map[string]string{
+	"pac": "PackUint32",
+	"unp": "UnpackUint32",
+	"get": "GetUint32",
+	"hdr": "Header",
+	"len": "BlockLength",
+	"mix": "Mixed",
+}
+
+func isScalarOnly(method string) bool {
+	return method == "hdr" || method == "len"
+}
+
+func boolFlag(b bool) string {
+	if b {
+		return "+"
+	}
+	return "-"
+}
+
+type rowData struct {
+	key  rowKey
+	vals [4][]float64
+}
 
 func main() {
 	if len(os.Args) < 5 {
@@ -24,14 +88,13 @@ func main() {
 		os.Exit(1)
 	}
 
-	labels := [4]string{"Scalar", "SSE2", "AVX2", "AVX512"}
-	allResults := map[string]*[4][]float64{}
+	allRows := map[string]*rowData{}
+	var sortKeys []string
 
 	for level, path := range os.Args[1:5] {
 		f, err := os.Open(path)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "warning: %s: %v (skipping)\n",
-				path, err)
+			fmt.Fprintf(os.Stderr, "warning: %s: %v (skipping)\n", path, err)
 			continue
 		}
 		scanner := bufio.NewScanner(f)
@@ -40,56 +103,153 @@ func main() {
 			if m == nil {
 				continue
 			}
-			name := m[1]
+			benchName := m[1]
 			ns, _ := strconv.ParseFloat(m[2], 64)
-			if _, ok := allResults[name]; !ok {
-				allResults[name] = &[4][]float64{}
+
+			nm := nameRe.FindStringSubmatch(benchName)
+			if nm == nil {
+				continue
 			}
-			allResults[name][level] = append(
-				allResults[name][level], ns)
+
+			method := nm[1]
+			bw, _ := strconv.Atoi(nm[2])
+			exc, _ := strconv.Atoi(nm[3])
+			fw, _ := strconv.Atoi(nm[4])
+
+			rk := rowKey{
+				method:   method,
+				bitWidth: bw,
+				excCount: exc,
+				hasFOR:   fw > 0,
+				hasDelta: nm[5] == "+",
+				hasZZ:    nm[6] == "+",
+				hasNFNP:  nm[7] == "+",
+			}
+
+			sk := rk.sortTuple()
+			if _, ok := allRows[sk]; !ok {
+				allRows[sk] = &rowData{key: rk}
+				sortKeys = append(sortKeys, sk)
+			}
+			allRows[sk].vals[level] = append(allRows[sk].vals[level], ns)
 		}
 		f.Close()
 	}
 
-	if len(allResults) == 0 {
+	if len(allRows) == 0 {
 		fmt.Fprintln(os.Stderr, "no benchmark results found")
 		os.Exit(1)
 	}
 
-	var names []string
-	for n := range allResults {
-		names = append(names, n)
-	}
-	sort.Strings(names)
+	sort.Strings(sortKeys)
 
-	nameWidth := 42
-	colWidth := 10
-	fmt.Printf("%-*s", nameWidth, "Benchmark")
-	for _, l := range labels {
-		fmt.Printf(" | %*s", colWidth, l)
+	const numCols = 12
+	headers := [numCols]string{
+		"Operation", "bit-width", "excCount", "for",
+		"delta", "zigzag", "nofor+nopatch",
+		"", // separator column
+		"Scalar", "SSE2", "AVX2", "AVX512",
 	}
-	fmt.Println(" |")
-	fmt.Print(strings.Repeat("-", nameWidth))
-	for range labels {
-		fmt.Print("-|-" + strings.Repeat("-", colWidth))
-	}
-	fmt.Println("-|")
 
-	for _, name := range names {
-		r := allResults[name]
-		fmt.Printf("%-*s", nameWidth, name)
-		for level := range 4 {
-			if len(r[level]) == 0 {
-				fmt.Printf(" | %*s", colWidth, "N/A")
-				continue
-			}
-			median := medianFloat64(r[level])
-			fmt.Printf(" | %*.0f ns", colWidth-3, median)
+	// Build formatted cell values and track max widths.
+	colWidths := [numCols]int{}
+	for i, h := range headers {
+		colWidths[i] = len(h)
+	}
+
+	type fmtRow [numCols]string
+	var rows []fmtRow
+
+	for _, sk := range sortKeys {
+		rd := allRows[sk]
+		k := rd.key
+		var fr fmtRow
+
+		name := methodDisplayNames[k.method]
+		if name == "" {
+			name = k.method
 		}
-		fmt.Println(" |")
+		fr[0] = name
+		fr[1] = strconv.Itoa(k.bitWidth)
+		fr[2] = strconv.Itoa(k.excCount)
+		fr[3] = boolFlag(k.hasFOR)
+		fr[4] = boolFlag(k.hasDelta)
+		fr[5] = boolFlag(k.hasZZ)
+		fr[6] = boolFlag(k.hasNFNP)
+		fr[7] = ""
+
+		scalarOnly := isScalarOnly(k.method)
+		for level := range 4 {
+			col := 8 + level
+			if scalarOnly && level > 0 {
+				fr[col] = "="
+			} else if len(rd.vals[level]) == 0 {
+				fr[col] = "N/A"
+			} else {
+				median := medianFloat64(rd.vals[level])
+				if median < 100 {
+					fr[col] = fmt.Sprintf("%.1f ns", median)
+				} else {
+					fr[col] = fmt.Sprintf("%.0f ns", median)
+				}
+			}
+		}
+
+		for i, c := range fr {
+			if len(c) > colWidths[i] {
+				colWidths[i] = len(c)
+			}
+		}
+		rows = append(rows, fr)
 	}
 
-	fmt.Printf("\n(%d benchmarks)\n", len(names))
+	if colWidths[7] < 1 {
+		colWidths[7] = 1
+	}
+
+	// Print header row.
+	printRow(headers[:], colWidths[:])
+
+	// Print separator row with alignment markers.
+	fmt.Print("|")
+	for i := range numCols {
+		w := colWidths[i]
+		if i >= 8 {
+			fmt.Printf(" %s:|", strings.Repeat("-", w))
+		} else {
+			fmt.Printf(" %s |", strings.Repeat("-", w))
+		}
+	}
+	fmt.Println()
+
+	// Print data rows.
+	for _, fr := range rows {
+		printRowAligned(fr[:], colWidths[:])
+	}
+
+	fmt.Fprintf(os.Stderr, "(%d rows)\n", len(rows))
+}
+
+// printRow prints a Markdown table row with left-aligned cells.
+func printRow(cells []string, widths []int) {
+	fmt.Print("|")
+	for i, c := range cells {
+		fmt.Printf(" %-*s |", widths[i], c)
+	}
+	fmt.Println()
+}
+
+// printRowAligned prints a Markdown table row with right-aligned result columns.
+func printRowAligned(cells []string, widths []int) {
+	fmt.Print("|")
+	for i, c := range cells {
+		if i >= 8 {
+			fmt.Printf(" %*s |", widths[i], c)
+		} else {
+			fmt.Printf(" %-*s |", widths[i], c)
+		}
+	}
+	fmt.Println()
 }
 
 func medianFloat64(vals []float64) float64 {

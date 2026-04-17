@@ -15,32 +15,32 @@ var benchSink uint32
 
 // matrixConfig defines one benchmark configuration in the matrix.
 type matrixConfig struct {
-	method   string // "pac", "unp", "get", "mix", "len"
-	bitWidth int    // 4, 16, 28
-	excCount int    // 0, 8, 16, 32
-	forWidth int    // 0, 1, 2, 4 (byte count: 0=none, 1=uint8, 2=uint16, 4=uint32)
-	useDelta bool
-	useZZ    bool
+	method       string // "pac", "unp", "get", "mix", "len", "hdr"
+	bitWidth     int    // 4, 16, 28
+	excCount     int    // 0, 8, 16, 32
+	forWidth     int    // 0, 1, 2, 4 (byte count: 0=none, 1=uint8, 2=uint16, 4=uint32)
+	useDelta     bool
+	useZZ        bool
+	noForNoPatch bool
 }
 
 // name returns the fixed-width benchmark name for this configuration.
+// All methods use the same format for consistent parsing by benchfmt.
 func (c matrixConfig) name() string {
-	deltaStr, zzStr := "-delta", "-zz"
+	deltaStr, zzStr, nfnpStr := "-delta", "-zz", "-nfnp"
 	if c.useDelta {
 		deltaStr = "+delta"
 	}
 	if c.useZZ {
 		zzStr = "+zz"
 	}
-	if c.method == "get" {
-		return fmt.Sprintf("%s_%02dbit_%02dexc_%s_%s",
-			c.method, c.bitWidth, c.excCount,
-			deltaStr, zzStr)
+	if c.noForNoPatch {
+		nfnpStr = "+nfnp"
 	}
 	forStr := fmt.Sprintf("%dfor", c.forWidth)
-	return fmt.Sprintf("%s_%02dbit_%02dexc_%s_%s_%s",
+	return fmt.Sprintf("%s_%02dbit_%02dexc_%s_%s_%s_%s",
 		c.method, c.bitWidth, c.excCount,
-		forStr, deltaStr, zzStr)
+		forStr, deltaStr, zzStr, nfnpStr)
 }
 
 // forBaseForWidth returns a FOR base value that produces the requested
@@ -125,6 +125,9 @@ func generateMatrixData(cfg matrixConfig) ([]uint32, Flag) {
 	if cfg.useDelta {
 		flag = Delta
 	}
+	if cfg.noForNoPatch {
+		flag |= NoFOR | NoPatch
+	}
 	return values, flag
 }
 
@@ -142,8 +145,22 @@ func lenMatrixConfigs() []matrixConfig {
 	}
 }
 
+// hdrMatrixConfigs returns a reduced set of benchmark configs for Header.
+// Header only reads the 4-byte header, so performance is independent of
+// most dimensions. A few representative flag combinations are included.
+func hdrMatrixConfigs() []matrixConfig {
+	return []matrixConfig{
+		{method: "hdr", bitWidth: 4, excCount: 0, forWidth: 0},
+		{method: "hdr", bitWidth: 16, excCount: 0, forWidth: 0},
+		{method: "hdr", bitWidth: 16, excCount: 8, forWidth: 0},
+		{method: "hdr", bitWidth: 16, excCount: 8, forWidth: 2},
+		{method: "hdr", bitWidth: 16, excCount: 0, forWidth: 0, useDelta: true},
+	}
+}
+
 // allMatrixConfigs generates all benchmark configurations.
-// pac/unp: full matrix (144 each). get: no FOR dimension (36). len: reduced set (4).
+// pac/unp: full matrix (144 each). pac nfnp: 9 configs. get: no FOR (36).
+// len: reduced set (4). hdr: reduced set (5).
 func allMatrixConfigs() []matrixConfig {
 	fullMethods := []string{"pac", "unp"}
 	bitWidths := []int{4, 16, 28}
@@ -176,6 +193,19 @@ func allMatrixConfigs() []matrixConfig {
 			}
 		}
 	}
+	// Pack configs with combined NoFOR|NoPatch
+	for _, bw := range bitWidths {
+		for _, dz := range deltaOpts {
+			configs = append(configs, matrixConfig{
+				method:       "pac",
+				bitWidth:     bw,
+				noForNoPatch: true,
+				useDelta:     dz.delta,
+				useZZ:        dz.zz,
+			})
+		}
+	}
+
 	for _, bw := range bitWidths {
 		for _, exc := range excCounts {
 			for _, dz := range deltaOpts {
@@ -191,6 +221,7 @@ func allMatrixConfigs() []matrixConfig {
 		}
 	}
 	configs = append(configs, lenMatrixConfigs()...)
+	configs = append(configs, hdrMatrixConfigs()...)
 	return configs
 }
 
@@ -257,6 +288,18 @@ func BenchmarkMatrix(b *testing.B) {
 				for i := 0; i < b.N; i++ {
 					BlockLength(packed)
 				}
+
+			case "hdr":
+				work := slices.Clone(original)
+				packed, err := PackUint32(flag, work, nil, nil)
+				if err != nil {
+					b.Fatalf("pack failed: %v", err)
+				}
+				b.ReportAllocs()
+				b.ResetTimer()
+				for i := 0; i < b.N; i++ {
+					Header(packed)
+				}
 			}
 		})
 	}
@@ -311,6 +354,14 @@ func quickCompareConfigs() []matrixConfig {
 		// Mixed pack+unpack+get on same block (pipeline realism)
 		{method: "mix", bitWidth: 16, excCount: 0, forWidth: 0, useDelta: false, useZZ: false},
 		{method: "mix", bitWidth: 4, excCount: 8, forWidth: 1, useDelta: true, useZZ: false},
+
+		// NoFOR+NoPatch pack
+		{method: "pac", bitWidth: 4, excCount: 0, forWidth: 0, noForNoPatch: true},
+		{method: "pac", bitWidth: 16, excCount: 0, forWidth: 0, useDelta: true, useZZ: true, noForNoPatch: true},
+
+		// Header (scalar-only)
+		{method: "hdr", bitWidth: 16, excCount: 0, forWidth: 0},
+		{method: "hdr", bitWidth: 16, excCount: 8, forWidth: 0},
 	}
 }
 
@@ -393,6 +444,18 @@ func BenchmarkQuickCompare(b *testing.B) {
 					}
 				}
 				benchSink = sink
+
+			case "hdr":
+				work := slices.Clone(original)
+				packed, err := PackUint32(flag, work, nil, nil)
+				if err != nil {
+					b.Fatalf("pack failed: %v", err)
+				}
+				b.ReportAllocs()
+				b.ResetTimer()
+				for i := 0; i < b.N; i++ {
+					Header(packed)
+				}
 			}
 		})
 	}
@@ -459,5 +522,63 @@ func TestMatrixDataGeneration(t *testing.T) {
 				}
 			}
 		}
+	}
+
+	// NoFOR+NoPatch configurations
+	for _, bw := range bitWidths {
+		for _, useDelta := range []bool{false, true} {
+			for _, useZZ := range []bool{false, true} {
+				if useZZ && !useDelta {
+					continue
+				}
+				cfg := matrixConfig{
+					method:       "pac",
+					bitWidth:     bw,
+					noForNoPatch: true,
+					useDelta:     useDelta,
+					useZZ:        useZZ,
+				}
+				t.Run(cfg.name(), func(t *testing.T) {
+					values, flag := generateMatrixData(cfg)
+					work := slices.Clone(values)
+					packed, err := PackUint32(flag, work, nil, nil)
+					require.NoError(t, err)
+					require.GreaterOrEqual(t, len(packed), headerBytes)
+
+					header := bo.Uint32(packed)
+					_, _, _, hExc, hFORWidth, _, hDelta, hZZ, _ := decodeHeader(header)
+
+					assert.Equal(t, 0, hFORWidth,
+						"NoFOR+NoPatch must produce no FOR")
+					assert.Equal(t, 0, hExc,
+						"NoFOR+NoPatch must produce no exceptions")
+					if useDelta {
+						assert.True(t, hDelta, "expected delta flag")
+					}
+					if useZZ {
+						assert.True(t, hZZ, "expected zigzag flag")
+					}
+				})
+			}
+		}
+	}
+
+	// Header configurations
+	for _, cfg := range hdrMatrixConfigs() {
+		t.Run(cfg.name(), func(t *testing.T) {
+			values, flag := generateMatrixData(cfg)
+			work := slices.Clone(values)
+			packed, err := PackUint32(flag, work, nil, nil)
+			require.NoError(t, err)
+			require.GreaterOrEqual(t, len(packed), headerBytes)
+
+			count, bitWidth, _, hasDelta, _, _, _, err := Header(packed)
+			require.NoError(t, err)
+			assert.Equal(t, blockSize, count)
+			assert.Greater(t, bitWidth, 0)
+			if cfg.useDelta {
+				assert.True(t, hasDelta, "expected delta flag")
+			}
+		})
 	}
 }
