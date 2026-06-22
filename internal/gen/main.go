@@ -119,11 +119,11 @@ func main() {
 // AVX2 helpers (Uint32x8, 2 halves per super-word).
 
 func ld8(ptrVar string, off int) string {
-	return fmt.Sprintf("archsimd.LoadUint32x8((*[8]uint32)(unsafe.Add(%s, %d)))", ptrVar, off)
+	return fmt.Sprintf("archsimd.LoadUint32x8Array((*[8]uint32)(unsafe.Add(%s, %d)))", ptrVar, off)
 }
 
 func st8(ptrVar string, off int) string {
-	return fmt.Sprintf(".Store((*[8]uint32)(unsafe.Add(%s, %d)))", ptrVar, off)
+	return fmt.Sprintf(".StoreArray((*[8]uint32)(unsafe.Add(%s, %d)))", ptrVar, off)
 }
 
 // generateUnpackAVX2 generates an unpack function that processes
@@ -328,11 +328,11 @@ func generatePackAVX2(b *strings.Builder, bw int) {
 // SSE2 helpers (Uint32x4, 4 groups of 4 lanes per super-word).
 
 func ld4(ptrVar string, off int) string {
-	return fmt.Sprintf("archsimd.LoadUint32x4((*[4]uint32)(unsafe.Add(%s, %d)))", ptrVar, off)
+	return fmt.Sprintf("archsimd.LoadUint32x4Array((*[4]uint32)(unsafe.Add(%s, %d)))", ptrVar, off)
 }
 
 func st4(ptrVar string, off int) string {
-	return fmt.Sprintf(".Store((*[4]uint32)(unsafe.Add(%s, %d)))", ptrVar, off)
+	return fmt.Sprintf(".StoreArray((*[4]uint32)(unsafe.Add(%s, %d)))", ptrVar, off)
 }
 
 // generateUnpackSSE2 generates an SSE2 unpack function that processes
@@ -503,11 +503,11 @@ func generatePackSSE2(b *strings.Builder, bw int) {
 // AVX-512 helpers (Uint32x16, 1 group per super-word).
 
 func ld16(ptrVar string, off int) string {
-	return fmt.Sprintf("archsimd.LoadUint32x16((*[16]uint32)(unsafe.Add(%s, %d)))", ptrVar, off)
+	return fmt.Sprintf("archsimd.LoadUint32x16Array((*[16]uint32)(unsafe.Add(%s, %d)))", ptrVar, off)
 }
 
 func st16(ptrVar string, off int) string {
-	return fmt.Sprintf(".Store((*[16]uint32)(unsafe.Add(%s, %d)))", ptrVar, off)
+	return fmt.Sprintf(".StoreArray((*[16]uint32)(unsafe.Add(%s, %d)))", ptrVar, off)
 }
 
 // generateUnpackAVX512 generates an AVX-512 unpack function that processes
@@ -687,7 +687,7 @@ func generateBuildExcCounts(b *strings.Builder, simdSuffix, vecType string, step
 
 	w("\ti := 0\n")
 	w("\tfor ; i+%d <= len(values); i += %d {\n", step, step)
-	w("\t\tv := archsimd.Load%sSlice(values[i:])\n", vecType)
+	w("\t\tv := archsimd.Load%s(values[i:])\n", vecType)
 	for i := range 8 {
 		w("\t\texc[%d] += bits.%s(v.Greater(t%d).ToBits())\n", i, popCountFn, i)
 	}

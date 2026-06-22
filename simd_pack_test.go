@@ -316,8 +316,8 @@ func BenchmarkRawLoadStoreSSE2(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		for j := 0; j < blockSize; j += 4 {
-			v := archsimd.LoadUint32x4Slice(src[j : j+4])
-			v.StoreSlice(dst[j : j+4])
+			v := archsimd.LoadUint32x4(src[j : j+4])
+			v.Store(dst[j : j+4])
 		}
 	}
 }
@@ -333,8 +333,8 @@ func BenchmarkRawLoadStoreAVX2(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		for j := 0; j < blockSize; j += 8 {
-			v := archsimd.LoadUint32x8Slice(src[j : j+8])
-			v.StoreSlice(dst[j : j+8])
+			v := archsimd.LoadUint32x8(src[j : j+8])
+			v.Store(dst[j : j+8])
 		}
 	}
 }
@@ -350,8 +350,8 @@ func BenchmarkRawLoadStoreAVX2_Ptr(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		for j := 0; j < blockSize; j += 8 {
-			v := archsimd.LoadUint32x8((*[8]uint32)(unsafe.Pointer(&src[j])))
-			v.Store((*[8]uint32)(unsafe.Pointer(&dst[j])))
+			v := archsimd.LoadUint32x8Array((*[8]uint32)(unsafe.Pointer(&src[j])))
+			v.StoreArray((*[8]uint32)(unsafe.Pointer(&dst[j])))
 		}
 	}
 }
@@ -368,9 +368,9 @@ func BenchmarkRawShiftAndSSE2(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		for j := 0; j < blockSize; j += 4 {
-			v := archsimd.LoadUint32x4Slice(src[j : j+4])
+			v := archsimd.LoadUint32x4(src[j : j+4])
 			r := v.ShiftAllRight(3).And(mask)
-			r.StoreSlice(dst[j : j+4])
+			r.Store(dst[j : j+4])
 		}
 	}
 }
@@ -387,9 +387,9 @@ func BenchmarkRawShiftAndAVX2(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		for j := 0; j < blockSize; j += 8 {
-			v := archsimd.LoadUint32x8Slice(src[j : j+8])
+			v := archsimd.LoadUint32x8(src[j : j+8])
 			r := v.ShiftAllRight(3).And(mask)
-			r.StoreSlice(dst[j : j+8])
+			r.Store(dst[j : j+8])
 		}
 	}
 }
@@ -406,9 +406,9 @@ func BenchmarkRawShiftAndAVX2_Ptr(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		for j := 0; j < blockSize; j += 8 {
-			v := archsimd.LoadUint32x8((*[8]uint32)(unsafe.Pointer(&src[j])))
+			v := archsimd.LoadUint32x8Array((*[8]uint32)(unsafe.Pointer(&src[j])))
 			r := v.ShiftAllRight(3).And(mask)
-			r.Store((*[8]uint32)(unsafe.Pointer(&dst[j])))
+			r.StoreArray((*[8]uint32)(unsafe.Pointer(&dst[j])))
 		}
 	}
 }
@@ -422,23 +422,23 @@ func unpackAVX2_constBW8(dst []uint32, payload []byte) {
 		shift := uint64(bitOffset % 32)
 		base := wordIdx * utlSuperWordBytes
 
-		lo := archsimd.LoadUint32x8((*[8]uint32)(unsafe.Pointer(&payload[base])))
-		hi := archsimd.LoadUint32x8((*[8]uint32)(unsafe.Pointer(&payload[base+32])))
+		lo := archsimd.LoadUint32x8Array((*[8]uint32)(unsafe.Pointer(&payload[base])))
+		hi := archsimd.LoadUint32x8Array((*[8]uint32)(unsafe.Pointer(&payload[base+32])))
 		rLo := lo.ShiftAllRight(shift).And(mask)
 		rHi := hi.ShiftAllRight(shift).And(mask)
 
 		if int(shift)+bw > 32 {
 			nextBase := (wordIdx + 1) * utlSuperWordBytes
-			nextLo := archsimd.LoadUint32x8((*[8]uint32)(unsafe.Pointer(&payload[nextBase])))
-			nextHi := archsimd.LoadUint32x8((*[8]uint32)(unsafe.Pointer(&payload[nextBase+32])))
+			nextLo := archsimd.LoadUint32x8Array((*[8]uint32)(unsafe.Pointer(&payload[nextBase])))
+			nextHi := archsimd.LoadUint32x8Array((*[8]uint32)(unsafe.Pointer(&payload[nextBase+32])))
 			leftShift := uint64(32) - shift
 			rLo = rLo.Or(nextLo.ShiftAllLeft(leftShift).And(mask))
 			rHi = rHi.Or(nextHi.ShiftAllLeft(leftShift).And(mask))
 		}
 
 		outBase := v * utlLaneCount
-		rLo.StoreSlice(dst[outBase : outBase+8])
-		rHi.StoreSlice(dst[outBase+8 : outBase+16])
+		rLo.Store(dst[outBase : outBase+8])
+		rHi.Store(dst[outBase+8 : outBase+16])
 		bitOffset += bw
 	}
 }

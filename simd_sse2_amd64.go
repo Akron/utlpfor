@@ -53,20 +53,20 @@ func unpackLanesUTLSSE2Generic(dst []uint32, payload []byte, count, bitWidth int
 
 		for group := range 4 {
 			off := base + group*16
-			vec := archsimd.LoadUint32x4(
+			vec := archsimd.LoadUint32x4Array(
 				(*[4]uint32)(unsafe.Pointer(&payload[off])))
 			result := vec.ShiftAllRight(shift).And(mask)
 
 			if int(shift)+bitWidth > 32 {
 				nextOff := (wordIdx+1)*utlSuperWordBytes + group*16
-				nextVec := archsimd.LoadUint32x4(
+				nextVec := archsimd.LoadUint32x4Array(
 					(*[4]uint32)(unsafe.Pointer(&payload[nextOff])))
 				result = result.Or(
 					nextVec.ShiftAllLeft(uint64(32) - shift).And(mask))
 			}
 
 			outBase := v*utlLaneCount + group*4
-			result.StoreSlice(dst[outBase : outBase+4])
+			result.Store(dst[outBase : outBase+4])
 		}
 		bitOffset += bitWidth
 	}
@@ -112,7 +112,7 @@ func packLanesUTLSSE2Generic(dst []byte, values []uint32, bitWidth int) {
 			for group := range 4 {
 				inBase := v*utlLaneCount + group*4
 				off := v*utlSuperWordBytes + group*16
-				archsimd.LoadUint32x4Slice(values[inBase : inBase+4]).Store(
+				archsimd.LoadUint32x4(values[inBase : inBase+4]).StoreArray(
 					(*[4]uint32)(unsafe.Pointer(&dst[off])))
 			}
 		}
@@ -131,17 +131,17 @@ func packLanesUTLSSE2Generic(dst []byte, values []uint32, bitWidth int) {
 
 		for group := range 4 {
 			inBase := v*utlLaneCount + group*4
-			val := archsimd.LoadUint32x4Slice(values[inBase : inBase+4]).And(mask)
+			val := archsimd.LoadUint32x4(values[inBase : inBase+4]).And(mask)
 
 			off := base + group*16
-			cur := archsimd.LoadUint32x4((*[4]uint32)(unsafe.Pointer(&dst[off])))
-			cur.Or(val.ShiftAllLeft(shift)).Store((*[4]uint32)(unsafe.Pointer(&dst[off])))
+			cur := archsimd.LoadUint32x4Array((*[4]uint32)(unsafe.Pointer(&dst[off])))
+			cur.Or(val.ShiftAllLeft(shift)).StoreArray((*[4]uint32)(unsafe.Pointer(&dst[off])))
 
 			if int(shift)+bitWidth > 32 {
 				rightShift := uint64(32) - shift
 				nextOff := (wordIdx+1)*utlSuperWordBytes + group*16
-				next := archsimd.LoadUint32x4((*[4]uint32)(unsafe.Pointer(&dst[nextOff])))
-				next.Or(val.ShiftAllRight(rightShift)).Store((*[4]uint32)(unsafe.Pointer(&dst[nextOff])))
+				next := archsimd.LoadUint32x4Array((*[4]uint32)(unsafe.Pointer(&dst[nextOff])))
+				next.Or(val.ShiftAllRight(rightShift)).StoreArray((*[4]uint32)(unsafe.Pointer(&dst[nextOff])))
 			}
 		}
 
@@ -153,11 +153,11 @@ func packLanesUTLSSE2Generic(dst []byte, values []uint32, bitWidth int) {
 // Formula: (n << 1) ^ (n >> 31) with arithmetic right shift.
 func zigzagEncodeSSE2(buf []uint32, n int) {
 	for i := 0; i <= n-4; i += 4 {
-		v := archsimd.LoadUint32x4Slice(buf[i : i+4])
+		v := archsimd.LoadUint32x4(buf[i : i+4])
 		shifted := v.ShiftAllLeft(1)
 		sign := v.AsInt32x4().ShiftAllRight(31).AsUint32x4()
 		result := shifted.Xor(sign)
-		result.StoreSlice(buf[i : i+4])
+		result.Store(buf[i : i+4])
 	}
 	for i := (n / 4) * 4; i < n; i++ {
 		buf[i] = zigzagEncode32(int32(buf[i]))
@@ -170,12 +170,12 @@ func zigzagDecodeSSE2(values []uint32) {
 	one := archsimd.BroadcastUint32x4(1)
 	zero := archsimd.BroadcastUint32x4(0)
 	for i := 0; i <= len(values)-4; i += 4 {
-		v := archsimd.LoadUint32x4Slice(values[i : i+4])
+		v := archsimd.LoadUint32x4(values[i : i+4])
 		half := v.ShiftAllRight(1)
 		signBit := v.And(one)
 		negSign := zero.Sub(signBit)
 		result := half.Xor(negSign)
-		result.StoreSlice(values[i : i+4])
+		result.Store(values[i : i+4])
 	}
 	for i := (len(values) / 4) * 4; i < len(values); i++ {
 		values[i] = uint32(zigzagDecode32(values[i]))
@@ -196,13 +196,13 @@ func deltaEncodePerLaneSSE2(values []uint32) bool {
 		// TODO-PERF: Maybe unroll
 		for group := range 4 {
 			off := group * 4
-			cur := archsimd.LoadUint32x4Slice(values[curBase+off : curBase+off+4])
-			prev := archsimd.LoadUint32x4Slice(values[prevBase+off : prevBase+off+4])
+			cur := archsimd.LoadUint32x4(values[curBase+off : curBase+off+4])
+			prev := archsimd.LoadUint32x4(values[prevBase+off : prevBase+off+4])
 			delta := cur.Sub(prev)
 
 			anyBorrow |= prev.Greater(cur).ToBits()
 
-			delta.StoreSlice(values[curBase+off : curBase+off+4])
+			delta.Store(values[curBase+off : curBase+off+4])
 		}
 	}
 
@@ -226,10 +226,10 @@ func deltaDecodePerLaneSSE2(values []uint32, useZigZag bool) {
 		// TODO-PERF: Maybe unroll
 		for group := range 4 {
 			off := group * 4
-			prev := archsimd.LoadUint32x4Slice(values[prevBase+off : prevBase+off+4])
-			cur := archsimd.LoadUint32x4Slice(values[curBase+off : curBase+off+4])
+			prev := archsimd.LoadUint32x4(values[prevBase+off : prevBase+off+4])
+			cur := archsimd.LoadUint32x4(values[curBase+off : curBase+off+4])
 			sum := prev.Add(cur)
-			sum.StoreSlice(values[curBase+off : curBase+off+4])
+			sum.Store(values[curBase+off : curBase+off+4])
 		}
 	}
 }
@@ -250,8 +250,8 @@ func deltaDecodePerLaneWithOverflowSSE2(values []uint32, useZigZag bool) int {
 
 		for group := range 4 {
 			off := group * 4
-			prev := archsimd.LoadUint32x4Slice(values[prevBase+off : prevBase+off+4])
-			cur := archsimd.LoadUint32x4Slice(values[curBase+off : curBase+off+4])
+			prev := archsimd.LoadUint32x4(values[prevBase+off : prevBase+off+4])
+			cur := archsimd.LoadUint32x4(values[curBase+off : curBase+off+4])
 			sum := prev.Add(cur)
 
 			overflow := sum.Less(prev)
@@ -260,7 +260,7 @@ func deltaDecodePerLaneWithOverflowSSE2(values []uint32, useZigZag bool) int {
 				overflowPos = curBase + off + lane
 			}
 
-			sum.StoreSlice(values[curBase+off : curBase+off+4])
+			sum.Store(values[curBase+off : curBase+off+4])
 		}
 	}
 
@@ -483,21 +483,21 @@ func findMinMaxSSE2(values []uint32) (uint32, uint32) {
 
 	// Seed both SIMD accumulators from the first 4-value chunk.
 	p := unsafe.Pointer(&values[0])
-	minVec := archsimd.LoadUint32x4((*[4]uint32)(p))
+	minVec := archsimd.LoadUint32x4Array((*[4]uint32)(p))
 	maxVec := minVec
 
 	// Scan full SSE2-width chunks and keep running lane-wise min/max.
 	end := uintptr(n) * 4
 	for off := uintptr(16); off+16 <= end; off += 16 {
-		chunk := archsimd.LoadUint32x4((*[4]uint32)(unsafe.Add(p, off)))
+		chunk := archsimd.LoadUint32x4Array((*[4]uint32)(unsafe.Add(p, off)))
 		minVec = minVec.Min(chunk)
 		maxVec = maxVec.Max(chunk)
 	}
 
 	// Collapse the vector accumulators into scalar candidates.
 	var minL, maxL [4]uint32
-	minVec.Store(&minL)
-	maxVec.Store(&maxL)
+	minVec.StoreArray(&minL)
+	maxVec.StoreArray(&maxL)
 	minResult := min(min(minL[0], minL[1]), min(minL[2], minL[3]))
 	maxResult := max(max(maxL[0], maxL[1]), max(maxL[2], maxL[3]))
 
@@ -520,10 +520,10 @@ func selectBitWidthNoPatchSSE2(values []uint32) int {
 	orVec := archsimd.BroadcastUint32x4(0)
 	i := 0
 	for ; i+4 <= len(values); i += 4 {
-		orVec = orVec.Or(archsimd.LoadUint32x4Slice(values[i:]))
+		orVec = orVec.Or(archsimd.LoadUint32x4(values[i:]))
 	}
 	var lanes [4]uint32
-	orVec.Store(&lanes)
+	orVec.StoreArray(&lanes)
 	var orAll uint32
 	for _, v := range lanes {
 		orAll |= v
@@ -540,9 +540,9 @@ func forSubtractSSE2(dst, src []uint32, baseValue uint32) {
 	baseVec := archsimd.BroadcastUint32x4(baseValue)
 	i := 0
 	for ; i+4 <= len(src); i += 4 {
-		v := archsimd.LoadUint32x4Slice(src[i:])
+		v := archsimd.LoadUint32x4(src[i:])
 		v = v.Sub(baseVec)
-		v.StoreSlice(dst[i:])
+		v.Store(dst[i:])
 	}
 	for ; i < len(src); i++ {
 		dst[i] = src[i] - baseValue
@@ -554,9 +554,9 @@ func forAddSSE2(output []uint32, count int, baseValue uint32) {
 	baseVec := archsimd.BroadcastUint32x4(baseValue)
 	i := 0
 	for ; i+4 <= count; i += 4 {
-		v := archsimd.LoadUint32x4Slice(output[i:])
+		v := archsimd.LoadUint32x4(output[i:])
 		v = v.Add(baseVec)
-		v.StoreSlice(output[i:])
+		v.Store(output[i:])
 	}
 	for ; i < count; i++ {
 		output[i] += baseValue

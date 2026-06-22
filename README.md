@@ -12,9 +12,11 @@ UTL-PFOR replaces the SSE2-only lane layout for bitpacking with the
 This single wire format works across SSE2, AVX2, and AVX-512 without
 data transposition.
 
-In addition to the `fastpfor` compression scheme, UTL-PFOR uses real *Frame-of-Reference* (the `for` in `pfor`) encoding, storing a minimum value per block and compressing only the residuals, if beneficial.
-Outliers, that would harm bitpacking are stored as exceptions, that are patched on decompression (the `p` in `pfor`).
-Exceptions are encoded using [StreamVByte](https://github.com/mhr3/streamvbyte) [3], a variable-byte encoding scheme optimized for SIMD (specifically SSE2).
+In addition to the `fastpfor` compression scheme, UTL-PFOR uses real *Frame-of-Reference* (the `for` in `pfor`) encoding,
+storing a minimum value per block and compressing only the residuals, if beneficial.
+Outliers, that would harm bitpacking, are stored as exceptions, that are patched on decompression (the `p` in `pfor`).
+Exceptions are encoded using [StreamVByte](https://github.com/mhr3/streamvbyte) [3],
+a variable-byte encoding scheme optimized for SIMD (specifically SSE2).
 *Delta-Encoding* allows to only store the difference between values.
 *Zigzag-Encoding* is used to encode negative values after Delta-Encoding.
 
@@ -25,12 +27,12 @@ Work in progress. The library is functional but not yet final.
 ## Requirements
 
 This library uses Go's native SIMD support (`simd/archsimd`) introduced
-in Go 1.26 (via `GOExPERIMENT=simd`).
+in Go 1.26 (via `GOEXPERIMENT=simd`).
 
 Runtime dispatch selects the best path at startup:
 AVX-512 > AVX2 > SSE2 > scalar fallback.
 
-- **Go 1.26+** with `GOExPERIMENT=simd` for SIMD acceleration
+- **Go 1.26+** with `GOEXPERIMENT=simd` for SIMD acceleration
 - Scalar fallback works without the experiment flag on any architecture
 - **Recommended**: Use `gotip` (Go 1.27-devel) for optimal AVx2/AVx-512
   performance until Go 1.27 is released. Go 1.26.x compilers have a

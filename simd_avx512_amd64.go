@@ -51,20 +51,20 @@ func unpackLanesUTLAVX512Generic(dst []uint32, payload []byte, count, bitWidth i
 		shift := uint64(bitOffset % 32)
 		base := wordIdx * utlSuperWordBytes
 
-		vec := archsimd.LoadUint32x16(
+		vec := archsimd.LoadUint32x16Array(
 			(*[16]uint32)(unsafe.Pointer(&payload[base])))
 		result := vec.ShiftAllRight(shift).And(mask)
 
 		if int(shift)+bitWidth > 32 {
 			nextBase := (wordIdx + 1) * utlSuperWordBytes
-			nextVec := archsimd.LoadUint32x16(
+			nextVec := archsimd.LoadUint32x16Array(
 				(*[16]uint32)(unsafe.Pointer(&payload[nextBase])))
 			result = result.Or(
 				nextVec.ShiftAllLeft(uint64(32) - shift).And(mask))
 		}
 
 		outBase := v * utlLaneCount
-		result.StoreSlice(dst[outBase : outBase+16])
+		result.Store(dst[outBase : outBase+16])
 		bitOffset += bitWidth
 	}
 }
@@ -108,7 +108,7 @@ func packLanesUTLAVX512Generic(dst []byte, values []uint32, bitWidth int) {
 		for v := range utlValuesPerLane {
 			inBase := v * utlLaneCount
 			base := v * utlSuperWordBytes
-			archsimd.LoadUint32x16Slice(values[inBase : inBase+16]).Store(
+			archsimd.LoadUint32x16(values[inBase : inBase+16]).StoreArray(
 				(*[16]uint32)(unsafe.Pointer(&dst[base])))
 		}
 		return
@@ -121,20 +121,20 @@ func packLanesUTLAVX512Generic(dst []byte, values []uint32, bitWidth int) {
 	bitOffset := 0
 	for v := range utlValuesPerLane {
 		inBase := v * utlLaneCount
-		val := archsimd.LoadUint32x16Slice(values[inBase : inBase+16]).And(mask)
+		val := archsimd.LoadUint32x16(values[inBase : inBase+16]).And(mask)
 
 		wordIdx := bitOffset / 32
 		shift := uint64(bitOffset % 32)
 		base := wordIdx * utlSuperWordBytes
 
-		cur := archsimd.LoadUint32x16((*[16]uint32)(unsafe.Pointer(&dst[base])))
-		cur.Or(val.ShiftAllLeft(shift)).Store((*[16]uint32)(unsafe.Pointer(&dst[base])))
+		cur := archsimd.LoadUint32x16Array((*[16]uint32)(unsafe.Pointer(&dst[base])))
+		cur.Or(val.ShiftAllLeft(shift)).StoreArray((*[16]uint32)(unsafe.Pointer(&dst[base])))
 
 		if int(shift)+bitWidth > 32 {
 			rightShift := uint64(32) - shift
 			nextBase := (wordIdx + 1) * utlSuperWordBytes
-			next := archsimd.LoadUint32x16((*[16]uint32)(unsafe.Pointer(&dst[nextBase])))
-			next.Or(val.ShiftAllRight(rightShift)).Store((*[16]uint32)(unsafe.Pointer(&dst[nextBase])))
+			next := archsimd.LoadUint32x16Array((*[16]uint32)(unsafe.Pointer(&dst[nextBase])))
+			next.Or(val.ShiftAllRight(rightShift)).StoreArray((*[16]uint32)(unsafe.Pointer(&dst[nextBase])))
 		}
 
 		bitOffset += bitWidth
@@ -352,12 +352,12 @@ func selectBitWidthWithFORAVX512(values []uint32) (useFOR bool, baseValue uint32
 		t5 := archsimd.BroadcastUint32x16(0xFFFFF)
 		t6 := archsimd.BroadcastUint32x16(0xFFFFFF)
 		t7 := archsimd.BroadcastUint32x16(0xFFFFFFF)
-		minVec := archsimd.LoadUint32x16((*[16]uint32)(p))
+		minVec := archsimd.LoadUint32x16Array((*[16]uint32)(p))
 		maxVec := minVec
 
 		end := uintptr(n) * 4
 		for off := uintptr(0); off+64 <= end; off += 64 {
-			v := archsimd.LoadUint32x16((*[16]uint32)(unsafe.Add(p, off)))
+			v := archsimd.LoadUint32x16Array((*[16]uint32)(unsafe.Add(p, off)))
 			minVec = minVec.Min(v)
 			maxVec = maxVec.Max(v)
 			exc[0] += bits.OnesCount16(v.Greater(t0).ToBits())
@@ -375,8 +375,8 @@ func selectBitWidthWithFORAVX512(values []uint32) (useFOR bool, baseValue uint32
 		minR4 := minR8.GetLo().Min(minR8.GetHi())
 		maxR4 := maxR8.GetLo().Max(maxR8.GetHi())
 		var minL, maxL [4]uint32
-		minR4.Store(&minL)
-		maxR4.Store(&maxL)
+		minR4.StoreArray(&minL)
+		maxR4.StoreArray(&maxL)
 		minVal = min(min(minL[0], minL[1]), min(minL[2], minL[3]))
 		maxVal = max(max(maxL[0], maxL[1]), max(maxL[2], maxL[3]))
 		tail := (n / 16) * 16
@@ -433,10 +433,10 @@ func selectBitWidthNoPatchAVX512(values []uint32) int {
 	orVec := archsimd.BroadcastUint32x16(0)
 	i := 0
 	for ; i+16 <= len(values); i += 16 {
-		orVec = orVec.Or(archsimd.LoadUint32x16Slice(values[i:]))
+		orVec = orVec.Or(archsimd.LoadUint32x16(values[i:]))
 	}
 	var lanes [16]uint32
-	orVec.Store(&lanes)
+	orVec.StoreArray(&lanes)
 	var orAll uint32
 	for _, v := range lanes {
 		orAll |= v
@@ -461,15 +461,15 @@ func findMinMaxAVX512(values []uint32) (uint32, uint32) {
 
 	// Prime two independent 16-lane accumulators from the first 32 values.
 	p := unsafe.Pointer(&values[0])
-	min0 := archsimd.LoadUint32x16((*[16]uint32)(p))
-	min1 := archsimd.LoadUint32x16((*[16]uint32)(unsafe.Add(p, 64)))
+	min0 := archsimd.LoadUint32x16Array((*[16]uint32)(p))
+	min1 := archsimd.LoadUint32x16Array((*[16]uint32)(unsafe.Add(p, 64)))
 	max0, max1 := min0, min1
 
 	// Process two 64-byte vectors per iteration to maximize throughput.
 	end := uintptr(n) * 4
 	for off := uintptr(128); off+128 <= end; off += 128 {
-		c0 := archsimd.LoadUint32x16((*[16]uint32)(unsafe.Add(p, off)))
-		c1 := archsimd.LoadUint32x16((*[16]uint32)(unsafe.Pointer(uintptr(p) + off + 64)))
+		c0 := archsimd.LoadUint32x16Array((*[16]uint32)(unsafe.Add(p, off)))
+		c1 := archsimd.LoadUint32x16Array((*[16]uint32)(unsafe.Pointer(uintptr(p) + off + 64)))
 		min0 = min0.Min(c0)
 		max0 = max0.Max(c0)
 		min1 = min1.Min(c1)
@@ -484,8 +484,8 @@ func findMinMaxAVX512(values []uint32) (uint32, uint32) {
 	minR4 := minR8.GetLo().Min(minR8.GetHi())
 	maxR4 := maxR8.GetLo().Max(maxR8.GetHi())
 	var minL, maxL [4]uint32
-	minR4.Store(&minL)
-	maxR4.Store(&maxL)
+	minR4.StoreArray(&minL)
+	maxR4.StoreArray(&maxL)
 	minResult := min(min(minL[0], minL[1]), min(minL[2], minL[3]))
 	maxResult := max(max(maxL[0], maxL[1]), max(maxL[2], maxL[3]))
 
@@ -508,9 +508,9 @@ func forSubtractAVX512(dst, src []uint32, baseValue uint32) {
 	baseVec := archsimd.BroadcastUint32x16(baseValue)
 	i := 0
 	for ; i+16 <= len(src); i += 16 {
-		v := archsimd.LoadUint32x16Slice(src[i:])
+		v := archsimd.LoadUint32x16(src[i:])
 		v = v.Sub(baseVec)
-		v.StoreSlice(dst[i:])
+		v.Store(dst[i:])
 	}
 	for ; i < len(src); i++ {
 		dst[i] = src[i] - baseValue
@@ -522,9 +522,9 @@ func forAddAVX512(output []uint32, count int, baseValue uint32) {
 	baseVec := archsimd.BroadcastUint32x16(baseValue)
 	i := 0
 	for ; i+16 <= count; i += 16 {
-		v := archsimd.LoadUint32x16Slice(output[i:])
+		v := archsimd.LoadUint32x16(output[i:])
 		v = v.Add(baseVec)
-		v.StoreSlice(output[i:])
+		v.Store(output[i:])
 	}
 	for ; i < count; i++ {
 		output[i] += baseValue

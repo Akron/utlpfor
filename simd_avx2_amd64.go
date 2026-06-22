@@ -51,9 +51,9 @@ func unpackLanesUTLAVX2Generic(dst []uint32, payload []byte, count, bitWidth int
 		shift := uint64(bitOffset % 32)
 		base := wordIdx * utlSuperWordBytes
 
-		lo := archsimd.LoadUint32x8(
+		lo := archsimd.LoadUint32x8Array(
 			(*[8]uint32)(unsafe.Pointer(&payload[base])))
-		hi := archsimd.LoadUint32x8(
+		hi := archsimd.LoadUint32x8Array(
 			(*[8]uint32)(unsafe.Pointer(&payload[base+32])))
 
 		rLo := lo.ShiftAllRight(shift).And(mask)
@@ -61,9 +61,9 @@ func unpackLanesUTLAVX2Generic(dst []uint32, payload []byte, count, bitWidth int
 
 		if int(shift)+bitWidth > 32 {
 			nextBase := (wordIdx + 1) * utlSuperWordBytes
-			nextLo := archsimd.LoadUint32x8(
+			nextLo := archsimd.LoadUint32x8Array(
 				(*[8]uint32)(unsafe.Pointer(&payload[nextBase])))
-			nextHi := archsimd.LoadUint32x8(
+			nextHi := archsimd.LoadUint32x8Array(
 				(*[8]uint32)(unsafe.Pointer(&payload[nextBase+32])))
 			leftShift := uint64(32) - shift
 			rLo = rLo.Or(nextLo.ShiftAllLeft(leftShift).And(mask))
@@ -71,8 +71,8 @@ func unpackLanesUTLAVX2Generic(dst []uint32, payload []byte, count, bitWidth int
 		}
 
 		outBase := v * utlLaneCount
-		rLo.StoreSlice(dst[outBase : outBase+8])
-		rHi.StoreSlice(dst[outBase+8 : outBase+16])
+		rLo.Store(dst[outBase : outBase+8])
+		rHi.Store(dst[outBase+8 : outBase+16])
 
 		bitOffset += bitWidth
 	}
@@ -117,9 +117,9 @@ func packLanesUTLAVX2Generic(dst []byte, values []uint32, bitWidth int) {
 		for v := range utlValuesPerLane {
 			inBase := v * utlLaneCount
 			base := v * utlSuperWordBytes
-			archsimd.LoadUint32x8Slice(values[inBase : inBase+8]).Store(
+			archsimd.LoadUint32x8(values[inBase : inBase+8]).StoreArray(
 				(*[8]uint32)(unsafe.Pointer(&dst[base])))
-			archsimd.LoadUint32x8Slice(values[inBase+8 : inBase+16]).Store(
+			archsimd.LoadUint32x8(values[inBase+8 : inBase+16]).StoreArray(
 				(*[8]uint32)(unsafe.Pointer(&dst[base+32])))
 		}
 		return
@@ -130,25 +130,25 @@ func packLanesUTLAVX2Generic(dst []byte, values []uint32, bitWidth int) {
 	bitOffset := 0
 	for v := range utlValuesPerLane {
 		inBase := v * utlLaneCount
-		vLo := archsimd.LoadUint32x8Slice(values[inBase : inBase+8]).And(mask)
-		vHi := archsimd.LoadUint32x8Slice(values[inBase+8 : inBase+16]).And(mask)
+		vLo := archsimd.LoadUint32x8(values[inBase : inBase+8]).And(mask)
+		vHi := archsimd.LoadUint32x8(values[inBase+8 : inBase+16]).And(mask)
 
 		wordIdx := bitOffset / 32
 		shift := uint64(bitOffset % 32)
 		base := wordIdx * utlSuperWordBytes
 
-		curLo := archsimd.LoadUint32x8((*[8]uint32)(unsafe.Pointer(&dst[base])))
-		curHi := archsimd.LoadUint32x8((*[8]uint32)(unsafe.Pointer(&dst[base+32])))
-		curLo.Or(vLo.ShiftAllLeft(shift)).Store((*[8]uint32)(unsafe.Pointer(&dst[base])))
-		curHi.Or(vHi.ShiftAllLeft(shift)).Store((*[8]uint32)(unsafe.Pointer(&dst[base+32])))
+		curLo := archsimd.LoadUint32x8Array((*[8]uint32)(unsafe.Pointer(&dst[base])))
+		curHi := archsimd.LoadUint32x8Array((*[8]uint32)(unsafe.Pointer(&dst[base+32])))
+		curLo.Or(vLo.ShiftAllLeft(shift)).StoreArray((*[8]uint32)(unsafe.Pointer(&dst[base])))
+		curHi.Or(vHi.ShiftAllLeft(shift)).StoreArray((*[8]uint32)(unsafe.Pointer(&dst[base+32])))
 
 		if int(shift)+bitWidth > 32 {
 			rightShift := uint64(32) - shift
 			nextBase := (wordIdx + 1) * utlSuperWordBytes
-			nextLo := archsimd.LoadUint32x8((*[8]uint32)(unsafe.Pointer(&dst[nextBase])))
-			nextHi := archsimd.LoadUint32x8((*[8]uint32)(unsafe.Pointer(&dst[nextBase+32])))
-			nextLo.Or(vLo.ShiftAllRight(rightShift)).Store((*[8]uint32)(unsafe.Pointer(&dst[nextBase])))
-			nextHi.Or(vHi.ShiftAllRight(rightShift)).Store((*[8]uint32)(unsafe.Pointer(&dst[nextBase+32])))
+			nextLo := archsimd.LoadUint32x8Array((*[8]uint32)(unsafe.Pointer(&dst[nextBase])))
+			nextHi := archsimd.LoadUint32x8Array((*[8]uint32)(unsafe.Pointer(&dst[nextBase+32])))
+			nextLo.Or(vLo.ShiftAllRight(rightShift)).StoreArray((*[8]uint32)(unsafe.Pointer(&dst[nextBase])))
+			nextHi.Or(vHi.ShiftAllRight(rightShift)).StoreArray((*[8]uint32)(unsafe.Pointer(&dst[nextBase+32])))
 		}
 
 		bitOffset += bitWidth
@@ -161,11 +161,11 @@ func zigzagEncodeAVX2(buf []uint32, n int) {
 
 	// TODO-PERF: Unroll?
 	for i := 0; i <= n-8; i += 8 {
-		v := archsimd.LoadUint32x8Slice(buf[i : i+8])
+		v := archsimd.LoadUint32x8(buf[i : i+8])
 		shifted := v.ShiftAllLeft(1)
 		sign := v.AsInt32x8().ShiftAllRight(31).AsUint32x8()
 		result := shifted.Xor(sign)
-		result.StoreSlice(buf[i : i+8])
+		result.Store(buf[i : i+8])
 	}
 	// TODO-PERF: Use SSE for the tail initially
 	for i := (n / 8) * 8; i < n; i++ {
@@ -180,12 +180,12 @@ func zigzagDecodeAVX2(values []uint32) {
 	zero := archsimd.BroadcastUint32x8(0)
 	// TODO-PERF: Unroll?
 	for i := 0; i <= len(values)-8; i += 8 {
-		v := archsimd.LoadUint32x8Slice(values[i : i+8])
+		v := archsimd.LoadUint32x8(values[i : i+8])
 		half := v.ShiftAllRight(1)
 		signBit := v.And(one)
 		negSign := zero.Sub(signBit)
 		result := half.Xor(negSign)
-		result.StoreSlice(values[i : i+8])
+		result.Store(values[i : i+8])
 	}
 	// TODO-PERF: Use SSE for the tail initially
 	for i := (len(values) / 8) * 8; i < len(values); i++ {
@@ -206,19 +206,19 @@ func deltaEncodePerLaneAVX2(values []uint32) bool {
 		curBase := v * utlLaneCount
 		prevBase := (v - 1) * utlLaneCount
 
-		cur0 := archsimd.LoadUint32x8Slice(values[curBase : curBase+8])
-		prev0 := archsimd.LoadUint32x8Slice(values[prevBase : prevBase+8])
+		cur0 := archsimd.LoadUint32x8(values[curBase : curBase+8])
+		prev0 := archsimd.LoadUint32x8(values[prevBase : prevBase+8])
 		delta0 := cur0.Sub(prev0)
 
-		cur1 := archsimd.LoadUint32x8Slice(values[curBase+8 : curBase+16])
-		prev1 := archsimd.LoadUint32x8Slice(values[prevBase+8 : prevBase+16])
+		cur1 := archsimd.LoadUint32x8(values[curBase+8 : curBase+16])
+		prev1 := archsimd.LoadUint32x8(values[prevBase+8 : prevBase+16])
 		delta1 := cur1.Sub(prev1)
 
 		anyBorrow |= prev0.Greater(cur0).ToBits()
 		anyBorrow |= prev1.Greater(cur1).ToBits()
 
-		delta0.StoreSlice(values[curBase : curBase+8])
-		delta1.StoreSlice(values[curBase+8 : curBase+16])
+		delta0.Store(values[curBase : curBase+8])
+		delta1.Store(values[curBase+8 : curBase+16])
 	}
 
 	needZigZag := anyBorrow != 0
@@ -239,15 +239,15 @@ func deltaDecodePerLaneAVX2(values []uint32, useZigZag bool) {
 		curBase := v * utlLaneCount
 		prevBase := (v - 1) * utlLaneCount
 
-		prev0 := archsimd.LoadUint32x8Slice(values[prevBase : prevBase+8])
-		cur0 := archsimd.LoadUint32x8Slice(values[curBase : curBase+8])
+		prev0 := archsimd.LoadUint32x8(values[prevBase : prevBase+8])
+		cur0 := archsimd.LoadUint32x8(values[curBase : curBase+8])
 		sum0 := prev0.Add(cur0)
-		sum0.StoreSlice(values[curBase : curBase+8])
+		sum0.Store(values[curBase : curBase+8])
 
-		prev1 := archsimd.LoadUint32x8Slice(values[prevBase+8 : prevBase+16])
-		cur1 := archsimd.LoadUint32x8Slice(values[curBase+8 : curBase+16])
+		prev1 := archsimd.LoadUint32x8(values[prevBase+8 : prevBase+16])
+		cur1 := archsimd.LoadUint32x8(values[curBase+8 : curBase+16])
 		sum1 := prev1.Add(cur1)
-		sum1.StoreSlice(values[curBase+8 : curBase+16])
+		sum1.Store(values[curBase+8 : curBase+16])
 	}
 }
 
@@ -266,8 +266,8 @@ func deltaDecodePerLaneWithOverflowAVX2(values []uint32, useZigZag bool) int {
 		curBase := v * utlLaneCount
 		prevBase := (v - 1) * utlLaneCount
 
-		prev0 := archsimd.LoadUint32x8Slice(values[prevBase : prevBase+8])
-		cur0 := archsimd.LoadUint32x8Slice(values[curBase : curBase+8])
+		prev0 := archsimd.LoadUint32x8(values[prevBase : prevBase+8])
+		cur0 := archsimd.LoadUint32x8(values[curBase : curBase+8])
 		sum0 := prev0.Add(cur0)
 
 		overflow0 := sum0.Less(prev0)
@@ -276,10 +276,10 @@ func deltaDecodePerLaneWithOverflowAVX2(values []uint32, useZigZag bool) int {
 			overflowPos = curBase + lane
 		}
 
-		sum0.StoreSlice(values[curBase : curBase+8])
+		sum0.Store(values[curBase : curBase+8])
 
-		prev1 := archsimd.LoadUint32x8Slice(values[prevBase+8 : prevBase+16])
-		cur1 := archsimd.LoadUint32x8Slice(values[curBase+8 : curBase+16])
+		prev1 := archsimd.LoadUint32x8(values[prevBase+8 : prevBase+16])
+		cur1 := archsimd.LoadUint32x8(values[curBase+8 : curBase+16])
 		sum1 := prev1.Add(cur1)
 
 		overflow1 := sum1.Less(prev1)
@@ -288,7 +288,7 @@ func deltaDecodePerLaneWithOverflowAVX2(values []uint32, useZigZag bool) int {
 			overflowPos = curBase + 8 + lane
 		}
 
-		sum1.StoreSlice(values[curBase+8 : curBase+16])
+		sum1.Store(values[curBase+8 : curBase+16])
 	}
 
 	return overflowPos
@@ -526,15 +526,15 @@ func findMinMaxAVX2(values []uint32) (uint32, uint32) {
 
 	// Prime two independent 8-lane accumulators from the first 16 values.
 	p := unsafe.Pointer(&values[0])
-	min0 := archsimd.LoadUint32x8((*[8]uint32)(p))
-	min1 := archsimd.LoadUint32x8((*[8]uint32)(unsafe.Add(p, 32)))
+	min0 := archsimd.LoadUint32x8Array((*[8]uint32)(p))
+	min1 := archsimd.LoadUint32x8Array((*[8]uint32)(unsafe.Add(p, 32)))
 	max0, max1 := min0, min1
 
 	// Process two vectors per iteration to keep both accumulator chains busy.
 	end := uintptr(n) * 4
 	for off := uintptr(64); off+64 <= end; off += 64 {
-		c0 := archsimd.LoadUint32x8((*[8]uint32)(unsafe.Add(p, off)))
-		c1 := archsimd.LoadUint32x8((*[8]uint32)(unsafe.Pointer(uintptr(p) + off + 32)))
+		c0 := archsimd.LoadUint32x8Array((*[8]uint32)(unsafe.Add(p, off)))
+		c1 := archsimd.LoadUint32x8Array((*[8]uint32)(unsafe.Pointer(uintptr(p) + off + 32)))
 		min0 = min0.Min(c0)
 		max0 = max0.Max(c0)
 		min1 = min1.Min(c1)
@@ -548,8 +548,8 @@ func findMinMaxAVX2(values []uint32) (uint32, uint32) {
 	minR4 := minVec.GetLo().Min(minVec.GetHi())
 	maxR4 := maxVec.GetLo().Max(maxVec.GetHi())
 	var minL, maxL [4]uint32
-	minR4.Store(&minL)
-	maxR4.Store(&maxL)
+	minR4.StoreArray(&minL)
+	maxR4.StoreArray(&maxL)
 	minResult := min(min(minL[0], minL[1]), min(minL[2], minL[3]))
 	maxResult := max(max(maxL[0], maxL[1]), max(maxL[2], maxL[3]))
 
@@ -573,10 +573,10 @@ func selectBitWidthNoPatchAVX2(values []uint32) int {
 	orVec := archsimd.BroadcastUint32x8(0)
 	i := 0
 	for ; i+8 <= len(values); i += 8 {
-		orVec = orVec.Or(archsimd.LoadUint32x8Slice(values[i:]))
+		orVec = orVec.Or(archsimd.LoadUint32x8(values[i:]))
 	}
 	var lanes [8]uint32
-	orVec.Store(&lanes)
+	orVec.StoreArray(&lanes)
 	var orAll uint32
 	for _, v := range lanes {
 		orAll |= v
@@ -594,7 +594,7 @@ func forSubtractAVX2(dst, src []uint32, baseValue uint32) {
 	i := 0
 	// TODO-PERF: Unroll?
 	for ; i+8 <= len(src); i += 8 {
-		archsimd.LoadUint32x8Slice(src[i:]).Sub(baseVec).StoreSlice(dst[i:])
+		archsimd.LoadUint32x8(src[i:]).Sub(baseVec).Store(dst[i:])
 	}
 	for ; i < len(src); i++ {
 		dst[i] = src[i] - baseValue
@@ -607,7 +607,7 @@ func forAddAVX2(output []uint32, count int, baseValue uint32) {
 	i := 0
 	// TODO-PERF: Unroll?
 	for ; i+8 <= count; i += 8 {
-		archsimd.LoadUint32x8Slice(output[i:]).Add(baseVec).StoreSlice(output[i:])
+		archsimd.LoadUint32x8(output[i:]).Add(baseVec).Store(output[i:])
 	}
 	for ; i < count; i++ {
 		output[i] += baseValue
