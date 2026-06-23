@@ -150,6 +150,33 @@ func FuzzDeltaWithExceptions(f *testing.F) {
 	})
 }
 
+func FuzzMaxBlockSizeInvariant(f *testing.F) {
+	f.Add(encodeValuesSeed(make([]uint32, 128)), byte(0))
+	f.Add(encodeValuesSeed([]uint32{0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF}), byte(0))
+	f.Add(encodeValuesSeed(make([]uint32, 128)), byte(NoPatch))
+	f.Add(encodeValuesSeed(make([]uint32, 128)), byte(NoPatch|NoFOR))
+	f.Add(encodeValuesSeed(make([]uint32, 128)), byte(NoFOR))
+
+	f.Fuzz(func(t *testing.T, data []byte, rawFlag byte) {
+		values := decodeValuesSeed(data)
+		if len(values) == 0 || len(values) > blockSize {
+			return
+		}
+
+		flag := Flag(rawFlag) & (Delta | NoFOR | NoPatch | Special | Append)
+		flag &^= Append
+
+		packed, err := PackUint32(flag, slices.Clone(values), nil, nil)
+		if err != nil {
+			return
+		}
+
+		maxSize := MaxBlockSize(flag)
+		assert.LessOrEqual(t, len(packed), maxSize,
+			"packed %d bytes exceeds MaxBlockSize(%d)=%d", len(packed), flag, maxSize)
+	})
+}
+
 func FuzzCompressionRatio(f *testing.F) {
 	f.Add(encodeValuesSeed(make([]uint32, 128)))
 	f.Add(encodeValuesSeed([]uint32{1, 2, 3, 4, 5, 6, 7, 8}))

@@ -281,3 +281,51 @@ func unpackUint32Scalar(dst []uint32, scratch []uint32, buf []byte) ([]uint32, i
 
 	return dst, consumed, nil
 }
+
+// MaxBlockSize returns the maximum byte size of a single packed block
+// for the given encoding flags. This is useful for pre-allocating
+// destination buffers to avoid allocations during PackUint32.
+//
+// The returned value is a conservative upper bound. Actual block
+// sizes are typically much smaller.
+//
+// Flags that affect the worst-case size:
+//   - NoPatch: disables exceptions, reducing the maximum size.
+//   - NoFOR: disables frame-of-reference, removing the FOR base bytes.
+//
+// Flags that do NOT affect the worst-case size (ignored):
+//   - Delta, Special, Append.
+//
+// Examples:
+//
+//	MaxBlockSize(0)              // 1018 (general case, exceptions possible)
+//	MaxBlockSize(NoPatch)        // 520  (no exceptions)
+//	MaxBlockSize(NoPatch|NoFOR)  // 516  (no exceptions, no FOR base)
+//	MaxBlockSize(NoFOR)          // 1014 (exceptions possible, no FOR base)
+//
+// Usage for buffer pre-allocation:
+//
+//	dst := make([]byte, 0, utlpfor.MaxBlockSize(0))
+//	dst, _ = utlpfor.PackUint32(utlpfor.Append, block, dst, scratch)
+func MaxBlockSize(flag Flag) int {
+	if flag&NoPatch != 0 {
+		maxPayload := utlPayloadBytes(32)
+		maxForBase := forBaseBytes(forWidthU32)
+		if flag&NoFOR != 0 {
+			maxForBase = 0
+		}
+		return headerBytes + maxForBase + maxPayload
+	}
+	// General case: exceptions possible.
+	// Worst case is bitWidth=28 (max step where exceptions still occur),
+	// all 128 values as exceptions, bitmap mode for exception index.
+	maxPayload := utlPayloadBytes(28)
+	maxForBase := forBaseBytes(forWidthU32)
+	if flag&NoFOR != 0 {
+		maxForBase = 0
+	}
+	maxExcIdx := excBitmapThreshold
+	maxSvbData := maxSVBEncodedLen(blockSize)
+	return headerBytes + svbLenBytes + maxForBase +
+		maxPayload + maxExcIdx + maxSvbData
+}
