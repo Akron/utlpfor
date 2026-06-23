@@ -301,6 +301,12 @@ func packUint32AVX2(flag Flag, dst []byte, scratch []uint32, values []uint32) ([
 		return nil, ErrInvalidBuffer
 	}
 
+	off := 0
+	if flag&Append != 0 {
+		off = len(dst)
+	}
+	flag &^= Append
+
 	headerFlags := headerTypeUint32Flag
 	headerFlags |= uint32(flag&Special) << 14
 
@@ -348,14 +354,19 @@ func packUint32AVX2(flag Flag, dst []byte, scratch []uint32, values []uint32) ([
 	if !hasExceptions {
 		pOff := payloadOffset(forBaseBytes, false)
 		totalLen := pOff + payloadBytes
-		dst = ensureLen(dst, totalLen)
-		bo.PutUint32(dst, encodeHeader(len(values), bitWidth, 0, headerFlags))
-		if useFOR {
-			writeFORBase(dst, baseValue, forW, false)
+		if off > 0 {
+			dst = ensureAppend(dst, off, totalLen)
+		} else {
+			dst = ensureLen(dst, totalLen)
 		}
-		packLanesUTLAVX2(dst[pOff:pOff+payloadBytes], packInput, bitWidth)
+		block := dst[off:]
+		bo.PutUint32(block, encodeHeader(len(values), bitWidth, 0, headerFlags))
+		if useFOR {
+			writeFORBase(block, baseValue, forW, false)
+		}
+		packLanesUTLAVX2(block[pOff:pOff+payloadBytes], packInput, bitWidth)
 		archsimd.ClearAVXUpperBits()
-		return dst[:totalLen], nil
+		return dst[:off+totalLen], nil
 	}
 
 	excIdxSize := excIndexSize(excCount)
@@ -363,25 +374,30 @@ func packUint32AVX2(flag Flag, dst []byte, scratch []uint32, values []uint32) ([
 	pOff := payloadOffset(forBaseBytes, true)
 	maxTotalLen := pOff + payloadBytes + excIdxSize + maxSvbLen
 
-	dst = ensureLen(dst, maxTotalLen)
-	bo.PutUint32(dst, encodeHeader(len(values), bitWidth, excCount, headerFlags))
+	if off > 0 {
+		dst = ensureAppend(dst, off, maxTotalLen)
+	} else {
+		dst = ensureLen(dst, maxTotalLen)
+	}
+	block := dst[off:]
+	bo.PutUint32(block, encodeHeader(len(values), bitWidth, excCount, headerFlags))
 	if useFOR {
-		writeFORBase(dst, baseValue, forW, true)
+		writeFORBase(block, baseValue, forW, true)
 	}
 
-	packLanesUTLAVX2(dst[pOff:pOff+payloadBytes], packInput, bitWidth)
+	packLanesUTLAVX2(block[pOff:pOff+payloadBytes], packInput, bitWidth)
 	archsimd.ClearAVXUpperBits()
 
 	highBits := scratch[:blockSize]
 
 	excOff := pOff + payloadBytes
-	collectAndWriteExceptions(values, bitWidth, dst[excOff:], excCount, highBits)
+	collectAndWriteExceptions(values, bitWidth, block[excOff:], excCount, highBits)
 
 	svbOffset := excOff + excIdxSize
-	svbLen := encodeSVBIntoDst(dst[svbOffset:maxTotalLen], highBits[:excCount])
+	svbLen := encodeSVBIntoDst(block[svbOffset:maxTotalLen], highBits[:excCount])
 
-	bo.PutUint16(dst[headerBytes:], uint16(svbLen))
-	return dst[:svbOffset+svbLen], nil
+	bo.PutUint16(block[headerBytes:], uint16(svbLen))
+	return dst[:off+svbOffset+svbLen], nil
 }
 
 // unpackUint32AVX2 is the AVX2 unpacking pipeline.

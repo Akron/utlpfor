@@ -50,6 +50,17 @@ const NoPatch Flag = 1 << 2
 // The current decoder does not interpret this bit yet.
 const Special Flag = 1 << 3
 
+// Append makes PackUint32 append the packed block after the existing
+// content of dst (starting at len(dst)) instead of overwriting from
+// index 0. The returned slice includes the preserved prefix.
+// This is a pack-time control flag only, never stored on disk.
+//
+//	dst = dst[:0]
+//	dst, _ = PackUint32(Delta|Append, block1, dst, scratch)
+//	dst, _ = PackUint32(Delta|Append, block2, dst, scratch)
+//	// dst now contains both blocks concatenated
+const Append Flag = 1 << 4
+
 // ErrInvalidBuffer is returned when the input buffer is nil, empty, or truncated.
 var ErrInvalidBuffer = errors.New("UTLpfor: invalid buffer")
 

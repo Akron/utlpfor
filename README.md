@@ -58,8 +58,12 @@ func Header(src []byte) (count, bitWidth, excCount int, hasDelta, hasFOR, hasZig
 | `NoFOR` | Skip Frame-of-Reference analysis |
 | `NoPatch` | Skip exception analysis (no patching) |
 | `Special` | Set the SPECIAL header bit |
+| `Append` | Append packed block after existing dst content |
 
 Flags can be combined with bitwise OR, e.g. `Delta | NoFOR`.
+
+The `Append` flag is a pack-time control flag only and is never stored in
+the on-disk block header.
 
 ## Quick Start
 
