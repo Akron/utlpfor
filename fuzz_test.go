@@ -150,7 +150,7 @@ func FuzzDeltaWithExceptions(f *testing.F) {
 	})
 }
 
-func FuzzMaxBlockSizeInvariant(f *testing.F) {
+func FuzzMaxBlockLength32Invariant(f *testing.F) {
 	f.Add(encodeValuesSeed(make([]uint32, 128)), byte(0))
 	f.Add(encodeValuesSeed([]uint32{0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF}), byte(0))
 	f.Add(encodeValuesSeed(make([]uint32, 128)), byte(NoPatch))
@@ -171,9 +171,9 @@ func FuzzMaxBlockSizeInvariant(f *testing.F) {
 			return
 		}
 
-		maxSize := MaxBlockSize(flag)
+		maxSize := MaxBlockLength32(flag)
 		assert.LessOrEqual(t, len(packed), maxSize,
-			"packed %d bytes exceeds MaxBlockSize(%d)=%d", len(packed), flag, maxSize)
+			"packed %d bytes exceeds MaxBlockLength32(%d)=%d", len(packed), flag, maxSize)
 	})
 }
 

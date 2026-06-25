@@ -47,7 +47,7 @@ func PackUint32(flag PackFlag, values []uint32, dst []byte, scratch []uint32) ([
 func UnpackUint32(src []byte, values []uint32, scratch []uint32) ([]uint32, int, error)
 func GetUint32(pos int, src []byte, scratch []uint32) (uint32, error)
 func BlockLength(src []byte) (int, error)
-func MaxBlockSize(flag Flag) int
+func MaxBlockLength32(flag Flag) int
 func Header(src []byte) (count, bitWidth, excCount int, hasDelta, hasFOR, hasZigZag, hasSpecial bool, err error)
 ```
 

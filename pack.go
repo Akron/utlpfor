@@ -37,9 +37,9 @@ func ensureAppend(dst []byte, off, n int) []byte {
 // The values slice may be modified in-place (FOR subtraction, delta encoding).
 // Callers that need the original values must copy them before calling PackUint32.
 //
-// To pre-allocate dst for zero-allocation packing, use MaxBlockSize:
+// To pre-allocate dst for zero-allocation packing, use MaxBlockLength32:
 //
-//	dst := make([]byte, 0, MaxBlockSize(flag))
+//	dst := make([]byte, 0, MaxBlockLength32(flag))
 //	dst, err = PackUint32(flag|Append, values, dst, scratch)
 func PackUint32(flag Flag, values []uint32, dst []byte, scratch []uint32) ([]byte, error) {
 	if len(scratch) < blockSize {

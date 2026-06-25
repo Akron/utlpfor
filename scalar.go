@@ -282,32 +282,32 @@ func unpackUint32Scalar(dst []uint32, scratch []uint32, buf []byte) ([]uint32, i
 	return dst, consumed, nil
 }
 
-// MaxBlockSize returns the maximum byte size of a single packed block
-// for the given encoding flags. This is useful for pre-allocating
-// destination buffers to avoid allocations during PackUint32.
+// MaxBlockLength32 returns the maximum byte length of a single packed
+// uint32 block for the given encoding flags. This is useful for
+// pre-allocating destination buffers to avoid allocations during PackUint32.
 //
 // The returned value is a conservative upper bound. Actual block
-// sizes are typically much smaller.
+// lengths are typically much smaller.
 //
-// Flags that affect the worst-case size:
-//   - NoPatch: disables exceptions, reducing the maximum size.
+// Flags that affect the worst-case length:
+//   - NoPatch: disables exceptions, reducing the maximum length.
 //   - NoFOR: disables frame-of-reference, removing the FOR base bytes.
 //
-// Flags that do NOT affect the worst-case size (ignored):
+// Flags that do NOT affect the worst-case length (ignored):
 //   - Delta, Special, Append.
 //
 // Examples:
 //
-//	MaxBlockSize(0)              // 1018 (general case, exceptions possible)
-//	MaxBlockSize(NoPatch)        // 520  (no exceptions)
-//	MaxBlockSize(NoPatch|NoFOR)  // 516  (no exceptions, no FOR base)
-//	MaxBlockSize(NoFOR)          // 1014 (exceptions possible, no FOR base)
+//	MaxBlockLength32(0)              // 1018 (general case, exceptions possible)
+//	MaxBlockLength32(NoPatch)        // 520  (no exceptions)
+//	MaxBlockLength32(NoPatch|NoFOR)  // 516  (no exceptions, no FOR base)
+//	MaxBlockLength32(NoFOR)          // 1014 (exceptions possible, no FOR base)
 //
 // Usage for buffer pre-allocation:
 //
-//	dst := make([]byte, 0, utlpfor.MaxBlockSize(0))
+//	dst := make([]byte, 0, utlpfor.MaxBlockLength32(0))
 //	dst, _ = utlpfor.PackUint32(utlpfor.Append, block, dst, scratch)
-func MaxBlockSize(flag Flag) int {
+func MaxBlockLength32(flag Flag) int {
 	if flag&NoPatch != 0 {
 		maxPayload := utlPayloadBytes(32)
 		maxForBase := forBaseBytes(forWidthU32)

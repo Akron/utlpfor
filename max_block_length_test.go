@@ -9,42 +9,42 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestMaxBlockSize_GeneralCase(t *testing.T) {
+func TestMaxBlockLength32_GeneralCase(t *testing.T) {
 	// Worst case: bitWidth=28, FOR=uint32 (4 bytes), excCount=128 (all exceptions), bitmap mode
 	// header(4) + svbLen(2) + forBase(4) + payload(28*16=448) + excIdx(16) + svbData(544)
 	expected := headerBytes + svbLenBytes + forBaseBytes(forWidthU32) +
 		utlPayloadBytes(28) + excBitmapThreshold + maxSVBEncodedLen(blockSize)
 	assert.Equal(t, 1018, expected, "sanity check formula")
-	assert.Equal(t, expected, MaxBlockSize(0))
+	assert.Equal(t, expected, MaxBlockLength32(0))
 }
 
-func TestMaxBlockSize_NoPatch(t *testing.T) {
+func TestMaxBlockLength32_NoPatch(t *testing.T) {
 	// No exceptions: bitWidth=32, FOR=uint32 (4 bytes)
 	// header(4) + forBase(4) + payload(32*16=512)
 	expected := headerBytes + forBaseBytes(forWidthU32) + utlPayloadBytes(32)
 	assert.Equal(t, 520, expected, "sanity check formula")
-	assert.Equal(t, expected, MaxBlockSize(NoPatch))
+	assert.Equal(t, expected, MaxBlockLength32(NoPatch))
 }
 
-func TestMaxBlockSize_NoPatchNoFOR(t *testing.T) {
+func TestMaxBlockLength32_NoPatchNoFOR(t *testing.T) {
 	// No exceptions, no FOR: bitWidth=32
 	// header(4) + payload(32*16=512)
 	expected := headerBytes + utlPayloadBytes(32)
 	assert.Equal(t, 516, expected, "sanity check formula")
-	assert.Equal(t, expected, MaxBlockSize(NoPatch|NoFOR))
+	assert.Equal(t, expected, MaxBlockLength32(NoPatch|NoFOR))
 }
 
-func TestMaxBlockSize_NoFOR(t *testing.T) {
+func TestMaxBlockLength32_NoFOR(t *testing.T) {
 	// Exceptions possible, no FOR base: bitWidth=28
 	// header(4) + svbLen(2) + payload(28*16=448) + excIdx(16) + svbData(544)
 	expected := headerBytes + svbLenBytes + utlPayloadBytes(28) +
 		excBitmapThreshold + maxSVBEncodedLen(blockSize)
 	assert.Equal(t, 1014, expected, "sanity check formula")
-	assert.Equal(t, expected, MaxBlockSize(NoFOR))
+	assert.Equal(t, expected, MaxBlockLength32(NoFOR))
 }
 
-func TestMaxBlockSize_ActualPackedNeverExceeds_Default(t *testing.T) {
-	maxSize := MaxBlockSize(0)
+func TestMaxBlockLength32_ActualPackedNeverExceeds_Default(t *testing.T) {
+	maxSize := MaxBlockLength32(0)
 	rng := rand.New(rand.NewSource(42))
 	scratch := make([]uint32, blockSize)
 
@@ -76,12 +76,12 @@ func TestMaxBlockSize_ActualPackedNeverExceeds_Default(t *testing.T) {
 		packed, err := PackUint32(0, slices.Clone(values), nil, scratch)
 		require.NoError(t, err, "trial %d", trial)
 		assert.LessOrEqual(t, len(packed), maxSize,
-			"trial %d: packed %d bytes > MaxBlockSize %d", trial, len(packed), maxSize)
+			"trial %d: packed %d bytes > MaxBlockLength32 %d", trial, len(packed), maxSize)
 	}
 }
 
-func TestMaxBlockSize_ActualPackedNeverExceeds_NoPatch(t *testing.T) {
-	maxSize := MaxBlockSize(NoPatch)
+func TestMaxBlockLength32_ActualPackedNeverExceeds_NoPatch(t *testing.T) {
+	maxSize := MaxBlockLength32(NoPatch)
 	rng := rand.New(rand.NewSource(99))
 	scratch := make([]uint32, blockSize)
 
@@ -93,12 +93,12 @@ func TestMaxBlockSize_ActualPackedNeverExceeds_NoPatch(t *testing.T) {
 		packed, err := PackUint32(NoPatch, slices.Clone(values), nil, scratch)
 		require.NoError(t, err, "trial %d", trial)
 		assert.LessOrEqual(t, len(packed), maxSize,
-			"trial %d: packed %d bytes > MaxBlockSize(NoPatch) %d", trial, len(packed), maxSize)
+			"trial %d: packed %d bytes > MaxBlockLength32(NoPatch) %d", trial, len(packed), maxSize)
 	}
 }
 
-func TestMaxBlockSize_ActualPackedNeverExceeds_NoPatchNoFOR(t *testing.T) {
-	maxSize := MaxBlockSize(NoPatch | NoFOR)
+func TestMaxBlockLength32_ActualPackedNeverExceeds_NoPatchNoFOR(t *testing.T) {
+	maxSize := MaxBlockLength32(NoPatch | NoFOR)
 	rng := rand.New(rand.NewSource(77))
 	scratch := make([]uint32, blockSize)
 
@@ -110,17 +110,17 @@ func TestMaxBlockSize_ActualPackedNeverExceeds_NoPatchNoFOR(t *testing.T) {
 		packed, err := PackUint32(NoPatch|NoFOR, slices.Clone(values), nil, scratch)
 		require.NoError(t, err, "trial %d", trial)
 		assert.LessOrEqual(t, len(packed), maxSize,
-			"trial %d: packed %d bytes > MaxBlockSize(NoPatch|NoFOR) %d", trial, len(packed), maxSize)
+			"trial %d: packed %d bytes > MaxBlockLength32(NoPatch|NoFOR) %d", trial, len(packed), maxSize)
 	}
 }
 
-func TestMaxBlockSize_IgnoresNonSizeFlags(t *testing.T) {
-	base := MaxBlockSize(0)
-	assert.Equal(t, base, MaxBlockSize(Delta))
-	assert.Equal(t, base, MaxBlockSize(Special))
-	assert.Equal(t, base, MaxBlockSize(Append))
+func TestMaxBlockLength32_IgnoresNonSizeFlags(t *testing.T) {
+	base := MaxBlockLength32(0)
+	assert.Equal(t, base, MaxBlockLength32(Delta))
+	assert.Equal(t, base, MaxBlockLength32(Special))
+	assert.Equal(t, base, MaxBlockLength32(Append))
 }
 
-func TestMaxBlockSize_CombinedFlagsIgnoreNonSize(t *testing.T) {
-	assert.Equal(t, MaxBlockSize(NoPatch|NoFOR), MaxBlockSize(Delta|NoPatch|NoFOR))
+func TestMaxBlockLength32_CombinedFlagsIgnoreNonSize(t *testing.T) {
+	assert.Equal(t, MaxBlockLength32(NoPatch|NoFOR), MaxBlockLength32(Delta|NoPatch|NoFOR))
 }
