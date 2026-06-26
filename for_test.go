@@ -24,7 +24,7 @@ func TestHeaderFORWidth_Encode(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			flags := headerTypeUint32Flag | uint32(tt.forWidth<<forWidthShift)
 			header := encodeHeader(128, 8, 0, flags)
-			_, _, _, _, gotWidth, _, _, _, _ := decodeHeader(header)
+			_, _, _, _, gotWidth, _, _, _, _, _ := decodeHeader(header)
 			assert.Equal(t, tt.forWidth, gotWidth)
 		})
 	}
@@ -32,7 +32,7 @@ func TestHeaderFORWidth_Encode(t *testing.T) {
 
 func TestHeaderFORWidth_NoFOR(t *testing.T) {
 	header := encodeHeader(128, 8, 0, headerTypeUint32Flag)
-	_, _, _, _, forWidth, _, _, _, _ := decodeHeader(header)
+	_, _, _, _, forWidth, _, _, _, _, _ := decodeHeader(header)
 	assert.Equal(t, forWidthNone, forWidth)
 }
 
@@ -54,7 +54,7 @@ func TestPayloadOffset_FORWidths(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := payloadOffset(tt.forBaseBytes, tt.hasExceptions)
+			got := payloadOffset(tt.forBaseBytes, tt.hasExceptions, false)
 			assert.Equal(t, tt.want, got)
 		})
 	}
@@ -494,7 +494,7 @@ func TestFORBaseRoundTrip(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			buf := make([]byte, 16)
 			writeFORBase(buf, tt.base, tt.forWidth, tt.hasExceptions)
-			forBaseOffset := payloadOffset(0, tt.hasExceptions)
+			forBaseOffset := payloadOffset(0, tt.hasExceptions, false)
 			got := readFORBase(buf, forBaseOffset, tt.forWidth)
 			assert.Equal(t, tt.base, got)
 		})

@@ -6,7 +6,7 @@ import "encoding/binary"
 var bo = binary.LittleEndian
 
 const (
-	blockSize         = 128
+	blockSize         = 128 // That's the value count - not to be confused with BlockLength32!
 	utlLaneCount      = 16
 	utlValuesPerLane  = 8
 	utlSuperWordBytes = 64
@@ -30,6 +30,7 @@ const (
 
 	headerTypeUint16Flag = uint32(IntTypeUint16) << headerTypeShift
 	headerTypeUint32Flag = uint32(IntTypeUint32) << headerTypeShift
+	headerTypeUint64Flag = uint32(IntTypeUint64) << headerTypeShift
 
 	// Bits 15-16: 2-bit FOR width field.
 	forWidthShift = 15
@@ -71,13 +72,16 @@ const (
 	// svbLenBytes is the byte size of the StreamVByte length field.
 	svbLenBytes = 2
 
+	// block2LenBytes is the byte size of the Block 2 length field
+	// stored in Block 1's metadata when combine-with-next is set for uint64 packing).
+	block2LenBytes = 2
+
 	// headerReservedMask covers bit 18 and bits 19-20 (reserved + extension bits).
 	// In the current implementation, all these must be zero.
 	// Bit 17 (SPECIAL) and bit 21 (E1 all-exception) are intentionally excluded.
 	// Both are currently ignored by the decoder.
 	headerReservedMask = headerReservedBitsMask | headerCombineFlag | headerBlock256Flag
 )
-
 
 // utlPayloadBytes returns the UTL payload size in bytes for any bitwidth.
 // Formula: ceil(bitWidth / 4) * 64. For step bitwidths (multiples of 4),
@@ -104,8 +108,10 @@ func encodeHeader(count, bitWidth, excCount int, flags uint32) uint32 {
 // decodeHeader extracts fields from a 32-bit header word.
 // The 5-bit bitwidth field is decoded as: bitWidth = encodedValue * 4.
 // forWidth is the 2-bit FOR width field (bits 15-16): 0=none, 1=u8, 2=u16, 3=u32.
+// hasCombine is the raw combine-with-next flag (bit 19); callers must also
+// check intType == IntTypeUint64 to determine if a Block 2 actually follows.
 func decodeHeader(header uint32) (count, bitWidth, intType, excCount, forWidth int,
-	hasExceptions, hasDelta, hasZigZag, hasSpecial bool) {
+	hasExceptions, hasDelta, hasZigZag, hasSpecial, hasCombine bool) {
 	count = int(header & headerCountMask)
 	encodedBW := int((header >> headerWidthShift) & headerWidthMask)
 	bitWidth = encodedBW * 4
@@ -116,6 +122,7 @@ func decodeHeader(header uint32) (count, bitWidth, intType, excCount, forWidth i
 	hasDelta = header&headerDeltaFlag != 0
 	hasZigZag = header&headerZigZagFlag != 0
 	hasSpecial = header&headerSpecialFlag != 0
+	hasCombine = header&headerCombineFlag != 0
 	return
 }
 
@@ -130,7 +137,9 @@ func Header(src []byte) (count, bitWidth, excCount int,
 	header := bo.Uint32(src)
 	var intType, forWidth int
 	var hasExceptions bool
-	count, bitWidth, intType, excCount, forWidth, hasExceptions, hasDelta, hasZigZag, hasSpecial = decodeHeader(header)
+	var hasCombineRaw bool
+	count, bitWidth, intType, excCount, forWidth, hasExceptions, hasDelta, hasZigZag, hasSpecial, hasCombineRaw = decodeHeader(header)
+	_ = hasCombineRaw
 	_ = hasExceptions
 	if err = validateIntType(intType); err != nil {
 		return 0, 0, 0, false, false, false, false, err
@@ -140,18 +149,23 @@ func Header(src []byte) (count, bitWidth, excCount int,
 }
 
 // payloadOffset returns the byte offset where the UTL payload begins.
-// forBaseBytes is the number of bytes for the FOR base value (0, 1, 2, or 4).
-func payloadOffset(forBaseBytes int, hasExceptions bool) int {
+// forBaseBytes is the number of bytes for the FOR base value (0, 1, 2, 4, or 8).
+// hasCombine indicates the presence of a block2Len field (uint64 double-block mode).
+func payloadOffset(forBaseBytesVal int, hasExceptions, hasCombine bool) int {
 	offset := headerBytes
 	if hasExceptions {
 		offset += svbLenBytes
 	}
-	offset += forBaseBytes
+	offset += forBaseBytesVal
+	if hasCombine {
+		offset += block2LenBytes
+	}
 	return offset
 }
 
-// validateIntType checks that the integer type in the header is supported.
-// IntTypeUint32 and IntTypeUint16 are accepted; others return ErrUnsupportedType.
+// validateIntType checks that the integer type in the header is supported
+// for uint32 API functions. IntTypeUint32 and IntTypeUint16 are accepted;
+// others (including IntTypeUint64) return ErrUnsupportedType.
 func validateIntType(intType int) error {
 	switch intType {
 	case IntTypeUint32, IntTypeUint16:
@@ -159,4 +173,36 @@ func validateIntType(intType int) error {
 	default:
 		return ErrUnsupportedType
 	}
+}
+
+// validateIntType64 checks that the integer type in the header is supported
+// for uint64 API functions. IntTypeUint64 is accepted; others return
+// ErrUnsupportedType.
+func validateIntType64(intType int) error {
+	if intType == IntTypeUint64 {
+		return nil
+	}
+	return ErrUnsupportedType
+}
+
+// readBlock2Len reads the block2Len field from Block 1's metadata area.
+// The field is located after the header, svbLen (if exceptions), and FOR base.
+func readBlock2Len(buf []byte, forBaseBytesVal int, hasExceptions bool) uint16 {
+	offset := headerBytes
+	if hasExceptions {
+		offset += svbLenBytes
+	}
+	offset += forBaseBytesVal
+	return bo.Uint16(buf[offset:])
+}
+
+// writeBlock2Len writes the block2Len field into Block 1's metadata area.
+// The field is located after the header, svbLen (if exceptions), and FOR base.
+func writeBlock2Len(buf []byte, forBaseBytesVal int, hasExceptions bool, block2Len uint16) {
+	offset := headerBytes
+	if hasExceptions {
+		offset += svbLenBytes
+	}
+	offset += forBaseBytesVal
+	bo.PutUint16(buf[offset:], block2Len)
 }

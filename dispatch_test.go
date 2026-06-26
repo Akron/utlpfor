@@ -77,7 +77,7 @@ func TestDispatch_ScalarAlwaysAvailable(t *testing.T) {
 	packed, err := packUint32Scalar(0, nil, scratch, values)
 	require.NoError(t, err)
 
-	unpacked, _, err := unpackUint32Scalar(nil, scratch, packed)
+	unpacked, _, err := unpackUint32Scalar(nil, scratch, packed, false)
 	require.NoError(t, err)
 	assert.Equal(t, values, unpacked)
 }
@@ -125,7 +125,7 @@ func TestDispatch_UnpackMatchesScalar(t *testing.T) {
 	packed, err := PackUint32(0, values, nil, nil)
 	require.NoError(t, err)
 
-	scalarOut, scalarConsumed, err := unpackUint32Scalar(nil, make([]uint32, 128), packed)
+	scalarOut, scalarConsumed, err := unpackUint32Scalar(nil, make([]uint32, 128), packed, false)
 	require.NoError(t, err)
 
 	apiOut, apiConsumed, err := UnpackUint32(packed, nil, make([]uint32, 128))
@@ -147,7 +147,7 @@ func TestDispatch_GetMatchesScalar(t *testing.T) {
 
 	scratch := make([]uint32, ScratchLen)
 	for pos := range values {
-		scalarVal, err := getUint32Scalar(pos, packed, scratch)
+		scalarVal, err := getUint32Scalar(pos, packed, scratch, false)
 		require.NoError(t, err)
 
 		apiVal, err := GetUint32(pos, packed, scratch)

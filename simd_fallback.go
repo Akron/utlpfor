@@ -11,7 +11,7 @@ func packUint32AVX512(flag Flag, dst []byte, scratch []uint32, values []uint32) 
 }
 
 func unpackUint32AVX512(dst []uint32, scratch []uint32, buf []byte) ([]uint32, int, error) {
-	return unpackUint32Scalar(dst, scratch, buf)
+	return unpackUint32Scalar(dst, scratch, buf, false)
 }
 
 func packUint32AVX2(flag Flag, dst []byte, scratch []uint32, values []uint32) ([]byte, error) {
@@ -19,7 +19,7 @@ func packUint32AVX2(flag Flag, dst []byte, scratch []uint32, values []uint32) ([
 }
 
 func unpackUint32AVX2(dst []uint32, scratch []uint32, buf []byte) ([]uint32, int, error) {
-	return unpackUint32Scalar(dst, scratch, buf)
+	return unpackUint32Scalar(dst, scratch, buf, false)
 }
 
 func packUint32SSE2(flag Flag, dst []byte, scratch []uint32, values []uint32) ([]byte, error) {
@@ -27,7 +27,7 @@ func packUint32SSE2(flag Flag, dst []byte, scratch []uint32, values []uint32) ([
 }
 
 func unpackUint32SSE2(dst []uint32, scratch []uint32, buf []byte) ([]uint32, int, error) {
-	return unpackUint32Scalar(dst, scratch, buf)
+	return unpackUint32Scalar(dst, scratch, buf, false)
 }
 
 // forSubtractSIMDtest delegates to scalar on non-SIMD builds.

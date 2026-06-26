@@ -492,7 +492,7 @@ func TestMatrixDataGeneration(t *testing.T) {
 							require.GreaterOrEqual(t, len(packed), headerBytes)
 
 							header := bo.Uint32(packed)
-							_, _, _, hExc, hFORWidth, _, hDelta, hZZ, _ := decodeHeader(header)
+							_, _, _, hExc, hFORWidth, _, hDelta, hZZ, _, _ := decodeHeader(header)
 
 							if useDelta {
 								assert.True(t, hDelta, "expected delta flag")
@@ -546,7 +546,7 @@ func TestMatrixDataGeneration(t *testing.T) {
 					require.GreaterOrEqual(t, len(packed), headerBytes)
 
 					header := bo.Uint32(packed)
-					_, _, _, hExc, hFORWidth, _, hDelta, hZZ, _ := decodeHeader(header)
+					_, _, _, hExc, hFORWidth, _, hDelta, hZZ, _, _ := decodeHeader(header)
 
 					assert.Equal(t, 0, hFORWidth,
 						"NoFOR+NoPatch must produce no FOR")

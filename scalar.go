@@ -115,21 +115,23 @@ func unpackLanePairUTL64(dst []uint32, payload []byte, lane0, bitWidth, count in
 	}
 }
 
-// packUint32Scalar is the scalar implementation of PackUint32.
-func packUint32Scalar(flag Flag, dst []byte, scratch []uint32, values []uint32) ([]byte, error) {
+// packBlockScalar packs uint32 values into a UTL block with configurable
+// header type flags. Used by the uint64 sub-block encoding path.
+// typeFlags must include the integer type (e.g. headerTypeUint64Flag),
+// and optionally headerCombineFlag.
+// hasCombine controls whether block2Len space is reserved in the metadata.
+// Always writes from dst[0]; the caller handles Append semantics.
+// values are modified in-place (FOR subtraction, delta encoding).
+func packBlockScalar(flag Flag, values []uint32, dst []byte, scratch []uint32, typeFlags uint32, hasCombine bool) ([]byte, error) {
 	if len(values) == 0 || len(values) > blockSize {
 		return nil, ErrInvalidBuffer
 	}
 
-	off := 0
-	if flag&Append != 0 {
-		off = len(dst)
-	}
-	flag &^= Append
-
-	headerFlags := headerTypeUint32Flag
+	// Build header flags from caller-supplied type and encoding flags.
+	headerFlags := typeFlags
 	headerFlags |= uint32(flag&Special) << 14
 
+	// Step 1: FOR - subtract minimum value if beneficial.
 	var useFOR bool
 	var baseValue uint32
 	var forW int
@@ -141,6 +143,7 @@ func packUint32Scalar(flag Flag, dst []byte, scratch []uint32, values []uint32) 
 		}
 	}
 
+	// Step 2: Delta encode per lane (with optional zigzag).
 	if flag&Delta != 0 {
 		needZZ := deltaEncodePerLaneScalar(values)
 		if needZZ {
@@ -149,75 +152,105 @@ func packUint32Scalar(flag Flag, dst []byte, scratch []uint32, values []uint32) 
 		headerFlags |= headerDeltaFlag
 	}
 
+	// Step 3: Select step bitwidth and identify exceptions.
 	var bitWidth, excCount int
 	if flag&NoPatch != 0 {
 		bitWidth = selectBitWidthNoPatch(values)
 	} else {
 		bitWidth, excCount = selectBitWidth(values)
 	}
-	payloadBytes := utlPayloadBytes(bitWidth)
+	payloadSize := utlPayloadBytes(bitWidth)
 	hasExceptions := excCount > 0
-	forBaseBytes := forBaseBytes(forW)
+	forBBytes := forBaseBytes(forW)
 
+	// Step 4a: No exceptions - write header + FOR base + packed payload.
 	if !hasExceptions {
-		pOff := payloadOffset(forBaseBytes, false)
-		totalLen := pOff + payloadBytes
-		if off > 0 {
-			dst = ensureAppend(dst, off, totalLen)
-		} else {
-			dst = ensureLen(dst, totalLen)
-		}
-		block := dst[off:]
-		bo.PutUint32(block, encodeHeader(len(values), bitWidth, 0, headerFlags))
+		pOff := payloadOffset(forBBytes, false, hasCombine)
+		totalLen := pOff + payloadSize
+		dst = ensureLen(dst, totalLen)
+		bo.PutUint32(dst, encodeHeader(len(values), bitWidth, 0, headerFlags))
 		if useFOR {
-			writeFORBase(block, baseValue, forW, false)
+			writeFORBase(dst, baseValue, forW, false)
 		}
-		packLanesUTLScalar(block[pOff:pOff+payloadBytes], values, bitWidth)
-		return dst[:off+totalLen], nil
+		packLanesUTLScalar(dst[pOff:pOff+payloadSize], values, bitWidth)
+		return dst[:totalLen], nil
 	}
 
+	// Step 4b: With exceptions - write header + svbLen + FOR base + payload + exc + svb.
 	excIdxSize := excIndexSize(excCount)
 	maxSvbLen := maxSVBEncodedLen(excCount)
-	pOff := payloadOffset(forBaseBytes, true)
-	maxTotalLen := pOff + payloadBytes + excIdxSize + maxSvbLen
+	pOff := payloadOffset(forBBytes, true, hasCombine)
+	maxTotalLen := pOff + payloadSize + excIdxSize + maxSvbLen
 
-	if off > 0 {
-		dst = ensureAppend(dst, off, maxTotalLen)
-	} else {
-		dst = ensureLen(dst, maxTotalLen)
-	}
-	block := dst[off:]
-	bo.PutUint32(block, encodeHeader(len(values), bitWidth, excCount, headerFlags))
+	dst = ensureLen(dst, maxTotalLen)
+	bo.PutUint32(dst, encodeHeader(len(values), bitWidth, excCount, headerFlags))
 	if useFOR {
-		writeFORBase(block, baseValue, forW, true)
+		writeFORBase(dst, baseValue, forW, true)
 	}
 
-	packLanesUTLScalar(block[pOff:pOff+payloadBytes], values, bitWidth)
+	// Pack lower bits into UTL payload.
+	packLanesUTLScalar(dst[pOff:pOff+payloadSize], values, bitWidth)
 
+	// Collect exception high bits and write exception index + StreamVByte data.
 	highBits := scratch[:blockSize]
-
-	excOff := pOff + payloadBytes
-	collectAndWriteExceptions(values, bitWidth, block[excOff:], excCount, highBits)
-
+	excOff := pOff + payloadSize
+	collectAndWriteExceptions(values, bitWidth, dst[excOff:], excCount, highBits)
 	svbOffset := excOff + excIdxSize
-	svbLen := encodeSVBIntoDst(block[svbOffset:maxTotalLen], highBits[:excCount])
+	svbLen := encodeSVBIntoDst(dst[svbOffset:maxTotalLen], highBits[:excCount])
 
-	bo.PutUint16(block[headerBytes:], uint16(svbLen))
-	return dst[:off+svbOffset+svbLen], nil
+	// Patch svbLen field at fixed offset in header area.
+	bo.PutUint16(dst[headerBytes:], uint16(svbLen))
+	return dst[:svbOffset+svbLen], nil
 }
 
-// unpackUint32Scalar is the scalar implementation of UnpackUint32.
-func unpackUint32Scalar(dst []uint32, scratch []uint32, buf []byte) ([]uint32, int, error) {
+// packUint32Scalar is the scalar implementation of PackUint32.
+// Delegates to packBlockScalar with uint32 type flags.
+func packUint32Scalar(flag Flag, dst []byte, scratch []uint32, values []uint32) ([]byte, error) {
+	if len(values) == 0 || len(values) > blockSize {
+		return nil, ErrInvalidBuffer
+	}
+
+	if flag&Append == 0 {
+		return packBlockScalar(flag, values, dst, scratch, headerTypeUint32Flag, false)
+	}
+
+	off := len(dst)
+	block, err := packBlockScalar(flag&^Append, values, dst[off:off], scratch, headerTypeUint32Flag, false)
+	if err != nil {
+		return nil, err
+	}
+	totalLen := len(block)
+	if cap(dst) >= off+totalLen {
+		return dst[:off+totalLen], nil
+	}
+	dst = ensureAppend(dst, off, totalLen)
+	copy(dst[off:], block)
+	return dst[:off+totalLen], nil
+}
+
+// unpackUint32Scalar is the shared unpack implementation for both uint32 and
+// uint64 blocks. The forUint64 flag selects the int-type validator and enables
+// combine-flag-aware payload offset calculation.
+func unpackUint32Scalar(dst []uint32, scratch []uint32, buf []byte, forUint64 bool) ([]uint32, int, error) {
 	if len(buf) < headerBytes {
 		return nil, 0, ErrInvalidBuffer
 	}
 
+	// Decode the 4-byte header to extract all block parameters.
 	header := bo.Uint32(buf)
-	count, bitWidth, intType, excCount, forWidth, hasExceptions, hasDelta, hasZigZag, _ := decodeHeader(header)
+	count, bitWidth, intType, excCount, forWidth, hasExceptions, hasDelta, hasZigZag, _, hasCombine := decodeHeader(header)
 	hasFOR := forWidth > 0
 
-	if err := validateIntType(intType); err != nil {
-		return nil, 0, err
+	// Validate int type based on caller context (uint32 vs uint64 API).
+	if forUint64 {
+		if err := validateIntType64(intType); err != nil {
+			return nil, 0, err
+		}
+	} else {
+		if err := validateIntType(intType); err != nil {
+			return nil, 0, err
+		}
+		hasCombine = false // combine is never valid for uint32 blocks
 	}
 
 	if uint(count-1) >= blockSize || uint(bitWidth) > 32 {
@@ -230,15 +263,21 @@ func unpackUint32Scalar(dst []uint32, scratch []uint32, buf []byte) ([]uint32, i
 		return nil, 0, ErrInvalidBuffer
 	}
 
-	pOff := payloadOffset(0, hasExceptions)
+	// Compute payload start: header [+ svbLen] [+ forBase] [+ block2Len].
+	pOff := headerBytes
+	if hasExceptions {
+		pOff += svbLenBytes
+	}
 	var forBase uint32
 	if hasFOR {
 		forBase = readFORBase(buf, pOff, forWidth)
 		pOff += forBaseBytes(forWidth)
 	}
+	if hasCombine {
+		pOff += block2LenBytes
+	}
 
 	payloadBytes := utlPayloadBytes(bitWidth)
-
 	if len(buf) < pOff+payloadBytes {
 		return nil, 0, ErrInvalidBuffer
 	}
@@ -248,13 +287,13 @@ func unpackUint32Scalar(dst []uint32, scratch []uint32, buf []byte) ([]uint32, i
 	}
 	dst = dst[:blockSize]
 
+	// Step 1: Unpack bit-packed payload into lane-interleaved values.
 	payload := buf[pOff : pOff+payloadBytes]
 	unpackLanesUTLScalar(dst, payload, blockSize, bitWidth)
-
 	dst = dst[:count]
-
 	consumed := pOff + payloadBytes
 
+	// Step 2: Apply exceptions (OR in high bits from StreamVByte data).
 	if hasExceptions {
 		excStart := pOff + payloadBytes
 		var err error
@@ -264,6 +303,7 @@ func unpackUint32Scalar(dst []uint32, scratch []uint32, buf []byte) ([]uint32, i
 		}
 	}
 
+	// Step 3: Delta decode per lane (reverse of per-lane delta encoding).
 	if hasDelta {
 		if hasZigZag {
 			deltaDecodePerLaneScalar(dst, true)
@@ -275,6 +315,7 @@ func unpackUint32Scalar(dst []uint32, scratch []uint32, buf []byte) ([]uint32, i
 		}
 	}
 
+	// Step 4: Add FOR base value back to all decoded values.
 	if hasFOR {
 		forAddScalar(dst, count, forBase)
 	}

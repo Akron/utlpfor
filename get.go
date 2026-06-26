@@ -65,46 +65,61 @@ func extractPackedValueUTL(pos int, payload []byte, bitWidth int) uint32 {
 // Single code path; SIMD acceleration is applied internally via dispatched
 // UnpackUint32 (full-unpack fallback for delta blocks with high posInLane).
 func GetUint32(pos int, src []byte, scratch []uint32) (uint32, error) {
-	return getUint32Scalar(pos, src, scratch)
+	return getUint32Scalar(pos, src, scratch, false)
 }
 
-// getUint32Scalar implements GetUint32. Single-lane extraction is scalar;
-// the full-unpack path dispatches through UnpackUint32 for SIMD acceleration.
-func getUint32Scalar(pos int, src []byte, scratch []uint32) (uint32, error) {
+// getUint32Scalar is the shared get-single-value implementation for both
+// uint32 and uint64 sub-blocks. The forUint64 flag selects the int-type
+// validator and enables combine-flag-aware payload offset calculation.
+func getUint32Scalar(pos int, src []byte, scratch []uint32, forUint64 bool) (uint32, error) {
 	if len(src) < headerBytes {
 		return 0, ErrInvalidBuffer
 	}
 
+	// Decode header and validate int type for the caller's API context.
 	header := bo.Uint32(src)
-	count, bitWidth, intType, excCount, forWidth, hasExceptions, hasDelta, hasZigZag, _ := decodeHeader(header)
+	count, bitWidth, intType, excCount, forWidth, hasExceptions, hasDelta, hasZigZag, _, hasCombine := decodeHeader(header)
 	hasFOR := forWidth > 0
 
-	if err := validateIntType(intType); err != nil {
-		return 0, err
+	if forUint64 {
+		if err := validateIntType64(intType); err != nil {
+			return 0, err
+		}
+	} else {
+		if err := validateIntType(intType); err != nil {
+			return 0, err
+		}
+		hasCombine = false // combine is never valid for uint32 blocks
 	}
 
 	if pos < 0 || pos >= count {
 		return 0, ErrPositionOutOfRange
 	}
-
 	if bitWidth > 32 {
 		return 0, ErrInvalidBuffer
 	}
 
-	pOff := payloadOffset(0, hasExceptions)
+	// Compute payload offset: header [+ svbLen] [+ forBase] [+ block2Len].
+	pOff := headerBytes
+	if hasExceptions {
+		pOff += svbLenBytes
+	}
 	var forBase uint32
 	if hasFOR {
 		forBase = readFORBase(src, pOff, forWidth)
 		pOff += forBaseBytes(forWidth)
+	}
+	if hasCombine {
+		pOff += block2LenBytes
 	}
 
 	payloadBytes := utlPayloadBytes(bitWidth)
 	if len(src) < pOff+payloadBytes {
 		return 0, ErrInvalidBuffer
 	}
-
 	payload := src[pOff : pOff+payloadBytes]
 
+	// Non-delta path: extract single value directly from packed payload.
 	if !hasDelta {
 		value, err := getValueDirect(pos, src, payload, pOff+payloadBytes, bitWidth, count, excCount, hasExceptions)
 		if err != nil {
@@ -113,9 +128,12 @@ func getUint32Scalar(pos int, src []byte, scratch []uint32) (uint32, error) {
 		return value + forBase, nil
 	}
 
-	// Delta path: choose between full unpack and single-lane.
+	// Delta path: use full unpack for deep lane positions, lane walk otherwise.
 	posInLane := pos / utlLaneCount
 	if posInLane > deltaFullUnpackThreshold(bitWidth) {
+		if forUint64 {
+			return getFullUnpackViaBlock(pos, src, scratch)
+		}
 		return getUint32FullUnpack(pos, src, scratch)
 	}
 
@@ -126,6 +144,21 @@ func getUint32Scalar(pos int, src []byte, scratch []uint32) (uint32, error) {
 		return 0, err
 	}
 	return value + forBase, nil
+}
+
+// getFullUnpackViaBlock performs a full block unpack to extract a single
+// uint32 value from a uint64-typed block. Uses scratch[0:blockSize] as the
+// output buffer and scratch[blockSize:2*blockSize] as exception workspace,
+// avoiding a 512-byte stack allocation.
+func getFullUnpackViaBlock(pos int, src []byte, scratch []uint32) (uint32, error) {
+	if len(scratch) < 2*blockSize {
+		scratch = make([]uint32, 2*blockSize)
+	}
+	unpacked, _, err := unpackUint32Scalar(scratch[:0], scratch[blockSize:], src, true)
+	if err != nil {
+		return 0, err
+	}
+	return unpacked[pos], nil
 }
 
 // getValueDirect extracts a single value without delta decoding.

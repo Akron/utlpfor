@@ -245,7 +245,7 @@ func TestFormatConformance_ExceptionTableLayout_SortedPositions(t *testing.T) {
 	require.NoError(t, err)
 
 	header := bo.Uint32(packed)
-	_, bw, _, excCount, _, hasExc, _, _, _ := decodeHeader(header)
+	_, bw, _, excCount, _, hasExc, _, _, _, _ := decodeHeader(header)
 	require.True(t, hasExc, "expected exceptions")
 	require.LessOrEqual(t, excCount, excBitmapThreshold,
 		"2 exceptions should use sorted-positions format")
@@ -275,7 +275,7 @@ func TestFormatConformance_ExceptionTableLayout_Bitmap(t *testing.T) {
 	require.NoError(t, err)
 
 	header := bo.Uint32(packed)
-	_, bw, _, excCount, _, hasExc, _, _, _ := decodeHeader(header)
+	_, bw, _, excCount, _, hasExc, _, _, _, _ := decodeHeader(header)
 	require.True(t, hasExc, "expected exceptions")
 
 	if excCount > excBitmapThreshold {
@@ -368,7 +368,7 @@ func TestFormatConformance_WireLayout_NoExceptions(t *testing.T) {
 	require.NoError(t, err)
 
 	header := bo.Uint32(packed)
-	_, bw, _, _, _, hasExc, _, _, _ := decodeHeader(header)
+	_, bw, _, _, _, hasExc, _, _, _, _ := decodeHeader(header)
 	require.False(t, hasExc)
 
 	// Layout: [header:4][payload:N] (no FOR for this data since min=0)
@@ -388,7 +388,7 @@ func TestFormatConformance_WireLayout_WithExceptions(t *testing.T) {
 	require.NoError(t, err)
 
 	header := bo.Uint32(packed)
-	_, bw, _, excCount, _, hasExc, _, _, _ := decodeHeader(header)
+	_, bw, _, excCount, _, hasExc, _, _, _, _ := decodeHeader(header)
 	require.True(t, hasExc)
 
 	svbLen := int(bo.Uint16(packed[headerBytes:]))

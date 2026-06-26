@@ -325,7 +325,7 @@ func packUint32SSE2(flag Flag, dst []byte, scratch []uint32, values []uint32) ([
 	}
 
 	if !hasExceptions {
-		pOff := payloadOffset(forBaseBytes, false)
+		pOff := payloadOffset(forBaseBytes, false, false)
 		totalLen := pOff + payloadBytes
 		if off > 0 {
 			dst = ensureAppend(dst, off, totalLen)
@@ -343,7 +343,7 @@ func packUint32SSE2(flag Flag, dst []byte, scratch []uint32, values []uint32) ([
 
 	excIdxSize := excIndexSize(excCount)
 	maxSvbLen := maxSVBEncodedLen(excCount)
-	pOff := payloadOffset(forBaseBytes, true)
+	pOff := payloadOffset(forBaseBytes, true, false)
 	maxTotalLen := pOff + payloadBytes + excIdxSize + maxSvbLen
 
 	if off > 0 {
@@ -379,7 +379,7 @@ func unpackUint32SSE2(dst []uint32, scratch []uint32, buf []byte) ([]uint32, int
 	}
 
 	header := bo.Uint32(buf)
-	count, bitWidth, intType, excCount, forWidth, hasExceptions, hasDelta, hasZigZag, _ := decodeHeader(header)
+	count, bitWidth, intType, excCount, forWidth, hasExceptions, hasDelta, hasZigZag, _, _ := decodeHeader(header)
 	hasFOR := forWidth > 0
 
 	if err := validateIntType(intType); err != nil {
@@ -396,7 +396,7 @@ func unpackUint32SSE2(dst []uint32, scratch []uint32, buf []byte) ([]uint32, int
 		return nil, 0, ErrInvalidBuffer
 	}
 
-	pOff := payloadOffset(0, hasExceptions)
+	pOff := payloadOffset(0, hasExceptions, false)
 	var forBase uint32
 	if hasFOR {
 		forBase = readFORBase(buf, pOff, forWidth)

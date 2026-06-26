@@ -14,6 +14,6 @@ func UnpackUint32(src []byte, values []uint32, scratch []uint32) ([]uint32, int,
 	case simdLevelSSE2:
 		return unpackUint32SSE2(values, scratch, src)
 	default:
-		return unpackUint32Scalar(values, scratch, src)
+		return unpackUint32Scalar(values, scratch, src, false)
 	}
 }

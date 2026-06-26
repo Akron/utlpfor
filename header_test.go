@@ -8,7 +8,7 @@ import (
 
 func TestEncodeDecodeHeader_Plain(t *testing.T) {
 	h := encodeHeader(128, 8, 0, headerTypeUint32Flag)
-	count, bw, intType, excCount, forWidth, hasExc, hasDelta, hasZZ, _ := decodeHeader(h)
+	count, bw, intType, excCount, forWidth, hasExc, hasDelta, hasZZ, _, _ := decodeHeader(h)
 	assert.Equal(t, 128, count)
 	assert.Equal(t, 8, bw)
 	assert.Equal(t, IntTypeUint32, intType)
@@ -22,7 +22,7 @@ func TestEncodeDecodeHeader_Plain(t *testing.T) {
 func TestEncodeDecodeHeader_DeltaZigzag(t *testing.T) {
 	flags := headerTypeUint32Flag | headerDeltaFlag | headerZigZagFlag
 	h := encodeHeader(100, 12, 0, flags)
-	count, bw, _, _, _, _, hasDelta, hasZZ, _ := decodeHeader(h)
+	count, bw, _, _, _, _, hasDelta, hasZZ, _, _ := decodeHeader(h)
 	assert.Equal(t, 100, count)
 	assert.Equal(t, 12, bw)
 	assert.True(t, hasDelta)
@@ -31,7 +31,7 @@ func TestEncodeDecodeHeader_DeltaZigzag(t *testing.T) {
 
 func TestEncodeDecodeHeader_WithExceptions(t *testing.T) {
 	h := encodeHeader(128, 4, 10, headerTypeUint32Flag)
-	_, _, _, excCount, _, hasExc, _, _, _ := decodeHeader(h)
+	_, _, _, excCount, _, hasExc, _, _, _, _ := decodeHeader(h)
 	assert.True(t, hasExc)
 	assert.Equal(t, 10, excCount)
 }
@@ -39,7 +39,7 @@ func TestEncodeDecodeHeader_WithExceptions(t *testing.T) {
 func TestEncodeDecodeHeader_AllExceptionCounts(t *testing.T) {
 	for ec := 1; ec <= 128; ec++ {
 		h := encodeHeader(128, 8, ec, headerTypeUint32Flag)
-		_, _, _, gotEC, _, hasExc, _, _, _ := decodeHeader(h)
+		_, _, _, gotEC, _, hasExc, _, _, _, _ := decodeHeader(h)
 		assert.True(t, hasExc)
 		assert.Equal(t, ec, gotEC, "excCount %d", ec)
 	}
@@ -47,7 +47,7 @@ func TestEncodeDecodeHeader_AllExceptionCounts(t *testing.T) {
 
 func TestEncodeDecodeHeader_NoExceptionsExcCountZero(t *testing.T) {
 	h := encodeHeader(128, 8, 0, headerTypeUint32Flag)
-	_, _, _, excCount, _, hasExc, _, _, _ := decodeHeader(h)
+	_, _, _, excCount, _, hasExc, _, _, _, _ := decodeHeader(h)
 	assert.False(t, hasExc)
 	assert.Equal(t, 0, excCount)
 }
@@ -55,7 +55,7 @@ func TestEncodeDecodeHeader_NoExceptionsExcCountZero(t *testing.T) {
 func TestEncodeDecodeHeader_AllStepBitWidths(t *testing.T) {
 	for _, bw := range stepBitWidths {
 		h := encodeHeader(128, bw, 0, headerTypeUint32Flag)
-		_, gotBW, _, _, _, _, _, _, _ := decodeHeader(h)
+		_, gotBW, _, _, _, _, _, _, _, _ := decodeHeader(h)
 		assert.Equal(t, bw, gotBW, "step bit width %d", bw)
 	}
 }
@@ -63,7 +63,7 @@ func TestEncodeDecodeHeader_AllStepBitWidths(t *testing.T) {
 func TestEncodeDecodeHeader_AllCounts(t *testing.T) {
 	for count := 0; count <= 128; count++ {
 		h := encodeHeader(count, 8, 0, headerTypeUint32Flag)
-		gotCount, _, _, _, _, _, _, _, _ := decodeHeader(h)
+		gotCount, _, _, _, _, _, _, _, _, _ := decodeHeader(h)
 		assert.Equal(t, count, gotCount, "count %d", count)
 	}
 }
@@ -71,14 +71,14 @@ func TestEncodeDecodeHeader_AllCounts(t *testing.T) {
 func TestDecodeHeader_ZigzagWithoutDelta(t *testing.T) {
 	flags := headerTypeUint32Flag | headerZigZagFlag
 	h := encodeHeader(128, 8, 0, flags)
-	_, _, _, _, _, _, hasDelta, hasZZ, _ := decodeHeader(h)
+	_, _, _, _, _, _, hasDelta, hasZZ, _, _ := decodeHeader(h)
 	assert.False(t, hasDelta)
 	assert.True(t, hasZZ)
 }
 
 func TestEncodeDecodeHeader_Uint16Type(t *testing.T) {
 	h := encodeHeader(64, 8, 0, headerTypeUint16Flag)
-	_, _, intType, _, _, _, _, _, _ := decodeHeader(h)
+	_, _, intType, _, _, _, _, _, _, _ := decodeHeader(h)
 	assert.Equal(t, IntTypeUint16, intType)
 }
 
@@ -102,7 +102,7 @@ func TestDecodeHeader_FORWidth(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			flags := headerTypeUint32Flag | uint32(tt.forWidth<<forWidthShift)
 			h := encodeHeader(128, 8, 0, flags)
-			_, _, _, _, gotWidth, _, _, _, _ := decodeHeader(h)
+			_, _, _, _, gotWidth, _, _, _, _, _ := decodeHeader(h)
 			assert.Equal(t, tt.forWidth, gotWidth)
 		})
 	}
@@ -165,7 +165,7 @@ func TestEncodeDecodeHeader_AllFlagCombinations(t *testing.T) {
 	for _, fs := range flagSets {
 		t.Run(fs.name, func(t *testing.T) {
 			h := encodeHeader(128, 8, 0, fs.flags)
-			_, _, _, _, gotForWidth, _, hasDelta, hasZZ, _ := decodeHeader(h)
+			_, _, _, _, gotForWidth, _, hasDelta, hasZZ, _, _ := decodeHeader(h)
 			assert.Equal(t, fs.flags&headerDeltaFlag != 0, hasDelta)
 			assert.Equal(t, fs.flags&headerZigZagFlag != 0, hasZZ)
 			assert.Equal(t, fs.forWidth, gotForWidth)
@@ -191,7 +191,7 @@ func TestPayloadOffset(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := payloadOffset(tt.forBaseBytes, tt.hasExceptions)
+			got := payloadOffset(tt.forBaseBytes, tt.hasExceptions, false)
 			assert.Equal(t, tt.want, got)
 		})
 	}
@@ -212,7 +212,7 @@ func TestEncodeDecodeHeader_4BitBitwidthRoundTrip(t *testing.T) {
 	for _, bw := range stepBitWidths {
 		for _, ec := range []int{0, 1, 16, 128} {
 			h := encodeHeader(128, bw, ec, headerTypeUint32Flag)
-			gotCount, gotBW, gotType, gotEC, _, _, _, _, _ := decodeHeader(h)
+			gotCount, gotBW, gotType, gotEC, _, _, _, _, _, _ := decodeHeader(h)
 			assert.Equal(t, 128, gotCount, "count for bw=%d ec=%d", bw, ec)
 			assert.Equal(t, bw, gotBW, "bitWidth for bw=%d ec=%d", bw, ec)
 			assert.Equal(t, IntTypeUint32, gotType, "intType for bw=%d ec=%d", bw, ec)
@@ -253,4 +253,125 @@ func TestEncodeDecodeHeader_FORWidthAtBits15_16(t *testing.T) {
 		gotFW := int((h >> forWidthShift) & forWidthMask)
 		assert.Equal(t, fw, gotFW, "FOR width must be at bits 15-16 for fw=%d", fw)
 	}
+}
+
+func TestHeaderTypeUint64Flag(t *testing.T) {
+	h := encodeHeader(128, 8, 0, headerTypeUint64Flag)
+	_, _, intType, _, _, _, _, _, _, _ := decodeHeader(h)
+	assert.Equal(t, IntTypeUint64, intType)
+}
+
+func TestHeaderTypeUint64Flag_CombineBit(t *testing.T) {
+	h := encodeHeader(128, 8, 0, headerTypeUint64Flag|headerCombineFlag)
+	_, _, intType, _, _, _, _, _, _, _ := decodeHeader(h)
+	assert.Equal(t, IntTypeUint64, intType)
+	assert.True(t, h&headerCombineFlag != 0, "combine flag must be set")
+}
+
+func TestValidateIntType_AcceptsUint32(t *testing.T) {
+	assert.NoError(t, validateIntType(IntTypeUint32))
+}
+
+func TestValidateIntType_AcceptsUint16(t *testing.T) {
+	assert.NoError(t, validateIntType(IntTypeUint16))
+}
+
+func TestValidateIntType_RejectsUint64(t *testing.T) {
+	assert.ErrorIs(t, validateIntType(IntTypeUint64), ErrUnsupportedType)
+}
+
+func TestValidateIntType_RejectsUint8(t *testing.T) {
+	assert.ErrorIs(t, validateIntType(IntTypeUint8), ErrUnsupportedType)
+}
+
+func TestValidateIntType64_AcceptsUint64(t *testing.T) {
+	assert.NoError(t, validateIntType64(IntTypeUint64))
+}
+
+func TestValidateIntType64_RejectsUint32(t *testing.T) {
+	assert.ErrorIs(t, validateIntType64(IntTypeUint32), ErrUnsupportedType)
+}
+
+func TestValidateIntType64_RejectsUint16(t *testing.T) {
+	assert.ErrorIs(t, validateIntType64(IntTypeUint16), ErrUnsupportedType)
+}
+
+func TestValidateIntType64_RejectsUint8(t *testing.T) {
+	assert.ErrorIs(t, validateIntType64(IntTypeUint8), ErrUnsupportedType)
+}
+
+func TestPayloadOffset_WithCombine(t *testing.T) {
+	tests := []struct {
+		name          string
+		forBaseBytes  int
+		hasExceptions bool
+		hasCombine    bool
+		want          int
+	}{
+		{"no_for_no_exc_combine", 0, false, true, 4 + 2},
+		{"u8_for_no_exc_combine", 1, false, true, 5 + 2},
+		{"u16_for_no_exc_combine", 2, false, true, 6 + 2},
+		{"u32_for_no_exc_combine", 4, false, true, 8 + 2},
+		{"no_for_exc_combine", 0, true, true, 6 + 2},
+		{"u8_for_exc_combine", 1, true, true, 7 + 2},
+		{"u16_for_exc_combine", 2, true, true, 8 + 2},
+		{"u32_for_exc_combine", 4, true, true, 10 + 2},
+		{"no_for_no_exc_no_combine", 0, false, false, 4},
+		{"u32_for_exc_no_combine", 4, true, false, 10},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := payloadOffset(tt.forBaseBytes, tt.hasExceptions, tt.hasCombine)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestBlock2LenReadWrite(t *testing.T) {
+	tests := []struct {
+		name          string
+		forBaseBytes  int
+		hasExceptions bool
+		block2Len     uint16
+	}{
+		{"no_for_no_exc", 0, false, 100},
+		{"u8_for_no_exc", 1, false, 200},
+		{"u16_for_no_exc", 2, false, 300},
+		{"u32_for_no_exc", 4, false, 500},
+		{"no_for_exc", 0, true, 150},
+		{"u8_for_exc", 1, true, 250},
+		{"u32_for_exc", 4, true, 1018},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			buf := make([]byte, 64)
+			writeBlock2Len(buf, tt.forBaseBytes, tt.hasExceptions, tt.block2Len)
+			got := readBlock2Len(buf, tt.forBaseBytes, tt.hasExceptions)
+			assert.Equal(t, tt.block2Len, got)
+		})
+	}
+}
+
+func TestBlock2LenBytes_Value(t *testing.T) {
+	assert.Equal(t, 2, block2LenBytes)
+}
+
+func TestBlock2Len_PositionInMetadata(t *testing.T) {
+	buf := make([]byte, 64)
+
+	h := encodeHeader(128, 8, 5, headerTypeUint64Flag|headerCombineFlag)
+	bo.PutUint32(buf, h)
+	bo.PutUint16(buf[headerBytes:], uint16(42)) // svbLen
+
+	forW := forWidthU16
+	forBase := uint16(0x1234)
+	bo.PutUint16(buf[headerBytes+svbLenBytes:], forBase)
+
+	writeBlock2Len(buf, forBaseBytes(forW), true, 999)
+	got := readBlock2Len(buf, forBaseBytes(forW), true)
+	assert.Equal(t, uint16(999), got)
+
+	expectedOffset := headerBytes + svbLenBytes + forBaseBytes(forW)
+	directRead := bo.Uint16(buf[expectedOffset:])
+	assert.Equal(t, uint16(999), directRead)
 }
