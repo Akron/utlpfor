@@ -99,6 +99,9 @@ func getUint32Scalar(pos int, src []byte, scratch []uint32, forUint64 bool) (uin
 		return 0, ErrInvalidBuffer
 	}
 
+	// FOR64 single-block: forWidth=3 means 8-byte base, handled by uint64 caller.
+	u64Single := forUint64 && isFor64SingleBlock(intType, forWidth, hasCombine)
+
 	// Compute payload offset: header [+ svbLen] [+ forBase] [+ block2Len].
 	pOff := headerBytes
 	if hasExceptions {
@@ -106,8 +109,12 @@ func getUint32Scalar(pos int, src []byte, scratch []uint32, forUint64 bool) (uin
 	}
 	var forBase uint32
 	if hasFOR {
-		forBase = readFORBase(src, pOff, forWidth)
-		pOff += forBaseBytes(forWidth)
+		if u64Single {
+			pOff += for64BaseSize
+		} else {
+			forBase = readFORBase(src, pOff, forWidth)
+			pOff += forBaseBytes(forWidth)
+		}
 	}
 	if hasCombine {
 		pOff += block2LenBytes
@@ -148,13 +155,13 @@ func getUint32Scalar(pos int, src []byte, scratch []uint32, forUint64 bool) (uin
 
 // getFullUnpackViaBlock performs a full block unpack to extract a single
 // uint32 value from a uint64-typed block. Uses scratch[0:blockSize] as the
-// output buffer and scratch[blockSize:2*blockSize] as exception workspace,
-// avoiding a 512-byte stack allocation.
+// output buffer and scratch[2*blockSize:3*blockSize] as exception workspace,
+// matching the unpack scratch layout.
 func getFullUnpackViaBlock(pos int, src []byte, scratch []uint32) (uint32, error) {
-	if len(scratch) < 2*blockSize {
-		scratch = make([]uint32, 2*blockSize)
+	if len(scratch) < ScratchLen64 {
+		scratch = make([]uint32, ScratchLen64)
 	}
-	unpacked, _, err := unpackUint32Scalar(scratch[:0], scratch[blockSize:], src, true)
+	unpacked, _, err := unpackUint32Scalar(scratch[:0], scratch[2*blockSize:], src, true)
 	if err != nil {
 		return 0, err
 	}

@@ -33,7 +33,10 @@ func BlockLength(src []byte) (int, error) {
 		return 0, ErrInvalidFlags
 	}
 
-	forBBytes := forBaseBytes(forWidth)
+	// FOR base size is context-dependent: forWidth=3 with uint64 single-block
+	// means 8-byte FOR64 base instead of the standard 4-byte uint32 base.
+	forBBytes := forBaseBytesForBlock(forWidth, intType, hasCombine)
+
 	pOff := payloadOffset(forBBytes, hasExceptions, hasCombine)
 	block1Len := pOff + bitWidth<<4
 

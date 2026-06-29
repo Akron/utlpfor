@@ -263,6 +263,9 @@ func unpackUint32Scalar(dst []uint32, scratch []uint32, buf []byte, forUint64 bo
 		return nil, 0, ErrInvalidBuffer
 	}
 
+	// FOR64 single-block: forWidth=3 means 8-byte base, handled by uint64 caller.
+	u64Single := forUint64 && isFor64SingleBlock(intType, forWidth, hasCombine)
+
 	// Compute payload start: header [+ svbLen] [+ forBase] [+ block2Len].
 	pOff := headerBytes
 	if hasExceptions {
@@ -270,8 +273,12 @@ func unpackUint32Scalar(dst []uint32, scratch []uint32, buf []byte, forUint64 bo
 	}
 	var forBase uint32
 	if hasFOR {
-		forBase = readFORBase(buf, pOff, forWidth)
-		pOff += forBaseBytes(forWidth)
+		if u64Single {
+			pOff += for64BaseSize
+		} else {
+			forBase = readFORBase(buf, pOff, forWidth)
+			pOff += forBaseBytes(forWidth)
+		}
 	}
 	if hasCombine {
 		pOff += block2LenBytes
@@ -315,8 +322,8 @@ func unpackUint32Scalar(dst []uint32, scratch []uint32, buf []byte, forUint64 bo
 		}
 	}
 
-	// Step 4: Add FOR base value back to all decoded values.
-	if hasFOR {
+	// Step 4: Add FOR base value back (skipped for FOR64; caller handles uint64 add).
+	if hasFOR && !u64Single {
 		forAddScalar(dst, count, forBase)
 	}
 

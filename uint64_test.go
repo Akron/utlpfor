@@ -497,8 +497,55 @@ func TestPackUint64_PreAllocatedScratch(t *testing.T) {
 }
 
 func TestScratchLen64_Value(t *testing.T) {
-	assert.Equal(t, 2*blockSize, ScratchLen64)
-	assert.Equal(t, 256, ScratchLen64)
+	assert.Equal(t, 3*blockSize, ScratchLen64)
+	assert.Equal(t, 384, ScratchLen64)
+}
+
+func TestEnsureCapacity64(t *testing.T) {
+	maxLen := MaxBlockLength64(0)
+
+	t.Run("nil_dst", func(t *testing.T) {
+		dst := ensureCapacity64(nil, 0, 0)
+		assert.GreaterOrEqual(t, cap(dst), maxLen)
+		assert.Equal(t, 0, len(dst))
+	})
+
+	t.Run("sufficient_cap_no_alloc", func(t *testing.T) {
+		orig := make([]byte, 10, 10+maxLen)
+		for i := range orig {
+			orig[i] = byte(i)
+		}
+		dst := ensureCapacity64(orig, 10, 0)
+		assert.Equal(t, orig[:10], dst[:10])
+		assert.GreaterOrEqual(t, cap(dst)-10, maxLen)
+	})
+
+	t.Run("insufficient_cap_grows", func(t *testing.T) {
+		orig := make([]byte, 5, 10)
+		for i := range orig {
+			orig[i] = byte(i + 1)
+		}
+		dst := ensureCapacity64(orig, 5, 0)
+		assert.GreaterOrEqual(t, cap(dst)-5, maxLen)
+		assert.Equal(t, 5, len(dst))
+		assert.Equal(t, []byte{1, 2, 3, 4, 5}, dst[:5])
+	})
+
+	t.Run("preserves_prefix_on_grow", func(t *testing.T) {
+		prefix := []byte("hello world!")
+		orig := make([]byte, len(prefix))
+		copy(orig, prefix)
+		dst := ensureCapacity64(orig, len(prefix), 0)
+		assert.GreaterOrEqual(t, cap(dst)-len(prefix), maxLen)
+		assert.Equal(t, len(prefix), len(dst))
+		assert.Equal(t, prefix, dst[:len(prefix)])
+	})
+
+	t.Run("flag_affects_needed_cap", func(t *testing.T) {
+		noPatchLen := MaxBlockLength64(NoPatch)
+		dst := ensureCapacity64(nil, 0, NoPatch)
+		assert.GreaterOrEqual(t, cap(dst), noPatchLen)
+	})
 }
 
 func TestPackUnpackUint64_BoundaryValue_0xFFFFFFFF(t *testing.T) {
@@ -568,185 +615,543 @@ func TestPackUnpackUint64_WithAppend(t *testing.T) {
 	assert.Equal(t, values2, unpacked2)
 }
 
-func TestSplitUint64_Identity(t *testing.T) {
+func TestPackUnpackUint64_FOR64_ClusteredAbove32Bits(t *testing.T) {
 	values := make([]uint64, blockSize)
 	for i := range values {
-		values[i] = 0xDEADBEEF00000000 | uint64(i*100)
+		values[i] = 0x100000000 + uint64(i)
 	}
-	lower := make([]uint32, blockSize)
-	upper := make([]uint32, blockSize)
-	splitUint64(values, lower, upper)
-
-	for i, v := range values {
-		assert.Equal(t, uint32(v), lower[i], "lower[%d]", i)
-		assert.Equal(t, uint32(v>>32), upper[i], "upper[%d]", i)
-	}
+	packUnpackUint64RoundTrip(t, 0, values)
 }
 
-func TestSplitCombine_RoundTrip(t *testing.T) {
+func TestPackUnpackUint64_FOR64_BoundaryCrossing(t *testing.T) {
 	values := make([]uint64, blockSize)
 	for i := range values {
-		values[i] = 0xFEDCBA9876543210 - uint64(i)*0x0101010101010101
+		values[i] = 0xFFFFFFC0 + uint64(i)
 	}
-	lower := make([]uint32, blockSize)
-	upper := make([]uint32, blockSize)
-	splitUint64(values, lower, upper)
-
-	result := make([]uint64, blockSize)
-	combineUint64(result, lower, upper, blockSize)
-	assert.Equal(t, values, result)
+	packUnpackUint64RoundTrip(t, 0, values)
 }
 
-func TestSplitCombine_ZeroValues(t *testing.T) {
+func TestPackUnpackUint64_FOR64_TimestampMillis(t *testing.T) {
 	values := make([]uint64, blockSize)
-	lower := make([]uint32, blockSize)
-	upper := make([]uint32, blockSize)
-	splitUint64(values, lower, upper)
-
-	for i := range blockSize {
-		assert.Equal(t, uint32(0), lower[i])
-		assert.Equal(t, uint32(0), upper[i])
+	base := uint64(1_719_300_000_000)
+	for i := range values {
+		values[i] = base + uint64(i)
 	}
-
-	result := make([]uint64, blockSize)
-	combineUint64(result, lower, upper, blockSize)
-	assert.Equal(t, values, result)
+	packUnpackUint64RoundTrip(t, 0, values)
 }
 
-func TestSplitCombine_MaxUint64(t *testing.T) {
+func TestPackUnpackUint64_FOR64_MinAbove32BitsSmallRange(t *testing.T) {
+	values := make([]uint64, blockSize)
+	base := uint64(0x200000000)
+	for i := range values {
+		values[i] = base + uint64(i)*7
+	}
+	packUnpackUint64RoundTrip(t, 0, values)
+}
+
+func TestPackUnpackUint64_FOR64_MinBelow32BitsCrossBoundary(t *testing.T) {
 	values := make([]uint64, blockSize)
 	for i := range values {
-		values[i] = math.MaxUint64
+		values[i] = 0xFFFFFF00 + uint64(i)*2
 	}
-	lower := make([]uint32, blockSize)
-	upper := make([]uint32, blockSize)
-	splitUint64(values, lower, upper)
-
-	for i := range blockSize {
-		assert.Equal(t, uint32(0xFFFFFFFF), lower[i])
-		assert.Equal(t, uint32(0xFFFFFFFF), upper[i])
-	}
-
-	result := make([]uint64, blockSize)
-	combineUint64(result, lower, upper, blockSize)
-	assert.Equal(t, values, result)
+	packUnpackUint64RoundTrip(t, 0, values)
 }
 
-func TestSplitCombine_BoundaryValues(t *testing.T) {
-	values := []uint64{0xFFFFFFFF, 0x100000000, 0x100000001, 0}
-	lower := make([]uint32, len(values))
-	upper := make([]uint32, len(values))
-	splitUint64(values, lower, upper)
-
-	assert.Equal(t, uint32(0xFFFFFFFF), lower[0])
-	assert.Equal(t, uint32(0), upper[0])
-
-	assert.Equal(t, uint32(0), lower[1])
-	assert.Equal(t, uint32(1), upper[1])
-
-	assert.Equal(t, uint32(1), lower[2])
-	assert.Equal(t, uint32(1), upper[2])
-
-	assert.Equal(t, uint32(0), lower[3])
-	assert.Equal(t, uint32(0), upper[3])
-
-	result := make([]uint64, len(values))
-	combineUint64(result, lower, upper, len(values))
-	assert.Equal(t, values, result)
-}
-
-func TestSplitCombine_PartialCount(t *testing.T) {
-	values := []uint64{0x123456789ABCDEF0, 0xFEDCBA9876543210, 0x1111111122222222}
-	lower := make([]uint32, len(values))
-	upper := make([]uint32, len(values))
-	splitUint64(values, lower, upper)
-
-	result := make([]uint64, len(values))
-	combineUint64(result, lower, upper, 2)
-	assert.Equal(t, values[0], result[0])
-	assert.Equal(t, values[1], result[1])
-	assert.Equal(t, uint64(0), result[2])
-}
-
-func TestAllFitIn32Bits_TrueForSmallValues(t *testing.T) {
-	values := []uint64{0, 1, 0xFFFFFFFF, 42, 1000000}
-	assert.True(t, allFitIn32Bits(values))
-}
-
-func TestAllFitIn32Bits_TrueForZero(t *testing.T) {
-	values := make([]uint64, blockSize)
-	assert.True(t, allFitIn32Bits(values))
-}
-
-func TestAllFitIn32Bits_TrueForMaxUint32(t *testing.T) {
+func TestPackUnpackUint64_FOR64_FallsThruToTwoBlock(t *testing.T) {
+	rng := rand.New(rand.NewSource(123))
 	values := make([]uint64, blockSize)
 	for i := range values {
-		values[i] = 0xFFFFFFFF
+		values[i] = rng.Uint64()
 	}
-	assert.True(t, allFitIn32Bits(values))
+	packUnpackUint64RoundTrip(t, 0, values)
 }
 
-func TestAllFitIn32Bits_FalseForLargeValue(t *testing.T) {
-	values := []uint64{0, 1, 2, 0x100000000}
-	assert.False(t, allFitIn32Bits(values))
+func TestPackUnpackUint64_FOR64_WithDelta(t *testing.T) {
+	values := make([]uint64, blockSize)
+	base := uint64(0x100000000)
+	for i := range values {
+		values[i] = base + uint64(i)*100
+	}
+	packUnpackUint64RoundTrip(t, Delta, values)
 }
 
-func TestAllFitIn32Bits_FalseForMaxUint64(t *testing.T) {
-	values := []uint64{math.MaxUint64}
-	assert.False(t, allFitIn32Bits(values))
+func TestPackUnpackUint64_FOR64_WithNoPatch(t *testing.T) {
+	values := make([]uint64, blockSize)
+	base := uint64(0x100000000)
+	for i := range values {
+		values[i] = base + uint64(i)
+	}
+	packUnpackUint64RoundTrip(t, NoPatch, values)
 }
 
-func TestAllFitIn32Bits_FalseForSingleLargeInBlock(t *testing.T) {
+func TestPackUnpackUint64_FOR64_WithNoFOR(t *testing.T) {
+	values := make([]uint64, blockSize)
+	base := uint64(0x100000000)
+	for i := range values {
+		values[i] = base + uint64(i)
+	}
+	packUnpackUint64RoundTrip(t, NoFOR, values)
+}
+
+func TestPackUnpackUint64_FOR64_PartialBlock(t *testing.T) {
+	for _, count := range []int{1, 2, 15, 16, 17, 63, 64, 65, 100, 127} {
+		t.Run("", func(t *testing.T) {
+			values := make([]uint64, count)
+			for i := range values {
+				values[i] = 0x100000000 + uint64(i)*3
+			}
+			packUnpackUint64RoundTrip(t, 0, values)
+		})
+	}
+}
+
+func TestBlockLength_Uint64_FOR64SingleBlock(t *testing.T) {
+	values := make([]uint64, blockSize)
+	base := uint64(0x100000000)
+	for i := range values {
+		values[i] = base + uint64(i)
+	}
+	scratch := make([]uint32, ScratchLen64)
+	packed, err := PackUint64(0, values, nil, scratch)
+	require.NoError(t, err)
+
+	bl, err := BlockLength(packed)
+	require.NoError(t, err)
+	assert.Equal(t, len(packed), bl)
+}
+
+func TestBlockLength_Uint64_FOR64MatchesConsumed(t *testing.T) {
+	scratch := make([]uint32, ScratchLen64)
+
+	testCases := []struct {
+		name string
+		gen  func() []uint64
+	}{
+		{"clustered", func() []uint64 {
+			v := make([]uint64, blockSize)
+			for i := range v {
+				v[i] = 0x200000000 + uint64(i)*11
+			}
+			return v
+		}},
+		{"boundary_crossing", func() []uint64 {
+			v := make([]uint64, blockSize)
+			for i := range v {
+				v[i] = 0xFFFFFFC0 + uint64(i)
+			}
+			return v
+		}},
+		{"timestamps", func() []uint64 {
+			v := make([]uint64, blockSize)
+			base := uint64(1_719_300_000_000)
+			for i := range v {
+				v[i] = base + uint64(i)
+			}
+			return v
+		}},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			values := tc.gen()
+			packed, err := PackUint64(0, slices.Clone(values), nil, scratch)
+			require.NoError(t, err)
+
+			bl, err := BlockLength(packed)
+			require.NoError(t, err)
+
+			dst := make([]uint64, blockSize)
+			_, consumed, err := UnpackUint64(dst, scratch, packed)
+			require.NoError(t, err)
+			assert.Equal(t, consumed, bl, "BlockLength != consumed")
+		})
+	}
+}
+
+func TestGetUint64_FOR64SingleBlock(t *testing.T) {
+	values := make([]uint64, blockSize)
+	base := uint64(0x100000000)
+	for i := range values {
+		values[i] = base + uint64(i)*100
+	}
+	scratch := make([]uint32, ScratchLen64)
+	packed, err := PackUint64(0, values, nil, scratch)
+	require.NoError(t, err)
+
+	for i, want := range values {
+		got, err := GetUint64(i, packed, scratch)
+		require.NoError(t, err, "pos=%d", i)
+		assert.Equal(t, want, got, "pos=%d", i)
+	}
+}
+
+func TestGetUint64_FOR64WithDelta(t *testing.T) {
+	values := make([]uint64, blockSize)
+	base := uint64(0x100000000)
+	for i := range values {
+		values[i] = base + uint64(i)*7
+	}
+	scratch := make([]uint32, ScratchLen64)
+	packed, err := PackUint64(Delta, values, nil, scratch)
+	require.NoError(t, err)
+
+	for i, want := range values {
+		got, err := GetUint64(i, packed, scratch)
+		require.NoError(t, err, "pos=%d", i)
+		assert.Equal(t, want, got, "pos=%d", i)
+	}
+}
+
+func TestGetUint64_FOR64BoundaryCrossing(t *testing.T) {
 	values := make([]uint64, blockSize)
 	for i := range values {
-		values[i] = uint64(i)
+		values[i] = 0xFFFFFFC0 + uint64(i)
 	}
-	values[blockSize-1] = 0x100000000
-	assert.False(t, allFitIn32Bits(values))
+	scratch := make([]uint32, ScratchLen64)
+	packed, err := PackUint64(0, values, nil, scratch)
+	require.NoError(t, err)
+
+	for i, want := range values {
+		got, err := GetUint64(i, packed, scratch)
+		require.NoError(t, err, "pos=%d", i)
+		assert.Equal(t, want, got, "pos=%d", i)
+	}
 }
 
-func TestNarrowToUint32_Basic(t *testing.T) {
-	values := []uint64{0, 1, 255, 0xFFFFFFFF, 1000}
-	dst := make([]uint32, len(values))
-	narrowToUint32(dst, values, len(values))
-
-	assert.Equal(t, uint32(0), dst[0])
-	assert.Equal(t, uint32(1), dst[1])
-	assert.Equal(t, uint32(255), dst[2])
-	assert.Equal(t, uint32(0xFFFFFFFF), dst[3])
-	assert.Equal(t, uint32(1000), dst[4])
-}
-
-func TestNarrowToUint32_Truncation(t *testing.T) {
-	values := []uint64{0x100000001, 0xFFFFFFFF00000002}
-	dst := make([]uint32, len(values))
-	narrowToUint32(dst, values, len(values))
-
-	assert.Equal(t, uint32(1), dst[0])
-	assert.Equal(t, uint32(2), dst[1])
-}
-
-func TestNarrowToUint32_PartialCount(t *testing.T) {
-	values := []uint64{100, 200, 300, 400, 500}
-	dst := make([]uint32, len(values))
-	narrowToUint32(dst, values, 3)
-
-	assert.Equal(t, uint32(100), dst[0])
-	assert.Equal(t, uint32(200), dst[1])
-	assert.Equal(t, uint32(300), dst[2])
-	assert.Equal(t, uint32(0), dst[3])
-	assert.Equal(t, uint32(0), dst[4])
-}
-
-func TestNarrowToUint32_FullBlock(t *testing.T) {
+func TestFOR64_CompressionImprovement_BoundaryCrossing(t *testing.T) {
 	values := make([]uint64, blockSize)
 	for i := range values {
-		values[i] = uint64(i * 77)
+		values[i] = 0xFFFFFFC0 + uint64(i)
 	}
-	dst := make([]uint32, blockSize)
-	narrowToUint32(dst, values, blockSize)
+	scratch := make([]uint32, ScratchLen64)
 
-	for i := range blockSize {
-		assert.Equal(t, uint32(values[i]), dst[i], "pos %d", i)
+	packed, err := PackUint64(0, slices.Clone(values), nil, scratch)
+	require.NoError(t, err)
+
+	uncompressedSize := blockSize * 8
+	assert.Less(t, len(packed), uncompressedSize,
+		"FOR64 block should be smaller than uncompressed (%d vs %d)", len(packed), uncompressedSize)
+}
+
+func TestFOR64_CompressionImprovement_Timestamps(t *testing.T) {
+	values := make([]uint64, blockSize)
+	base := uint64(1_719_300_000_000)
+	for i := range values {
+		values[i] = base + uint64(i)
 	}
+	scratch := make([]uint32, ScratchLen64)
+
+	packed, err := PackUint64(0, slices.Clone(values), nil, scratch)
+	require.NoError(t, err)
+
+	uncompressedSize := blockSize * 8
+	assert.Less(t, len(packed), uncompressedSize,
+		"FOR64 timestamp block should compress well (%d vs %d)", len(packed), uncompressedSize)
+}
+
+func TestForSubtract64(t *testing.T) {
+	t.Run("basic", func(t *testing.T) {
+		values := []uint64{100, 105, 110, 115}
+		dst := make([]uint32, len(values))
+		forSubtract64(dst, values, 100)
+		assert.Equal(t, []uint32{0, 5, 10, 15}, dst)
+	})
+
+	t.Run("zero_base", func(t *testing.T) {
+		values := []uint64{0, 1, 2, 3}
+		dst := make([]uint32, len(values))
+		forSubtract64(dst, values, 0)
+		assert.Equal(t, []uint32{0, 1, 2, 3}, dst)
+	})
+
+	t.Run("large_base_above_32bit", func(t *testing.T) {
+		base := uint64(0x200000000)
+		values := []uint64{base, base + 10, base + 255}
+		dst := make([]uint32, len(values))
+		forSubtract64(dst, values, base)
+		assert.Equal(t, []uint32{0, 10, 255}, dst)
+	})
+
+	t.Run("boundary_crossing_base", func(t *testing.T) {
+		base := uint64(0xFFFFFFC0)
+		values := make([]uint64, blockSize)
+		for i := range values {
+			values[i] = base + uint64(i)
+		}
+		dst := make([]uint32, blockSize)
+		forSubtract64(dst, values, base)
+		for i := range blockSize {
+			assert.Equal(t, uint32(i), dst[i], "pos %d", i)
+		}
+	})
+
+	t.Run("single_value", func(t *testing.T) {
+		values := []uint64{0x100000042}
+		dst := make([]uint32, 1)
+		forSubtract64(dst, values, 0x100000042)
+		assert.Equal(t, uint32(0), dst[0])
+	})
+
+	t.Run("full_block_timestamps", func(t *testing.T) {
+		base := uint64(1_719_300_000_000)
+		values := make([]uint64, blockSize)
+		for i := range values {
+			values[i] = base + uint64(i)*7
+		}
+		dst := make([]uint32, blockSize)
+		forSubtract64(dst, values, base)
+		for i := range blockSize {
+			assert.Equal(t, uint32(i*7), dst[i], "pos %d", i)
+		}
+	})
+}
+
+func TestForAdd64(t *testing.T) {
+	t.Run("basic", func(t *testing.T) {
+		values := []uint32{0, 5, 10, 15}
+		dst := make([]uint64, len(values))
+		forAdd64(dst, values, 100, len(values))
+		assert.Equal(t, []uint64{100, 105, 110, 115}, dst)
+	})
+
+	t.Run("zero_base", func(t *testing.T) {
+		values := []uint32{0, 1, 2, 3}
+		dst := make([]uint64, len(values))
+		forAdd64(dst, values, 0, len(values))
+		assert.Equal(t, []uint64{0, 1, 2, 3}, dst)
+	})
+
+	t.Run("large_base_above_32bit", func(t *testing.T) {
+		base := uint64(0x200000000)
+		values := []uint32{0, 10, 255}
+		dst := make([]uint64, len(values))
+		forAdd64(dst, values, base, len(values))
+		assert.Equal(t, []uint64{base, base + 10, base + 255}, dst)
+	})
+
+	t.Run("max_uint32_values", func(t *testing.T) {
+		base := uint64(0x100000000)
+		values := []uint32{0xFFFFFFFF, 0}
+		dst := make([]uint64, len(values))
+		forAdd64(dst, values, base, len(values))
+		assert.Equal(t, []uint64{0x1FFFFFFFF, 0x100000000}, dst)
+	})
+
+	t.Run("partial_count", func(t *testing.T) {
+		values := []uint32{10, 20, 30, 40}
+		dst := make([]uint64, len(values))
+		forAdd64(dst, values, 1000, 2)
+		assert.Equal(t, uint64(1010), dst[0])
+		assert.Equal(t, uint64(1020), dst[1])
+		assert.Equal(t, uint64(0), dst[2])
+		assert.Equal(t, uint64(0), dst[3])
+	})
+}
+
+func TestForSubtractAdd64_RoundTrip(t *testing.T) {
+	t.Run("basic", func(t *testing.T) {
+		original := []uint64{0x100000000, 0x100000005, 0x10000000A, 0x10000000F}
+		min64 := uint64(0x100000000)
+
+		subtracted := make([]uint32, len(original))
+		forSubtract64(subtracted, original, min64)
+
+		restored := make([]uint64, len(original))
+		forAdd64(restored, subtracted, min64, len(original))
+		assert.Equal(t, original, restored)
+	})
+
+	t.Run("boundary_crossing", func(t *testing.T) {
+		original := make([]uint64, blockSize)
+		for i := range original {
+			original[i] = 0xFFFFFFC0 + uint64(i)
+		}
+		min64 := uint64(0xFFFFFFC0)
+
+		subtracted := make([]uint32, blockSize)
+		forSubtract64(subtracted, original, min64)
+
+		restored := make([]uint64, blockSize)
+		forAdd64(restored, subtracted, min64, blockSize)
+		assert.Equal(t, original, restored)
+	})
+
+	t.Run("timestamps", func(t *testing.T) {
+		base := uint64(1_719_300_000_000)
+		original := make([]uint64, blockSize)
+		for i := range original {
+			original[i] = base + uint64(i)*100
+		}
+
+		subtracted := make([]uint32, blockSize)
+		forSubtract64(subtracted, original, base)
+
+		restored := make([]uint64, blockSize)
+		forAdd64(restored, subtracted, base, blockSize)
+		assert.Equal(t, original, restored)
+	})
+
+	t.Run("single_value", func(t *testing.T) {
+		original := []uint64{0xDEADBEEFCAFEBABE}
+		subtracted := make([]uint32, 1)
+		forSubtract64(subtracted, original, original[0])
+		assert.Equal(t, uint32(0), subtracted[0])
+
+		restored := make([]uint64, 1)
+		forAdd64(restored, subtracted, original[0], 1)
+		assert.Equal(t, original, restored)
+	})
+}
+
+func TestIsFor64SingleBlock(t *testing.T) {
+	t.Run("true_uint64_no_combine_forwidth3", func(t *testing.T) {
+		assert.True(t, isFor64SingleBlock(IntTypeUint64, forWidthU32, false))
+	})
+
+	t.Run("false_uint32", func(t *testing.T) {
+		assert.False(t, isFor64SingleBlock(IntTypeUint32, forWidthU32, false))
+	})
+
+	t.Run("false_uint16", func(t *testing.T) {
+		assert.False(t, isFor64SingleBlock(IntTypeUint16, forWidthU32, false))
+	})
+
+	t.Run("false_uint64_with_combine", func(t *testing.T) {
+		assert.False(t, isFor64SingleBlock(IntTypeUint64, forWidthU32, true))
+	})
+
+	t.Run("false_uint64_forwidth0", func(t *testing.T) {
+		assert.False(t, isFor64SingleBlock(IntTypeUint64, forWidthNone, false))
+	})
+
+	t.Run("false_uint64_forwidth1", func(t *testing.T) {
+		assert.False(t, isFor64SingleBlock(IntTypeUint64, forWidthU8, false))
+	})
+
+	t.Run("false_uint64_forwidth2", func(t *testing.T) {
+		assert.False(t, isFor64SingleBlock(IntTypeUint64, forWidthU16, false))
+	})
+
+	t.Run("false_uint64_combine_forwidth1", func(t *testing.T) {
+		assert.False(t, isFor64SingleBlock(IntTypeUint64, forWidthU8, true))
+	})
+}
+
+func TestForBaseBytesForBlock(t *testing.T) {
+	t.Run("uint32_forwidth0", func(t *testing.T) {
+		assert.Equal(t, 0, forBaseBytesForBlock(forWidthNone, IntTypeUint32, false))
+	})
+
+	t.Run("uint32_forwidth1", func(t *testing.T) {
+		assert.Equal(t, 1, forBaseBytesForBlock(forWidthU8, IntTypeUint32, false))
+	})
+
+	t.Run("uint32_forwidth2", func(t *testing.T) {
+		assert.Equal(t, 2, forBaseBytesForBlock(forWidthU16, IntTypeUint32, false))
+	})
+
+	t.Run("uint32_forwidth3", func(t *testing.T) {
+		assert.Equal(t, 4, forBaseBytesForBlock(forWidthU32, IntTypeUint32, false))
+	})
+
+	t.Run("uint64_single_forwidth3_is_8bytes", func(t *testing.T) {
+		assert.Equal(t, 8, forBaseBytesForBlock(forWidthU32, IntTypeUint64, false))
+	})
+
+	t.Run("uint64_combine_forwidth3_is_4bytes", func(t *testing.T) {
+		assert.Equal(t, 4, forBaseBytesForBlock(forWidthU32, IntTypeUint64, true))
+	})
+
+	t.Run("uint64_single_forwidth0", func(t *testing.T) {
+		assert.Equal(t, 0, forBaseBytesForBlock(forWidthNone, IntTypeUint64, false))
+	})
+
+	t.Run("uint64_single_forwidth1", func(t *testing.T) {
+		assert.Equal(t, 1, forBaseBytesForBlock(forWidthU8, IntTypeUint64, false))
+	})
+
+	t.Run("uint64_single_forwidth2", func(t *testing.T) {
+		assert.Equal(t, 2, forBaseBytesForBlock(forWidthU16, IntTypeUint64, false))
+	})
+
+	t.Run("uint64_combine_forwidth1", func(t *testing.T) {
+		assert.Equal(t, 1, forBaseBytesForBlock(forWidthU8, IntTypeUint64, true))
+	})
+
+	t.Run("uint16_forwidth3", func(t *testing.T) {
+		assert.Equal(t, 4, forBaseBytesForBlock(forWidthU32, IntTypeUint16, false))
+	})
+}
+
+func TestInsertFor64Base(t *testing.T) {
+	t.Run("header_has_forwidth3", func(t *testing.T) {
+		values := make([]uint64, blockSize)
+		for i := range values {
+			values[i] = 0x100000000 + uint64(i)
+		}
+		scratch := make([]uint32, ScratchLen64)
+		packed, err := PackUint64(0, values, nil, scratch)
+		require.NoError(t, err)
+
+		header := bo.Uint32(packed)
+		_, _, _, _, forWidth, _, _, _, _, _ := decodeHeader(header)
+		assert.Equal(t, forWidthU32, forWidth, "FOR64 block should have forWidth=3")
+	})
+
+	t.Run("base_at_correct_offset_no_exceptions", func(t *testing.T) {
+		values := make([]uint64, blockSize)
+		base := uint64(0x100000000)
+		for i := range values {
+			values[i] = base + uint64(i)
+		}
+		scratch := make([]uint32, ScratchLen64)
+		packed, err := PackUint64(NoPatch, values, nil, scratch)
+		require.NoError(t, err)
+
+		header := bo.Uint32(packed)
+		_, _, _, excCount, forWidth, _, _, _, _, _ := decodeHeader(header)
+		assert.Equal(t, forWidthU32, forWidth)
+		assert.Equal(t, 0, excCount)
+
+		for64Base := bo.Uint64(packed[headerBytes:])
+		assert.Equal(t, base, for64Base)
+	})
+
+	t.Run("base_at_correct_offset_with_exceptions", func(t *testing.T) {
+		values := make([]uint64, blockSize)
+		base := uint64(0x100000000)
+		for i := range values {
+			values[i] = base + uint64(i)
+		}
+		values[0] = base + 0xFFFFF
+		scratch := make([]uint32, ScratchLen64)
+		packed, err := PackUint64(0, values, nil, scratch)
+		require.NoError(t, err)
+
+		header := bo.Uint32(packed)
+		_, _, _, excCount, forWidth, _, _, _, _, _ := decodeHeader(header)
+		assert.Equal(t, forWidthU32, forWidth, "FOR64 block should have forWidth=3")
+		assert.Greater(t, excCount, 0, "should have exceptions")
+
+		// With exceptions, base is after header + svbLen
+		expectedMin := base + 1 // min of all values (base+0xFFFFF outlier, rest start at base+1)
+		for64Base := bo.Uint64(packed[headerBytes+svbLenBytes:])
+		assert.Equal(t, expectedMin, for64Base)
+	})
+
+	t.Run("roundtrip_verifies_base", func(t *testing.T) {
+		values := make([]uint64, blockSize)
+		base := uint64(0x100000000)
+		for i := range values {
+			values[i] = base + uint64(i)*7
+		}
+		scratch := make([]uint32, ScratchLen64)
+		packed, err := PackUint64(0, values, nil, scratch)
+		require.NoError(t, err)
+
+		dst := make([]uint64, blockSize)
+		unpacked, _, err := UnpackUint64(dst, scratch, packed)
+		require.NoError(t, err)
+		assert.Equal(t, values, unpacked)
+	})
 }
