@@ -171,10 +171,10 @@ func zigzagDecodeSSE2(values []uint32) {
 	zero := archsimd.BroadcastUint32x4(0)
 	for i := 0; i <= len(values)-4; i += 4 {
 		v := archsimd.LoadUint32x4(values[i : i+4])
-		half := v.ShiftAllRight(1)
-		signBit := v.And(one)
-		negSign := zero.Sub(signBit)
-		result := half.Xor(negSign)
+		half := v.ShiftAllRight(1)   // n >>> 1 (logical right shift)
+		signBit := v.And(one)        // n & 1: extract sign from LSB
+		negSign := zero.Sub(signBit) // 0 - signBit: yields 0x00000000 or 0xFFFFFFFF
+		result := half.Xor(negSign)  // conditional bit-flip restores original value
 		result.Store(values[i : i+4])
 	}
 	for i := (len(values) / 4) * 4; i < len(values); i++ {
@@ -267,194 +267,33 @@ func deltaDecodePerLaneWithOverflowSSE2(values []uint32, useZigZag bool) int {
 	return overflowPos
 }
 
-// packUint32SSE2 is the full SSE2 packing pipeline.
-// Uses SSE2 for bit-packing and delta/zigzag; scalar for exceptions and FOR.
+// packUint32SSE2 is the SSE2 packing pipeline. Delegates to packBlockSSE2
+// with uint32 type flags and Append handling.
 func packUint32SSE2(flag Flag, dst []byte, scratch []uint32, values []uint32) ([]byte, error) {
 	if len(values) == 0 || len(values) > blockSize {
 		return nil, ErrInvalidBuffer
 	}
-
-	off := 0
-	if flag&Append != 0 {
-		off = len(dst)
+	if flag&Append == 0 {
+		return packBlockSSE2(flag, values, dst, scratch, headerTypeUint32Flag, false)
 	}
-	flag &^= Append
-
-	headerFlags := headerTypeUint32Flag
-	headerFlags |= uint32(flag&Special) << 14
-
-	var useFOR bool
-	var baseValue uint32
-	var forW int
-	if flag&NoFOR == 0 {
-		useFOR, baseValue, forW = selectBitWidthWithFORSSE2(values)
-		if useFOR {
-			forSubtractSSE2(values, values, baseValue)
-			headerFlags |= uint32(forW) << forWidthShift
-		}
+	off := len(dst)
+	block, err := packBlockSSE2(flag&^Append, values, dst[off:off], scratch, headerTypeUint32Flag, false)
+	if err != nil {
+		return nil, err
 	}
-
-	if flag&Delta != 0 {
-		var needZZ bool
-		if len(values) == blockSize {
-			needZZ = deltaEncodePerLaneSSE2(values)
-		} else {
-			needZZ = deltaEncodePerLaneScalar(values)
-		}
-		if needZZ {
-			headerFlags |= headerZigZagFlag
-		}
-		headerFlags |= headerDeltaFlag
-	}
-
-	var bitWidth, excCount int
-	if flag&NoPatch != 0 {
-		bitWidth = selectBitWidthNoPatchSSE2(values)
-	} else {
-		bitWidth, excCount = selectBitWidthSSE2(values)
-	}
-	payloadBytes := utlPayloadBytes(bitWidth)
-	hasExceptions := excCount > 0
-	forBaseBytes := forBaseBytes(forW)
-
-	packInput := values
-	if len(values) < blockSize {
-		copy(scratch[:len(values)], values)
-		clear(scratch[len(values):blockSize])
-		packInput = scratch[:blockSize]
-	}
-
-	if !hasExceptions {
-		pOff := payloadOffset(forBaseBytes, false, false)
-		totalLen := pOff + payloadBytes
-		if off > 0 {
-			dst = ensureAppend(dst, off, totalLen)
-		} else {
-			dst = ensureLen(dst, totalLen)
-		}
-		block := dst[off:]
-		bo.PutUint32(block, encodeHeader(len(values), bitWidth, 0, headerFlags))
-		if useFOR {
-			writeFORBase(block, baseValue, forW, false)
-		}
-		packLanesUTLSSE2(block[pOff:pOff+payloadBytes], packInput, bitWidth)
+	totalLen := len(block)
+	if cap(dst) >= off+totalLen {
 		return dst[:off+totalLen], nil
 	}
-
-	excIdxSize := excIndexSize(excCount)
-	maxSvbLen := maxSVBEncodedLen(excCount)
-	pOff := payloadOffset(forBaseBytes, true, false)
-	maxTotalLen := pOff + payloadBytes + excIdxSize + maxSvbLen
-
-	if off > 0 {
-		dst = ensureAppend(dst, off, maxTotalLen)
-	} else {
-		dst = ensureLen(dst, maxTotalLen)
-	}
-	block := dst[off:]
-	bo.PutUint32(block, encodeHeader(len(values), bitWidth, excCount, headerFlags))
-	if useFOR {
-		writeFORBase(block, baseValue, forW, true)
-	}
-
-	packLanesUTLSSE2(block[pOff:pOff+payloadBytes], packInput, bitWidth)
-
-	highBits := scratch[:blockSize]
-
-	excOff := pOff + payloadBytes
-	collectAndWriteExceptions(values, bitWidth, block[excOff:], excCount, highBits)
-
-	svbOffset := excOff + excIdxSize
-	svbLen := encodeSVBIntoDst(block[svbOffset:maxTotalLen], highBits[:excCount])
-
-	bo.PutUint16(block[headerBytes:], uint16(svbLen))
-	return dst[:off+svbOffset+svbLen], nil
+	dst = ensureAppend(dst, off, totalLen)
+	copy(dst[off:], block)
+	return dst[:off+totalLen], nil
 }
 
-// unpackUint32SSE2 is the full SSE2 unpacking pipeline.
-// Uses SSE2 for bit-unpacking and delta/zigzag; scalar for exceptions and FOR.
+// unpackUint32SSE2 is the SSE2 unpacking pipeline. Delegates to
+// unpackBlockSSE2 with uint32 context (forUint64=false).
 func unpackUint32SSE2(dst []uint32, scratch []uint32, buf []byte) ([]uint32, int, error) {
-	if len(buf) < headerBytes {
-		return nil, 0, ErrInvalidBuffer
-	}
-
-	header := bo.Uint32(buf)
-	count, bitWidth, intType, excCount, forWidth, hasExceptions, hasDelta, hasZigZag, _, _ := decodeHeader(header)
-	hasFOR := forWidth > 0
-
-	if err := validateIntType(intType); err != nil {
-		return nil, 0, err
-	}
-
-	if uint(count-1) >= blockSize || uint(bitWidth) > 32 {
-		if count == 0 {
-			return dst[:0], headerBytes, nil
-		}
-		if count > blockSize {
-			return nil, 0, ErrInvalidBlockLength
-		}
-		return nil, 0, ErrInvalidBuffer
-	}
-
-	pOff := payloadOffset(0, hasExceptions, false)
-	var forBase uint32
-	if hasFOR {
-		forBase = readFORBase(buf, pOff, forWidth)
-		pOff += forBaseBytes(forWidth)
-	}
-
-	payloadBytes := utlPayloadBytes(bitWidth)
-
-	if len(buf) < pOff+payloadBytes {
-		return nil, 0, ErrInvalidBuffer
-	}
-
-	if cap(dst) < blockSize {
-		dst = make([]uint32, blockSize)
-	}
-	dst = dst[:blockSize]
-
-	payload := buf[pOff : pOff+payloadBytes]
-	unpackLanesUTLSSE2(dst, payload, blockSize, bitWidth)
-
-	dst = dst[:count]
-
-	consumed := pOff + payloadBytes
-
-	if hasExceptions {
-		excStart := pOff + payloadBytes
-		var err error
-		consumed, err = applyExceptions(dst, buf, excStart, count, bitWidth, excCount, scratch)
-		if err != nil {
-			return nil, 0, err
-		}
-	}
-
-	if hasDelta {
-		if hasZigZag {
-			if count == blockSize {
-				deltaDecodePerLaneSSE2(dst, true)
-			} else {
-				deltaDecodePerLaneScalar(dst, true)
-			}
-		} else {
-			var overflowPos int
-			if count == blockSize {
-				overflowPos = deltaDecodePerLaneWithOverflowSSE2(dst, false)
-			} else {
-				overflowPos = deltaDecodePerLaneWithOverflowScalar(dst, false)
-			}
-			if overflowPos > 0 {
-				return nil, 0, &ErrOverflow{Position: overflowPos}
-			}
-		}
-	}
-
-	if hasFOR {
-		forAddSSE2(dst, count, forBase)
-	}
-
-	return dst, consumed, nil
+	return unpackBlockSSE2(dst, scratch, buf, false)
 }
 
 // selectBitWidthSSE2 computes the optimal step bitwidth using SIMD threshold
@@ -577,4 +416,347 @@ func forAddSSE2(output []uint32, count int, baseValue uint32) {
 	for ; i < count; i++ {
 		output[i] += baseValue
 	}
+}
+
+// splitUint64HalvesSSE2 extracts lower/upper uint32 halves from uint64
+// values, computes OR-accumulator using SSE2 SIMD for the all-fit-in-32
+// fast path detection. Min/max use scalar because SSE2/AVX2 lack native
+// uint64 min/max (VPMINUQ requires AVX-512).
+func splitUint64HalvesSSE2(lower, upper []uint32, values []uint64) (min64, max64, acc uint64) {
+	n := len(values)
+	if n < 2 {
+		return splitUint64Halves(lower, upper, values)
+	}
+
+	// SIMD OR-accumulation for fast all-fit-in-32 detection
+	accVec := archsimd.LoadUint64x2(values[:2])
+	for i := 2; i+2 <= n; i += 2 {
+		accVec = accVec.Or(archsimd.LoadUint64x2(values[i : i+2]))
+	}
+	var accL [2]uint64
+	accVec.StoreArray(&accL)
+	acc = accL[0] | accL[1]
+	if n%2 != 0 {
+		acc |= values[n-1]
+	}
+
+	// Scalar extraction + min/max (uint64 min/max needs AVX-512)
+	min64, max64 = values[0], values[0]
+	for i, v := range values {
+		lower[i] = uint32(v)
+		upper[i] = uint32(v >> 32)
+		min64 = min(min64, v)
+		max64 = max(max64, v)
+	}
+	return
+}
+
+// allFitIn32BitsSSE2 checks if all uint64 values fit in 32 bits by
+// OR-accumulating and testing the upper 32 bits. Processes 2 values per
+// iteration using Uint64x2.
+func allFitIn32BitsSSE2(values []uint64) bool {
+	n := len(values)
+	if n < 2 {
+		return values[0]>>32 == 0
+	}
+
+	accVec := archsimd.LoadUint64x2(values[:2])
+
+	for i := 2; i+2 <= n; i += 2 {
+		chunk := archsimd.LoadUint64x2(values[i : i+2])
+		accVec = accVec.Or(chunk)
+	}
+
+	var lanes [2]uint64
+	accVec.Store(lanes[:])
+	acc := lanes[0] | lanes[1]
+
+	tail := (n / 2) * 2
+	for i := tail; i < n; i++ {
+		acc |= values[i]
+	}
+	return acc>>32 == 0
+}
+
+
+// packBlockSSE2 packs uint32 values into a UTL block using SSE2-accelerated
+// kernels for bit-packing, delta encoding, FOR selection, and bitwidth selection.
+// Accepts configurable typeFlags and hasCombine for use by uint64 sub-block paths.
+func packBlockSSE2(flag Flag, values []uint32, dst []byte, scratch []uint32, typeFlags uint32, hasCombine bool) ([]byte, error) {
+	if len(values) == 0 || len(values) > blockSize {
+		return nil, ErrInvalidBuffer
+	}
+
+	headerFlags := typeFlags
+	headerFlags |= uint32(flag&Special) << 14
+
+	var useFOR bool
+	var baseValue uint32
+	var forW int
+	if flag&NoFOR == 0 {
+		useFOR, baseValue, forW = selectBitWidthWithFORSSE2(values)
+		if useFOR {
+			forSubtractSSE2(values, values, baseValue)
+			headerFlags |= uint32(forW) << forWidthShift
+		}
+	}
+
+	if flag&Delta != 0 {
+		var needZZ bool
+		if len(values) == blockSize {
+			needZZ = deltaEncodePerLaneSSE2(values)
+		} else {
+			needZZ = deltaEncodePerLaneScalar(values)
+		}
+		if needZZ {
+			headerFlags |= headerZigZagFlag
+		}
+		headerFlags |= headerDeltaFlag
+	}
+
+	var bitWidth, excCount int
+	if flag&NoPatch != 0 {
+		bitWidth = selectBitWidthNoPatchSSE2(values)
+	} else {
+		bitWidth, excCount = selectBitWidthSSE2(values)
+	}
+	payloadSize := utlPayloadBytes(bitWidth)
+	hasExceptions := excCount > 0
+	forBBytes := forBaseBytes(forW)
+
+	packInput := values
+	if len(values) < blockSize {
+		copy(scratch[:len(values)], values)
+		clear(scratch[len(values):blockSize])
+		packInput = scratch[:blockSize]
+	}
+
+	if !hasExceptions {
+		pOff := payloadOffset(forBBytes, false, hasCombine)
+		totalLen := pOff + payloadSize
+		dst = ensureLen(dst, totalLen)
+		bo.PutUint32(dst, encodeHeader(len(values), bitWidth, 0, headerFlags))
+		if useFOR {
+			writeFORBase(dst, baseValue, forW, false)
+		}
+		packLanesUTLSSE2(dst[pOff:pOff+payloadSize], packInput, bitWidth)
+		return dst[:totalLen], nil
+	}
+
+	excIdxSize := excIndexSize(excCount)
+	maxSvbLen := maxSVBEncodedLen(excCount)
+	pOff := payloadOffset(forBBytes, true, hasCombine)
+	maxTotalLen := pOff + payloadSize + excIdxSize + maxSvbLen
+
+	dst = ensureLen(dst, maxTotalLen)
+	bo.PutUint32(dst, encodeHeader(len(values), bitWidth, excCount, headerFlags))
+	if useFOR {
+		writeFORBase(dst, baseValue, forW, true)
+	}
+
+	packLanesUTLSSE2(dst[pOff:pOff+payloadSize], packInput, bitWidth)
+
+	highBits := scratch[:blockSize]
+	excOff := pOff + payloadSize
+	collectAndWriteExceptions(values, bitWidth, dst[excOff:], excCount, highBits)
+	svbOffset := excOff + excIdxSize
+	svbLen := encodeSVBIntoDst(dst[svbOffset:maxTotalLen], highBits[:excCount])
+
+	bo.PutUint16(dst[headerBytes:], uint16(svbLen))
+	return dst[:svbOffset+svbLen], nil
+}
+
+// packUint64SSE2 is the SSE2 implementation of PackUint64.
+// Uses SIMD-accelerated min/max/OR reduction (Uint64x2), then delegates
+// sub-block packing to packBlockSSE2 for SIMD-accelerated bit-packing.
+func packUint64SSE2(flag Flag, values []uint64, dst []byte, scratch []uint32) ([]byte, error) {
+	count := len(values)
+	if count == 0 || count > blockSize {
+		return nil, ErrInvalidBuffer
+	}
+
+	off := 0
+	if flag&Append != 0 {
+		off = len(dst)
+	}
+	innerFlag := flag &^ Append
+
+	dst = ensureCapacity64(dst, off, innerFlag)
+
+	upper := scratch[2*blockSize:]
+	min64, max64, acc := splitUint64HalvesSSE2(scratch, upper, values)
+
+	if innerFlag&NoFOR == 0 && min64 > 0 && (max64-min64) < (1<<32) {
+		forSubtract64SSE2(scratch[:count], values, min64)
+		return packFor64(innerFlag, dst, scratch, off, count, min64, packBlockSSE2)
+	}
+
+	if acc>>32 == 0 {
+		block, err := packBlockSSE2(innerFlag, scratch[:count], dst[off:off], scratch[blockSize:2*blockSize], headerTypeUint64Flag, false)
+		if err != nil {
+			return nil, err
+		}
+		return dst[:off+len(block)], nil
+	}
+
+	return packUint64TwoBlock(innerFlag, dst, scratch, off, count, packBlockSSE2)
+}
+
+// unpackBlockSSE2 unpacks a uint32 block using SSE2-accelerated kernels.
+// Accepts forUint64 to handle uint64 sub-block context (type validation,
+// FOR64 single-block handling, combine flag recognition).
+func unpackBlockSSE2(dst []uint32, scratch []uint32, buf []byte, forUint64 bool) ([]uint32, int, error) {
+	if len(buf) < headerBytes {
+		return nil, 0, ErrInvalidBuffer
+	}
+
+	header := bo.Uint32(buf)
+	count, bitWidth, intType, excCount, forWidth, hasExceptions, hasDelta, hasZigZag, _, hasCombine := decodeHeader(header)
+	hasFOR := forWidth > 0
+
+	if forUint64 {
+		if err := validateIntType64(intType); err != nil {
+			return nil, 0, err
+		}
+	} else {
+		if err := validateIntType(intType); err != nil {
+			return nil, 0, err
+		}
+		hasCombine = false
+	}
+
+	if uint(count-1) >= blockSize || uint(bitWidth) > 32 {
+		if count == 0 {
+			return dst[:0], headerBytes, nil
+		}
+		if count > blockSize {
+			return nil, 0, ErrInvalidBlockLength
+		}
+		return nil, 0, ErrInvalidBuffer
+	}
+
+	u64Single := forUint64 && isFor64SingleBlock(intType, forWidth, hasCombine)
+
+	pOff := headerBytes
+	if hasExceptions {
+		pOff += svbLenBytes
+	}
+	var forBase uint32
+	if hasFOR {
+		if u64Single {
+			pOff += for64BaseSize
+		} else {
+			forBase = readFORBase(buf, pOff, forWidth)
+			pOff += forBaseBytes(forWidth)
+		}
+	}
+	if hasCombine {
+		pOff += block2LenBytes
+	}
+
+	payloadBytes := utlPayloadBytes(bitWidth)
+	if len(buf) < pOff+payloadBytes {
+		return nil, 0, ErrInvalidBuffer
+	}
+
+	if cap(dst) < blockSize {
+		dst = make([]uint32, blockSize)
+	}
+	dst = dst[:blockSize]
+
+	payload := buf[pOff : pOff+payloadBytes]
+	unpackLanesUTLSSE2(dst, payload, blockSize, bitWidth)
+	dst = dst[:count]
+
+	consumed := pOff + payloadBytes
+
+	if hasExceptions {
+		excStart := pOff + payloadBytes
+		var err error
+		consumed, err = applyExceptions(dst, buf, excStart, count, bitWidth, excCount, scratch)
+		if err != nil {
+			return nil, 0, err
+		}
+	}
+
+	if hasDelta {
+		if hasZigZag {
+			if count == blockSize {
+				deltaDecodePerLaneSSE2(dst, true)
+			} else {
+				deltaDecodePerLaneScalar(dst, true)
+			}
+		} else {
+			var overflowPos int
+			if count == blockSize {
+				overflowPos = deltaDecodePerLaneWithOverflowSSE2(dst, false)
+			} else {
+				overflowPos = deltaDecodePerLaneWithOverflowScalar(dst, false)
+			}
+			if overflowPos > 0 {
+				return nil, 0, &ErrOverflow{Position: overflowPos}
+			}
+		}
+	}
+
+	if hasFOR && !u64Single {
+		forAddSSE2(dst, count, forBase)
+	}
+
+	return dst, consumed, nil
+}
+
+// combineUint64SSE2 merges lower and upper uint32 halves into uint64 values
+// using SSE2 InterleaveLo/InterleaveHi (4 values per iteration).
+func combineUint64SSE2(dst []uint64, lower, upper []uint32, count int) {
+	i := 0
+	for ; i+4 <= count; i += 4 {
+		lo := archsimd.LoadUint32x4(lower[i : i+4])
+		hi := archsimd.LoadUint32x4(upper[i : i+4])
+		lo.InterleaveLo(hi).AsUint64x2().StoreArray((*[2]uint64)(unsafe.Pointer(&dst[i])))
+		lo.InterleaveHi(hi).AsUint64x2().StoreArray((*[2]uint64)(unsafe.Pointer(&dst[i+2])))
+	}
+	for ; i < count; i++ {
+		dst[i] = uint64(upper[i])<<32 | uint64(lower[i])
+	}
+}
+
+// forAdd64SSE2 adds a uint64 base to each uint32 value and stores as uint64.
+// Uses InterleaveLo/Hi with zero vector for zero-extension (4 values per iteration).
+func forAdd64SSE2(dst []uint64, values []uint32, base uint64, count int) {
+	baseVec := archsimd.BroadcastUint64x2(base)
+	zero := archsimd.BroadcastUint32x4(0)
+	i := 0
+	for ; i+4 <= count; i += 4 {
+		vals := archsimd.LoadUint32x4(values[i : i+4])
+		vals.InterleaveLo(zero).AsUint64x2().Add(baseVec).StoreArray((*[2]uint64)(unsafe.Pointer(&dst[i])))
+		vals.InterleaveHi(zero).AsUint64x2().Add(baseVec).StoreArray((*[2]uint64)(unsafe.Pointer(&dst[i+2])))
+	}
+	for ; i < count; i++ {
+		dst[i] = uint64(values[i]) + base
+	}
+}
+
+// forSubtract64SSE2 subtracts base from each uint64 value and stores as uint32.
+// Uses Uint64x2 Sub (2 values per iteration).
+func forSubtract64SSE2(dst []uint32, values []uint64, base uint64) {
+	baseVec := archsimd.BroadcastUint64x2(base)
+	n := len(values)
+	i := 0
+	for ; i+2 <= n; i += 2 {
+		diff := archsimd.LoadUint64x2(values[i : i+2]).Sub(baseVec)
+		var tmp [2]uint64
+		diff.StoreArray(&tmp)
+		dst[i] = uint32(tmp[0])
+		dst[i+1] = uint32(tmp[1])
+	}
+	for ; i < n; i++ {
+		dst[i] = uint32(values[i] - base)
+	}
+}
+
+// unpackUint64SSE2 is the SSE2 implementation of UnpackUint64.
+// Uses SSE2 SIMD for combine and forAdd64 operations.
+func unpackUint64SSE2(dst []uint64, scratch []uint32, buf []byte) ([]uint64, int, error) {
+	return unpackUint64Block(dst, scratch, buf, unpackBlockSSE2, forAdd64SSE2, combineUint64SSE2)
 }

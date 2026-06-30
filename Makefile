@@ -5,7 +5,12 @@
        bench-threshold threshold-analyze bench-threshold-full \
        fuzz fuzz-simd fuzz-regression fuzz-regression-simd \
        generate-native generate \
-       sim
+       sim bench-binary
+
+# Go toolchain binary to use (defaults to gotip).
+# Override to easily revert:
+#   make GO=go test
+GO ?= gotip
 
 FUZZTIME ?= 30s
 BENCHCOUNT ?= 10
@@ -35,43 +40,43 @@ FASTPFOR_DIR ?= ../fastpfor-go
 # --- Tests ---
 
 test:
-	go test ./... -count=1
+	$(GO) test ./... -count=1
 
 test-simd:
-	GOEXPERIMENT=simd gotip test ./... -count=1
+	GOEXPERIMENT=simd $(GO) test ./... -count=1
 
 test-force-scalar:
-	GOEXPERIMENT=simd UTL_SIMD_LEVEL=scalar gotip test ./... -count=1
+	GOEXPERIMENT=simd UTL_SIMD_LEVEL=scalar $(GO) test ./... -count=1
 
 test-force-sse2:
-	GOEXPERIMENT=simd UTL_SIMD_LEVEL=sse2 gotip test ./... -count=1
+	GOEXPERIMENT=simd UTL_SIMD_LEVEL=sse2 $(GO) test ./... -count=1
 
 test-force-avx2:
-	GOEXPERIMENT=simd UTL_SIMD_LEVEL=avx2 gotip test ./... -count=1
+	GOEXPERIMENT=simd UTL_SIMD_LEVEL=avx2 $(GO) test ./... -count=1
 
 test-force-avx512:
-	GOEXPERIMENT=simd UTL_SIMD_LEVEL=avx512 gotip test ./... -count=1
+	GOEXPERIMENT=simd UTL_SIMD_LEVEL=avx512 $(GO) test ./... -count=1
 
 # --- Benchmarks ---
 
 bench:
-	$(TASKSET_MICRO) go test -bench=. -benchmem -count=$(BENCHCOUNT) -run='^$$' ./...
+	$(TASKSET_MICRO) $(GO) test -bench=. -benchmem -count=$(BENCHCOUNT) -run='^$$' ./...
 
 bench-simd:
-	GOEXPERIMENT=simd $(TASKSET_MICRO) gotip test -bench=. -benchmem -count=$(BENCHCOUNT) -run='^$$' ./...
+	GOEXPERIMENT=simd $(TASKSET_MICRO) $(GO) test -bench=. -benchmem -count=$(BENCHCOUNT) -run='^$$' ./...
 
 bench-save-scalar:
 	@mkdir -p benchmarks
-	$(TASKSET_MICRO) go test -bench=. -benchmem -count=$(BENCHCOUNT) -run='^$$' ./... > benchmarks/scalar-baseline.txt
+	$(TASKSET_MICRO) $(GO) test -bench=. -benchmem -count=$(BENCHCOUNT) -run='^$$' ./... > benchmarks/scalar-baseline.txt
 	@echo "Saved to benchmarks/scalar-baseline.txt"
 
 bench-save-simd:
 	@mkdir -p benchmarks
-	GOEXPERIMENT=simd $(TASKSET_MICRO) gotip test -bench=. -benchmem -count=$(BENCHCOUNT) -run='^$$' ./... > benchmarks/simd-baseline.txt
+	GOEXPERIMENT=simd $(TASKSET_MICRO) $(GO) test -bench=. -benchmem -count=$(BENCHCOUNT) -run='^$$' ./... > benchmarks/simd-baseline.txt
 	@echo "Saved to benchmarks/simd-baseline.txt"
 
 bench-compare:
-	@command -v benchstat >/dev/null 2>&1 || { echo "Install benchstat: go install golang.org/x/perf/cmd/benchstat@latest"; exit 1; }
+	@command -v benchstat >/dev/null 2>&1 || { echo "Install benchstat: $(GO) install golang.org/x/perf/cmd/benchstat@latest"; exit 1; }
 	benchstat benchmarks/scalar-baseline.txt benchmarks/simd-baseline.txt
 
 FASTPFOR_DIR ?= ../fastpfor-go
@@ -79,10 +84,10 @@ FASTPFOR_DIR ?= ../fastpfor-go
 # --- Cross-repo comparison with fastpfor-go ---
 
 compare-with-fastpfor:
-	@command -v benchstat >/dev/null 2>&1 || { echo "Install benchstat: go install golang.org/x/perf/cmd/benchstat@latest"; exit 1; }
+	@command -v benchstat >/dev/null 2>&1 || { echo "Install benchstat: $(GO) install golang.org/x/perf/cmd/benchstat@latest"; exit 1; }
 	@mkdir -p $(CURDIR)/benchmarks
 	@echo "Running fastpfor-go benchmarks..."
-	@cd $(FASTPFOR_DIR) && $(TASKSET) go test -bench='BenchmarkPackUint32$$|BenchmarkUnpackUint32$$|BenchmarkPackDeltaUint32$$|BenchmarkUnpackDeltaUint32$$|BenchmarkPackDeltaMixed$$|BenchmarkUnpackDeltaMixed$$|BenchmarkPackWithExceptions$$|BenchmarkUnpackWithExceptions$$|BenchmarkPackWithLargeExceptions$$|BenchmarkUnpackWithLargeExceptions$$|BenchmarkGetUint32WithExceptions$$|BenchmarkGetUint32Delta$$|BenchmarkBlockLength$$' \
+	@cd $(FASTPFOR_DIR) && $(TASKSET) $(GO) test -bench='BenchmarkPackUint32$$|BenchmarkUnpackUint32$$|BenchmarkPackDeltaUint32$$|BenchmarkUnpackDeltaUint32$$|BenchmarkPackDeltaMixed$$|BenchmarkUnpackDeltaMixed$$|BenchmarkPackWithExceptions$$|BenchmarkUnpackWithExceptions$$|BenchmarkPackWithLargeExceptions$$|BenchmarkUnpackWithLargeExceptions$$|BenchmarkGetUint32WithExceptions$$|BenchmarkGetUint32Delta$$|BenchmarkBlockLength$$' \
 		-benchmem -count=$(BENCHCOUNT) -run='^$$' ./... \
 		| sed -E \
 			-e 's/BenchmarkPackUint32-/BenchmarkPackSequential-/' \
@@ -93,7 +98,7 @@ compare-with-fastpfor:
 			-e 's/BenchmarkUnpackWithExceptions-/BenchmarkUnpackWithSmallExceptions-/' \
 		> $(CURDIR)/benchmarks/fastpfor-comparable.txt
 	@echo "Running utlpfor benchmarks..."
-	@GOEXPERIMENT=simd $(TASKSET) go test -bench='BenchmarkPackSequential$$|BenchmarkUnpackSequential$$|BenchmarkPackDeltaMonotonic$$|BenchmarkUnpackDeltaMonotonic$$|BenchmarkPackDeltaMixed$$|BenchmarkUnpackDeltaMixed$$|BenchmarkPackWithSmallExceptions$$|BenchmarkUnpackWithSmallExceptions$$|BenchmarkPackWithLargeExceptions$$|BenchmarkUnpackWithLargeExceptions$$|BenchmarkGetUint32WithExceptions$$|BenchmarkGetUint32Delta$$|BenchmarkBlockLength$$' \
+	@GOEXPERIMENT=simd $(TASKSET) $(GO) test -bench='BenchmarkPackSequential$$|BenchmarkUnpackSequential$$|BenchmarkPackDeltaMonotonic$$|BenchmarkUnpackDeltaMonotonic$$|BenchmarkPackDeltaMixed$$|BenchmarkUnpackDeltaMixed$$|BenchmarkPackWithSmallExceptions$$|BenchmarkUnpackWithSmallExceptions$$|BenchmarkPackWithLargeExceptions$$|BenchmarkUnpackWithLargeExceptions$$|BenchmarkGetUint32WithExceptions$$|BenchmarkGetUint32Delta$$|BenchmarkBlockLength$$' \
 		-benchmem -count=$(BENCHCOUNT) -run='^$$' ./... \
 		> $(CURDIR)/benchmarks/utlpfor-comparable.txt
 	@echo "--- Comparison (fastpfor-go vs utlpfor) ---"
@@ -104,13 +109,13 @@ compare-with-fastpfor:
 QUICK_COUNT ?= 10
 
 bench-quick:
-	@command -v go >/dev/null 2>&1 || { echo "Go not found" >&2; exit 1; }
+	@command -v $(GO) >/dev/null 2>&1 || { echo "$(GO) not found" >&2; exit 1; }
 	@for level in scalar sse2 avx2 avx512; do \
 		printf '\n=== %s ===\n' "$$level"; \
-		out="$$(GOEXPERIMENT=simd UTL_SIMD_LEVEL=$$level $(TASKSET) go test \
-			-bench='BenchmarkQuickCompare' -benchmem -count=$(QUICK_COUNT) \
+		out="$$(GOEXPERIMENT=simd UTL_SIMD_LEVEL=$$level $(TASKSET) $(GO) test \
+			-bench='BenchmarkQuickCompare|BenchmarkQuickCompareUint64' -benchmem -count=$(QUICK_COUNT) \
 			-run='^$$' -timeout=300s ./... 2>&1 || true)"; \
-		filtered="$$(printf '%s\n' "$$out" | grep -E 'BenchmarkQuickCompare|PASS|FAIL|^ok[[:space:]]' || true)"; \
+		filtered="$$(printf '%s\n' "$$out" | grep -E 'BenchmarkQuickCompare(Uint64)?|PASS|FAIL|^ok[[:space:]]' || true)"; \
 		if [ -n "$$filtered" ]; then \
 			printf '%s\n' "$$filtered"; \
 		else \
@@ -119,16 +124,16 @@ bench-quick:
 	done
 
 bench-quick-save:
-	@command -v go >/dev/null 2>&1 || { echo "Go not found" >&2; exit 1; }
+	@command -v $(GO) >/dev/null 2>&1 || { echo "$(GO) not found" >&2; exit 1; }
 	@mkdir -p benchmarks
 	@STAMP=$$(date +%Y%m%d-%H%M); \
 	for level in scalar sse2 avx2 avx512; do \
 		printf '=== Running %s benchmarks ===\n' "$$level" >&2; \
-		GOEXPERIMENT=simd UTL_SIMD_LEVEL=$$level $(TASKSET) go test \
-			-bench='BenchmarkQuickCompare' -benchmem -count=$(QUICK_COUNT) \
+		GOEXPERIMENT=simd UTL_SIMD_LEVEL=$$level $(TASKSET) $(GO) test \
+			-bench='BenchmarkQuickCompare|BenchmarkQuickCompareUint64' -benchmem -count=$(QUICK_COUNT) \
 			-run='^$$' -timeout=300s ./... \
 			> benchmarks/quick-$$level-$$STAMP.txt 2>&1 || true; \
-		if grep -q 'BenchmarkQuickCompare/' benchmarks/quick-$$level-$$STAMP.txt; then \
+		if grep -Eq 'BenchmarkQuickCompare(Uint64)?/' benchmarks/quick-$$level-$$STAMP.txt; then \
 			printf '  saved benchmarks/quick-%s-%s.txt\n' "$$level" "$$STAMP" >&2; \
 		else \
 			printf '  [skip] %s unsupported on this CPU\n' "$$level" >&2; \
@@ -137,18 +142,18 @@ bench-quick-save:
 
 # --- Benchmark Matrix ---
 
-MATRIX_BENCH ?= BenchmarkMatrix/
+MATRIX_BENCH ?= BenchmarkMatrix/|BenchmarkMatrixUint64/
 MATRIX_COUNT ?= 5
 
 bench-matrix:
-	@command -v go >/dev/null 2>&1 || { echo "Go not found"; exit 1; }
+	@command -v $(GO) >/dev/null 2>&1 || { echo "$(GO) not found"; exit 1; }
 	@mkdir -p benchmarks
 	@COMMIT=$$(git rev-parse --short HEAD); \
 	echo "# Benchmarks at commit $$COMMIT"; \
 	for level in scalar sse2 avx2 avx512; do \
 		echo "=== Running $$level benchmarks ==="; \
 		out="$$( { echo "# git commit: $$COMMIT"; \
-		  GOEXPERIMENT=simd UTL_SIMD_LEVEL=$$level $(TASKSET) go test \
+		  GOEXPERIMENT=simd UTL_SIMD_LEVEL=$$level $(TASKSET) $(GO) test \
 		    -bench='$(MATRIX_BENCH)' -benchmem -count=$(MATRIX_COUNT) \
 		    -run='^$$' -timeout=300s ./... 2>&1; } || true)"; \
 		echo "$$out" > benchmarks/matrix-$$level.txt; \
@@ -157,14 +162,14 @@ bench-matrix:
 		fi; \
 	done
 	@echo "=== Formatting table ==="
-	@go run ./internal/benchfmt \
+	@$(GO) run ./internal/benchfmt \
 		benchmarks/matrix-scalar.txt \
 		benchmarks/matrix-sse2.txt \
 		benchmarks/matrix-avx2.txt \
 		benchmarks/matrix-avx512.txt
 
 bench-matrix-table:
-	@go run ./internal/benchfmt \
+	@$(GO) run ./internal/benchfmt \
 		benchmarks/matrix-scalar.txt \
 		benchmarks/matrix-sse2.txt \
 		benchmarks/matrix-avx2.txt \
@@ -172,7 +177,7 @@ bench-matrix-table:
 
 bench-matrix-compare:
 	@command -v benchstat >/dev/null 2>&1 || \
-		{ echo "Install benchstat: go install golang.org/x/perf/cmd/benchstat@latest"; exit 1; }
+		{ echo "Install benchstat: $(GO) install golang.org/x/perf/cmd/benchstat@latest"; exit 1; }
 	@if [ -z "$(OLD)" ] || [ -z "$(NEW)" ]; then \
 		echo "Usage: make bench-matrix-compare OLD=benchmarks/matrix-avx2-old.txt NEW=benchmarks/matrix-avx2.txt"; \
 		exit 1; \
@@ -182,7 +187,7 @@ bench-matrix-compare:
 # --- Code Generation ---
 
 generate-native:
-	go run ./internal/gen | gofmt > simd_spec_amd64.go
+	$(GO) run ./internal/gen | gofmt > simd_spec_amd64.go
 
 generate: generate-native
 
@@ -191,26 +196,26 @@ generate: generate-native
 fuzz:
 	@for target in $(FUZZ_TARGETS); do \
 		echo "=== Fuzzing $$target ($(FUZZTIME)) ==="; \
-		go test -fuzz=$$target -fuzztime=$(FUZZTIME) ./... || exit 1; \
+		$(GO) test -fuzz=$$target -fuzztime=$(FUZZTIME) ./... || exit 1; \
 	done
 
 fuzz-simd:
 	@for target in $(FUZZ_TARGETS) $(FUZZ_SIMD_TARGETS); do \
 		echo "=== Fuzzing $$target ($(FUZZTIME), SIMD) ==="; \
-		GOEXPERIMENT=simd go test -fuzz=$$target -fuzztime=$(FUZZTIME) ./... || exit 1; \
+		GOEXPERIMENT=simd $(GO) test -fuzz=$$target -fuzztime=$(FUZZTIME) ./... || exit 1; \
 	done
 
 fuzz-regression:
-	go test -run='Fuzz' -count=1 ./...
+	$(GO) test -run='Fuzz' -count=1 ./...
 
 fuzz-regression-simd:
-	GOEXPERIMENT=simd go test -run='Fuzz' -count=1 ./...
+	GOEXPERIMENT=simd $(GO) test -run='Fuzz' -count=1 ./...
 
 SIM_RUNS ?= 10
 SIM_WARMUP ?= 5
 
 sim:
-	GOEXPERIMENT=simd go run ./internal/sim -runs $(SIM_RUNS) -warmup $(SIM_WARMUP)
+	GOEXPERIMENT=simd $(GO) run ./internal/sim -runs $(SIM_RUNS) -warmup $(SIM_WARMUP)
 
 # --- GetUint32 Threshold Tuning ---
 
@@ -220,7 +225,7 @@ bench-threshold:
 	@mkdir -p benchmarks
 	@for level in scalar sse2 avx2 avx512; do \
 		printf '=== Running %s GetUint32_Approaches ===\n' "$$level"; \
-		GOEXPERIMENT=simd UTL_SIMD_LEVEL=$$level $(TASKSET) gotip test \
+		GOEXPERIMENT=simd UTL_SIMD_LEVEL=$$level $(TASKSET) $(GO) test \
 			-bench=BenchmarkGetUint32_Approaches -benchmem -count=$(THRESHOLD_COUNT) \
 			-run='^$$' -timeout=300s ./... \
 			> benchmarks/get-$$level.txt 2>&1 || true; \
@@ -232,10 +237,51 @@ bench-threshold:
 	done
 
 threshold-analyze:
-	@go run ./internal/threshold \
+	@$(GO) run ./internal/threshold \
 		benchmarks/get-scalar.txt \
 		benchmarks/get-sse2.txt \
 		benchmarks/get-avx2.txt \
 		benchmarks/get-avx512.txt
 
 bench-threshold-full: bench-threshold threshold-analyze
+
+# --- Cross-Machine Benchmark Binary ---
+#
+# Build a standalone test binary that can be copied to a foreign machine
+# and executed without a Go toolchain. The binary contains all benchmarks
+# and can be run with standard `go test` flags.
+#
+# Usage:
+#   make bench-binary                       # build the test binary
+#   scp utlpfor-bench.test user@remote:     # copy to remote machine
+#   ssh user@remote                         # log in
+#   # On the remote machine:
+#   UTL_SIMD_LEVEL=scalar ./utlpfor-bench.test \
+#       -test.bench='BenchmarkMatrix/|BenchmarkMatrixUint64/' \
+#       -test.benchmem -test.count=5 -test.run='^$' -test.timeout=600s \
+#       > matrix-scalar.txt
+#   UTL_SIMD_LEVEL=sse2 ./utlpfor-bench.test \
+#       -test.bench='BenchmarkMatrix/|BenchmarkMatrixUint64/' \
+#       -test.benchmem -test.count=5 -test.run='^$' -test.timeout=600s \
+#       > matrix-sse2.txt
+#   UTL_SIMD_LEVEL=avx2 ./utlpfor-bench.test \
+#       -test.bench='BenchmarkMatrix/|BenchmarkMatrixUint64/' \
+#       -test.benchmem -test.count=5 -test.run='^$' -test.timeout=600s \
+#       > matrix-avx2.txt
+#   UTL_SIMD_LEVEL=avx512 ./utlpfor-bench.test \
+#       -test.bench='BenchmarkMatrix/|BenchmarkMatrixUint64/' \
+#       -test.benchmem -test.count=5 -test.run='^$' -test.timeout=600s \
+#       > matrix-avx512.txt
+#   # Copy results back and format:
+#   scp user@remote:matrix-*.txt benchmarks/
+#   make bench-matrix-table
+#
+# Cross-compilation for different architectures:
+#   GOOS=linux GOARCH=amd64 make bench-binary
+
+BENCH_BINARY ?= utlpfor-bench.test
+
+bench-binary:
+	GOEXPERIMENT=simd $(GO) test -c -o $(BENCH_BINARY) .
+	@printf 'Built %s (%s)\n' "$(BENCH_BINARY)" "$$(du -h $(BENCH_BINARY) | cut -f1)"
+	@echo "Copy to remote and run with -test.bench flags (see Makefile for examples)"

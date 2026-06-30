@@ -141,201 +141,33 @@ func packLanesUTLAVX512Generic(dst []byte, values []uint32, bitWidth int) {
 	}
 }
 
-// packUint32AVX512 is the full AVX-512 packing pipeline.
-// Uses AVX-512 for bit-packing; AVX2 for delta/zigzag; scalar for exceptions and FOR.
+// packUint32AVX512 is the AVX-512 packing pipeline. Delegates to
+// packBlockAVX512 with uint32 type flags and Append handling.
 func packUint32AVX512(flag Flag, dst []byte, scratch []uint32, values []uint32) ([]byte, error) {
 	if len(values) == 0 || len(values) > blockSize {
 		return nil, ErrInvalidBuffer
 	}
-
-	off := 0
-	if flag&Append != 0 {
-		off = len(dst)
+	if flag&Append == 0 {
+		return packBlockAVX512(flag, values, dst, scratch, headerTypeUint32Flag, false)
 	}
-	flag &^= Append
-
-	headerFlags := headerTypeUint32Flag
-	headerFlags |= uint32(flag&Special) << 14
-
-	var useFOR bool
-	var baseValue uint32
-	var forW int
-	if flag&NoFOR == 0 {
-		useFOR, baseValue, forW = selectBitWidthWithFORAVX512(values)
-		if useFOR {
-			forSubtractAVX512(values, values, baseValue)
-			headerFlags |= uint32(forW) << forWidthShift
-		}
+	off := len(dst)
+	block, err := packBlockAVX512(flag&^Append, values, dst[off:off], scratch, headerTypeUint32Flag, false)
+	if err != nil {
+		return nil, err
 	}
-
-	if flag&Delta != 0 {
-		var needZZ bool
-		if len(values) == blockSize {
-			needZZ = deltaEncodePerLaneAVX2(values)
-		} else {
-			needZZ = deltaEncodePerLaneScalar(values)
-		}
-		if needZZ {
-			headerFlags |= headerZigZagFlag
-		}
-		headerFlags |= headerDeltaFlag
-	}
-
-	var bitWidth, excCount int
-	if flag&NoPatch != 0 {
-		bitWidth = selectBitWidthNoPatchAVX512(values)
-	} else {
-		bitWidth, excCount = selectBitWidthAVX512(values)
-	}
-	payloadBytes := utlPayloadBytes(bitWidth)
-	hasExceptions := excCount > 0
-	forBaseBytes := forBaseBytes(forW)
-
-	packInput := values
-	if len(values) < blockSize {
-		copy(scratch[:len(values)], values)
-		clear(scratch[len(values):blockSize])
-		packInput = scratch[:blockSize]
-	}
-
-	if !hasExceptions {
-		pOff := payloadOffset(forBaseBytes, false, false)
-		totalLen := pOff + payloadBytes
-		if off > 0 {
-			dst = ensureAppend(dst, off, totalLen)
-		} else {
-			dst = ensureLen(dst, totalLen)
-		}
-		block := dst[off:]
-		bo.PutUint32(block, encodeHeader(len(values), bitWidth, 0, headerFlags))
-		if useFOR {
-			writeFORBase(block, baseValue, forW, false)
-		}
-		packLanesUTLAVX512(block[pOff:pOff+payloadBytes], packInput, bitWidth)
-		archsimd.ClearAVXUpperBits()
+	totalLen := len(block)
+	if cap(dst) >= off+totalLen {
 		return dst[:off+totalLen], nil
 	}
-
-	excIdxSize := excIndexSize(excCount)
-	maxSvbLen := maxSVBEncodedLen(excCount)
-	pOff := payloadOffset(forBaseBytes, true, false)
-	maxTotalLen := pOff + payloadBytes + excIdxSize + maxSvbLen
-
-	if off > 0 {
-		dst = ensureAppend(dst, off, maxTotalLen)
-	} else {
-		dst = ensureLen(dst, maxTotalLen)
-	}
-	block := dst[off:]
-	bo.PutUint32(block, encodeHeader(len(values), bitWidth, excCount, headerFlags))
-	if useFOR {
-		writeFORBase(block, baseValue, forW, true)
-	}
-
-	packLanesUTLAVX512(block[pOff:pOff+payloadBytes], packInput, bitWidth)
-	archsimd.ClearAVXUpperBits()
-
-	highBits := scratch[:blockSize]
-
-	excOff := pOff + payloadBytes
-	collectAndWriteExceptions(values, bitWidth, block[excOff:], excCount, highBits)
-
-	svbOffset := excOff + excIdxSize
-	svbLen := encodeSVBIntoDst(block[svbOffset:maxTotalLen], highBits[:excCount])
-
-	bo.PutUint16(block[headerBytes:], uint16(svbLen))
-	return dst[:off+svbOffset+svbLen], nil
+	dst = ensureAppend(dst, off, totalLen)
+	copy(dst[off:], block)
+	return dst[:off+totalLen], nil
 }
 
-// unpackUint32AVX512 is the full AVX-512 unpacking pipeline.
-// Uses AVX-512 for bit-unpacking; AVX2 for delta/zigzag; scalar for exceptions and FOR.
+// unpackUint32AVX512 is the AVX-512 unpacking pipeline. Delegates to
+// unpackBlockAVX512 with uint32 context (forUint64=false).
 func unpackUint32AVX512(dst []uint32, scratch []uint32, buf []byte) ([]uint32, int, error) {
-	if len(buf) < headerBytes {
-		return nil, 0, ErrInvalidBuffer
-	}
-
-	header := bo.Uint32(buf)
-	count, bitWidth, intType, excCount, forWidth, hasExceptions, hasDelta, hasZigZag, _, _ := decodeHeader(header)
-	hasFOR := forWidth > 0
-
-	if err := validateIntType(intType); err != nil {
-		return nil, 0, err
-	}
-
-	if uint(count-1) >= blockSize || uint(bitWidth) > 32 {
-		if count == 0 {
-			return dst[:0], headerBytes, nil
-		}
-		if count > blockSize {
-			return nil, 0, ErrInvalidBlockLength
-		}
-		return nil, 0, ErrInvalidBuffer
-	}
-
-	pOff := payloadOffset(0, hasExceptions, false)
-	var forBase uint32
-	if hasFOR {
-		forBase = readFORBase(buf, pOff, forWidth)
-		pOff += forBaseBytes(forWidth)
-	}
-
-	payloadBytes := utlPayloadBytes(bitWidth)
-
-	if len(buf) < pOff+payloadBytes {
-		return nil, 0, ErrInvalidBuffer
-	}
-
-	if cap(dst) < blockSize {
-		dst = make([]uint32, blockSize)
-	}
-	dst = dst[:blockSize]
-
-	payload := buf[pOff : pOff+payloadBytes]
-	unpackLanesUTLAVX512(dst, payload, blockSize, bitWidth)
-
-	dst = dst[:count]
-
-	consumed := pOff + payloadBytes
-
-	if hasExceptions {
-		archsimd.ClearAVXUpperBits()
-		excStart := pOff + payloadBytes
-		var err error
-		consumed, err = applyExceptions(dst, buf, excStart, count, bitWidth, excCount, scratch)
-		if err != nil {
-			return nil, 0, err
-		}
-	}
-
-	if hasDelta {
-		if hasZigZag {
-			if count == blockSize {
-				deltaDecodePerLaneAVX2(dst, true)
-			} else {
-				archsimd.ClearAVXUpperBits()
-				deltaDecodePerLaneScalar(dst, true)
-			}
-		} else {
-			var overflowPos int
-			if count == blockSize {
-				overflowPos = deltaDecodePerLaneWithOverflowAVX2(dst, false)
-			} else {
-				archsimd.ClearAVXUpperBits()
-				overflowPos = deltaDecodePerLaneWithOverflowScalar(dst, false)
-			}
-			if overflowPos > 0 {
-				archsimd.ClearAVXUpperBits()
-				return nil, 0, &ErrOverflow{Position: overflowPos}
-			}
-		}
-	}
-
-	if hasFOR {
-		forAddAVX512(dst, count, forBase)
-	}
-
-	archsimd.ClearAVXUpperBits()
-	return dst, consumed, nil
+	return unpackBlockAVX512(dst, scratch, buf, false)
 }
 
 // selectBitWidthAVX512 computes the optimal step bitwidth using SIMD threshold
@@ -545,4 +377,405 @@ func forAddAVX512(output []uint32, count int, baseValue uint32) {
 	for ; i < count; i++ {
 		output[i] += baseValue
 	}
+}
+
+// splitUint64AVX512 splits uint64 values into lower and upper uint32 halves
+// using AVX-512 TruncToUint32 (8 values per iteration).
+func splitUint64AVX512(lower, upper []uint32, values []uint64, count int) {
+	i := 0
+	for ; i+8 <= count; i += 8 {
+		v := archsimd.LoadUint64x8(values[i : i+8])
+		v.TruncToUint32().Store(lower[i : i+8])
+		v.ShiftAllRight(32).TruncToUint32().Store(upper[i : i+8])
+	}
+	for ; i < count; i++ {
+		lower[i] = uint32(values[i])
+		upper[i] = uint32(values[i] >> 32)
+	}
+}
+
+// allFitIn32BitsAVX512 checks if all uint64 values fit in 32 bits by
+// OR-accumulating with Uint64x8 (8 values per iteration).
+func allFitIn32BitsAVX512(values []uint64) bool {
+	n := len(values)
+	if n < 8 {
+		return allFitIn32BitsAVX2(values)
+	}
+
+	accVec := archsimd.LoadUint64x8(values[:8])
+
+	for i := 8; i+8 <= n; i += 8 {
+		chunk := archsimd.LoadUint64x8(values[i : i+8])
+		accVec = accVec.Or(chunk)
+	}
+
+	reduced4 := accVec.GetLo().Or(accVec.GetHi())
+	reduced2 := reduced4.GetLo().Or(reduced4.GetHi())
+	var lanes [2]uint64
+	reduced2.Store(lanes[:])
+	acc := lanes[0] | lanes[1]
+
+	tail := (n / 8) * 8
+	for i := tail; i < n; i++ {
+		acc |= values[i]
+	}
+	return acc>>32 == 0
+}
+
+// findMinMax64AVX512 computes min/max of uint64 values using AVX-512
+// Uint64x8.Min/Max (8 values per iteration).
+func findMinMax64AVX512(values []uint64) (uint64, uint64) {
+	n := len(values)
+	if n < 8 {
+		min64, max64 := values[0], values[0]
+		for _, v := range values[1:] {
+			min64 = min(min64, v)
+			max64 = max(max64, v)
+		}
+		return min64, max64
+	}
+
+	minVec := archsimd.LoadUint64x8(values[:8])
+	maxVec := minVec
+
+	for i := 8; i+8 <= n; i += 8 {
+		chunk := archsimd.LoadUint64x8(values[i : i+8])
+		minVec = minVec.Min(chunk)
+		maxVec = maxVec.Max(chunk)
+	}
+
+	min4 := minVec.GetLo().Min(minVec.GetHi())
+	max4 := maxVec.GetLo().Max(maxVec.GetHi())
+	min2 := min4.GetLo().Min(min4.GetHi())
+	max2 := max4.GetLo().Max(max4.GetHi())
+
+	var minL, maxL [2]uint64
+	min2.Store(minL[:])
+	max2.Store(maxL[:])
+	minResult := min(minL[0], minL[1])
+	maxResult := max(maxL[0], maxL[1])
+
+	tail := (n / 8) * 8
+	for i := tail; i < n; i++ {
+		minResult = min(minResult, values[i])
+		maxResult = max(maxResult, values[i])
+	}
+	return minResult, maxResult
+}
+
+// forSubtract64AVX512 subtracts base from each uint64 value and stores as uint32.
+// Uses AVX-512 Sub + TruncToUint32 (8 values per iteration).
+func forSubtract64AVX512(dst []uint32, values []uint64, base uint64) {
+	baseVec := archsimd.BroadcastUint64x8(base)
+	n := len(values)
+	i := 0
+	for ; i+8 <= n; i += 8 {
+		v := archsimd.LoadUint64x8(values[i : i+8])
+		v.Sub(baseVec).TruncToUint32().Store(dst[i : i+8])
+	}
+	for ; i < n; i++ {
+		dst[i] = uint32(values[i] - base)
+	}
+}
+
+// forAdd64AVX512 adds a uint64 base to each uint32 value and stores as uint64.
+// Uses AVX-512 Uint32x8.ExtendToUint64 + Add (8 values per iteration).
+func forAdd64AVX512(dst []uint64, values []uint32, base uint64, count int) {
+	baseVec := archsimd.BroadcastUint64x8(base)
+	i := 0
+	for ; i+8 <= count; i += 8 {
+		lo := archsimd.LoadUint32x8(values[i : i+8])
+		wide := lo.ExtendToUint64().Add(baseVec)
+		wide.Store(dst[i : i+8])
+	}
+	for ; i < count; i++ {
+		dst[i] = uint64(values[i]) + base
+	}
+}
+
+// combineUint64AVX512 merges lower and upper uint32 halves into uint64 values.
+// Uses AVX-512 ExtendToUint64 (8 values at a time), shifts uppers left by 32, ORs.
+func combineUint64AVX512(dst []uint64, lower, upper []uint32, count int) {
+	i := 0
+	for ; i+8 <= count; i += 8 {
+		loVec := archsimd.LoadUint32x8(lower[i : i+8]).ExtendToUint64()
+		hiVec := archsimd.LoadUint32x8(upper[i : i+8]).ExtendToUint64()
+		result := loVec.Or(hiVec.ShiftAllLeft(32))
+		result.Store(dst[i : i+8])
+	}
+	for ; i < count; i++ {
+		dst[i] = uint64(upper[i])<<32 | uint64(lower[i])
+	}
+}
+
+// packBlockAVX512 packs uint32 values into a UTL block using AVX-512-accelerated
+// kernels for bit-packing, delta encoding, FOR selection, and bitwidth selection.
+// Accepts configurable typeFlags and hasCombine for use by uint64 sub-block paths.
+func packBlockAVX512(flag Flag, values []uint32, dst []byte, scratch []uint32, typeFlags uint32, hasCombine bool) ([]byte, error) {
+	if len(values) == 0 || len(values) > blockSize {
+		return nil, ErrInvalidBuffer
+	}
+
+	headerFlags := typeFlags
+	headerFlags |= uint32(flag&Special) << 14
+
+	var useFOR bool
+	var baseValue uint32
+	var forW int
+	if flag&NoFOR == 0 {
+		useFOR, baseValue, forW = selectBitWidthWithFORAVX512(values)
+		if useFOR {
+			forSubtractAVX512(values, values, baseValue)
+			headerFlags |= uint32(forW) << forWidthShift
+		}
+	}
+
+	if flag&Delta != 0 {
+		var needZZ bool
+		if len(values) == blockSize {
+			needZZ = deltaEncodePerLaneAVX2(values)
+		} else {
+			needZZ = deltaEncodePerLaneScalar(values)
+		}
+		if needZZ {
+			headerFlags |= headerZigZagFlag
+		}
+		headerFlags |= headerDeltaFlag
+	}
+
+	var bitWidth, excCount int
+	if flag&NoPatch != 0 {
+		bitWidth = selectBitWidthNoPatchAVX512(values)
+	} else {
+		bitWidth, excCount = selectBitWidthAVX512(values)
+	}
+	payloadSize := utlPayloadBytes(bitWidth)
+	hasExceptions := excCount > 0
+	forBBytes := forBaseBytes(forW)
+
+	packInput := values
+	if len(values) < blockSize {
+		copy(scratch[:len(values)], values)
+		clear(scratch[len(values):blockSize])
+		packInput = scratch[:blockSize]
+	}
+
+	if !hasExceptions {
+		pOff := payloadOffset(forBBytes, false, hasCombine)
+		totalLen := pOff + payloadSize
+		dst = ensureLen(dst, totalLen)
+		bo.PutUint32(dst, encodeHeader(len(values), bitWidth, 0, headerFlags))
+		if useFOR {
+			writeFORBase(dst, baseValue, forW, false)
+		}
+		packLanesUTLAVX512(dst[pOff:pOff+payloadSize], packInput, bitWidth)
+		archsimd.ClearAVXUpperBits()
+		return dst[:totalLen], nil
+	}
+
+	excIdxSize := excIndexSize(excCount)
+	maxSvbLen := maxSVBEncodedLen(excCount)
+	pOff := payloadOffset(forBBytes, true, hasCombine)
+	maxTotalLen := pOff + payloadSize + excIdxSize + maxSvbLen
+
+	dst = ensureLen(dst, maxTotalLen)
+	bo.PutUint32(dst, encodeHeader(len(values), bitWidth, excCount, headerFlags))
+	if useFOR {
+		writeFORBase(dst, baseValue, forW, true)
+	}
+
+	packLanesUTLAVX512(dst[pOff:pOff+payloadSize], packInput, bitWidth)
+	archsimd.ClearAVXUpperBits()
+
+	highBits := scratch[:blockSize]
+	excOff := pOff + payloadSize
+	collectAndWriteExceptions(values, bitWidth, dst[excOff:], excCount, highBits)
+	svbOffset := excOff + excIdxSize
+	svbLen := encodeSVBIntoDst(dst[svbOffset:maxTotalLen], highBits[:excCount])
+
+	bo.PutUint16(dst[headerBytes:], uint16(svbLen))
+	return dst[:svbOffset+svbLen], nil
+}
+
+// packUint64AVX512 is the AVX-512 implementation of PackUint64.
+// Uses AVX-512 SIMD for findMinMax64, splitUint64, allFitIn32Bits, and
+// forSubtract64; delegates block packing to packBlockAVX512 via the
+// common packFor64SingleBlockCommon orchestration.
+func packUint64AVX512(flag Flag, values []uint64, dst []byte, scratch []uint32) ([]byte, error) {
+	count := len(values)
+	if count == 0 || count > blockSize {
+		return nil, ErrInvalidBuffer
+	}
+
+	off := 0
+	if flag&Append != 0 {
+		off = len(dst)
+	}
+	innerFlag := flag &^ Append
+
+	dst = ensureCapacity64(dst, off, innerFlag)
+
+	min64, max64 := findMinMax64AVX512(values)
+
+	if innerFlag&NoFOR == 0 && min64 > 0 && (max64-min64) < (1<<32) {
+		forSubtract64AVX512(scratch[:count], values, min64)
+		innerOff := off + for64BaseSize
+		dst = dst[:innerOff]
+		inner, err := packBlockAVX512(innerFlag|NoFOR, scratch[:count], dst[innerOff:innerOff], scratch[blockSize:], headerTypeUint64Flag, false)
+		if err != nil {
+			return nil, err
+		}
+		archsimd.ClearAVXUpperBits()
+		return wrapFor64SingleBlock(dst, off, min64, inner), nil
+	}
+
+	upper := scratch[2*blockSize:]
+	splitUint64AVX512(scratch, upper, values, count)
+
+	if allFitIn32BitsAVX512(values) {
+		block, err := packBlockAVX512(innerFlag, scratch[:count], dst[off:off], scratch[blockSize:2*blockSize], headerTypeUint64Flag, false)
+		if err != nil {
+			return nil, err
+		}
+		archsimd.ClearAVXUpperBits()
+		return dst[:off+len(block)], nil
+	}
+
+	block1, err := packBlockAVX512(innerFlag, scratch[:count], dst[off:off], scratch[blockSize:2*blockSize], headerTypeUint64Flag|headerCombineFlag, true)
+	if err != nil {
+		return nil, err
+	}
+	block1Len := len(block1)
+
+	b2Off := off + block1Len
+	dst = dst[:b2Off]
+	block2, err := packBlockAVX512(innerFlag, upper[:count], dst[b2Off:b2Off], scratch[blockSize:2*blockSize], headerTypeUint64Flag, false)
+	if err != nil {
+		return nil, err
+	}
+	block2Len := len(block2)
+
+	block1Header := bo.Uint32(block1)
+	_, _, _, _, forWidth, hasExceptions, _, _, _, _ := decodeHeader(block1Header)
+	writeBlock2Len(block1, forBaseBytes(forWidth), hasExceptions, uint16(block2Len))
+
+	archsimd.ClearAVXUpperBits()
+	return dst[:off+block1Len+block2Len], nil
+}
+
+// unpackBlockAVX512 unpacks a uint32 block using AVX-512-accelerated kernels.
+// Accepts forUint64 to handle uint64 sub-block context (type validation,
+// FOR64 single-block handling, combine flag recognition).
+func unpackBlockAVX512(dst []uint32, scratch []uint32, buf []byte, forUint64 bool) ([]uint32, int, error) {
+	if len(buf) < headerBytes {
+		return nil, 0, ErrInvalidBuffer
+	}
+
+	header := bo.Uint32(buf)
+	count, bitWidth, intType, excCount, forWidth, hasExceptions, hasDelta, hasZigZag, _, hasCombine := decodeHeader(header)
+	hasFOR := forWidth > 0
+
+	if forUint64 {
+		if err := validateIntType64(intType); err != nil {
+			return nil, 0, err
+		}
+	} else {
+		if err := validateIntType(intType); err != nil {
+			return nil, 0, err
+		}
+		hasCombine = false
+	}
+
+	if uint(count-1) >= blockSize || uint(bitWidth) > 32 {
+		if count == 0 {
+			return dst[:0], headerBytes, nil
+		}
+		if count > blockSize {
+			return nil, 0, ErrInvalidBlockLength
+		}
+		return nil, 0, ErrInvalidBuffer
+	}
+
+	u64Single := forUint64 && isFor64SingleBlock(intType, forWidth, hasCombine)
+
+	pOff := headerBytes
+	if hasExceptions {
+		pOff += svbLenBytes
+	}
+	var forBase uint32
+	if hasFOR {
+		if u64Single {
+			pOff += for64BaseSize
+		} else {
+			forBase = readFORBase(buf, pOff, forWidth)
+			pOff += forBaseBytes(forWidth)
+		}
+	}
+	if hasCombine {
+		pOff += block2LenBytes
+	}
+
+	payloadBytes := utlPayloadBytes(bitWidth)
+	if len(buf) < pOff+payloadBytes {
+		return nil, 0, ErrInvalidBuffer
+	}
+
+	if cap(dst) < blockSize {
+		dst = make([]uint32, blockSize)
+	}
+	dst = dst[:blockSize]
+
+	payload := buf[pOff : pOff+payloadBytes]
+	unpackLanesUTLAVX512(dst, payload, blockSize, bitWidth)
+
+	dst = dst[:count]
+
+	consumed := pOff + payloadBytes
+
+	if hasExceptions {
+		archsimd.ClearAVXUpperBits()
+		excStart := pOff + payloadBytes
+		var err error
+		consumed, err = applyExceptions(dst, buf, excStart, count, bitWidth, excCount, scratch)
+		if err != nil {
+			return nil, 0, err
+		}
+	}
+
+	if hasDelta {
+		if hasZigZag {
+			if count == blockSize {
+				deltaDecodePerLaneAVX2(dst, true)
+			} else {
+				archsimd.ClearAVXUpperBits()
+				deltaDecodePerLaneScalar(dst, true)
+			}
+		} else {
+			var overflowPos int
+			if count == blockSize {
+				overflowPos = deltaDecodePerLaneWithOverflowAVX2(dst, false)
+			} else {
+				archsimd.ClearAVXUpperBits()
+				overflowPos = deltaDecodePerLaneWithOverflowScalar(dst, false)
+			}
+			if overflowPos > 0 {
+				archsimd.ClearAVXUpperBits()
+				return nil, 0, &ErrOverflow{Position: overflowPos}
+			}
+		}
+	}
+
+	if hasFOR && !u64Single {
+		forAddAVX512(dst, count, forBase)
+	}
+
+	archsimd.ClearAVXUpperBits()
+	return dst, consumed, nil
+}
+
+// unpackUint64AVX512 is the AVX-512 implementation of UnpackUint64.
+func unpackUint64AVX512(dst []uint64, scratch []uint32, buf []byte) ([]uint64, int, error) {
+	dst, consumed, err := unpackUint64Block(dst, scratch, buf, unpackBlockAVX512, forAdd64AVX512, combineUint64AVX512)
+	archsimd.ClearAVXUpperBits()
+	return dst, consumed, err
 }

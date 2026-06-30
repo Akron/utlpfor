@@ -77,6 +77,58 @@ func BenchmarkGetUint32(b *testing.B) {
 	}
 }
 
+func BenchmarkGetUint64(b *testing.B) {
+	cases := []struct {
+		name   string
+		flag   Flag
+		values []uint64
+	}{
+		{"fit32", 0, func() []uint64 {
+			v := make([]uint64, blockSize)
+			for i := range v {
+				v[i] = uint64(i * 7)
+			}
+			return v
+		}()},
+		{"two_block", 0, func() []uint64 {
+			v := make([]uint64, blockSize)
+			for i := range v {
+				v[i] = 0x1_0000_0000 + uint64(i*1000)
+			}
+			return v
+		}()},
+		{"for64", 0, func() []uint64 {
+			v := make([]uint64, blockSize)
+			base := uint64(1_700_000_000_000)
+			for i := range v {
+				v[i] = base + uint64(i*1000)
+			}
+			return v
+		}()},
+		{"fit32+delta", Delta, func() []uint64 {
+			v := make([]uint64, blockSize)
+			for i := range v {
+				v[i] = uint64(i * 7)
+			}
+			return v
+		}()},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		b.Run(tc.name, func(b *testing.B) {
+			packed, _ := PackUint64(tc.flag, slices.Clone(tc.values), nil, nil)
+			scratch := make([]uint32, ScratchLen64)
+
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				GetUint64(i%blockSize, packed, scratch)
+			}
+		})
+	}
+}
+
 func BenchmarkBlockLength(b *testing.B) {
 	values := make([]uint32, blockSize)
 	for i := range values {
@@ -462,5 +514,96 @@ func BenchmarkCollectAndWriteExceptions(b *testing.B) {
 	b.ResetTimer()
 	for b.Loop() {
 		collectAndWriteExceptions(values, bitWidth, excIdx[:], excCount, highBits[:])
+	}
+}
+
+func BenchmarkPackUint64(b *testing.B) {
+	cases := []struct {
+		name   string
+		values []uint64
+	}{
+		{"fit32", func() []uint64 {
+			v := make([]uint64, blockSize)
+			for i := range v {
+				v[i] = uint64(i * 7)
+			}
+			return v
+		}()},
+		{"two_block", func() []uint64 {
+			v := make([]uint64, blockSize)
+			for i := range v {
+				v[i] = 0x1_0000_0000 + uint64(i*1000)
+			}
+			return v
+		}()},
+		{"for64", func() []uint64 {
+			v := make([]uint64, blockSize)
+			base := uint64(1_700_000_000_000)
+			for i := range v {
+				v[i] = base + uint64(i*1000)
+			}
+			return v
+		}()},
+	}
+
+	for _, tc := range cases {
+		b.Run(tc.name, func(b *testing.B) {
+			dst := make([]byte, 0, MaxBlockLength64(0))
+			scratch := make([]uint32, ScratchLen64)
+			input := slices.Clone(tc.values)
+
+			b.ReportAllocs()
+			b.SetBytes(int64(blockSize * 8))
+			b.ResetTimer()
+			for b.Loop() {
+				copy(input, tc.values)
+				dst, _ = PackUint64(0, input, dst[:0], scratch)
+			}
+		})
+	}
+}
+
+func BenchmarkUnpackUint64(b *testing.B) {
+	cases := []struct {
+		name   string
+		values []uint64
+	}{
+		{"fit32", func() []uint64 {
+			v := make([]uint64, blockSize)
+			for i := range v {
+				v[i] = uint64(i * 7)
+			}
+			return v
+		}()},
+		{"two_block", func() []uint64 {
+			v := make([]uint64, blockSize)
+			for i := range v {
+				v[i] = 0x1_0000_0000 + uint64(i*1000)
+			}
+			return v
+		}()},
+		{"for64", func() []uint64 {
+			v := make([]uint64, blockSize)
+			base := uint64(1_700_000_000_000)
+			for i := range v {
+				v[i] = base + uint64(i*1000)
+			}
+			return v
+		}()},
+	}
+
+	for _, tc := range cases {
+		b.Run(tc.name, func(b *testing.B) {
+			packed, _ := PackUint64(0, slices.Clone(tc.values), nil, nil)
+			dst := make([]uint64, blockSize)
+			scratch := make([]uint32, ScratchLen64)
+
+			b.ReportAllocs()
+			b.SetBytes(int64(blockSize * 8))
+			b.ResetTimer()
+			for b.Loop() {
+				UnpackUint64(dst, scratch, packed)
+			}
+		})
 	}
 }

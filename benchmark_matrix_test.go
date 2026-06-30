@@ -12,6 +12,19 @@ import (
 
 // benchSink prevents dead-code elimination of benchmark results.
 var benchSink uint32
+var benchSink64 uint64
+
+// matrixUint64Config defines one uint64 benchmark configuration.
+type matrixUint64Config struct {
+	method string // "pac64", "unp64", "get64"
+	name   string // e.g. "fit32", "two_block", "for64"
+	flag   Flag
+	values []uint64
+}
+
+func (c matrixUint64Config) benchName() string {
+	return c.method + "_" + c.name
+}
 
 // matrixConfig defines one benchmark configuration in the matrix.
 type matrixConfig struct {
@@ -305,6 +318,125 @@ func BenchmarkMatrix(b *testing.B) {
 	}
 }
 
+// allMatrixUint64Configs generates uint64 benchmark configurations
+// covering the three encoding modes (fit32, two_block, for64) with
+// and without delta encoding.
+func allMatrixUint64Configs() []matrixUint64Config {
+	genFit32 := func() []uint64 {
+		v := make([]uint64, blockSize)
+		for i := range v {
+			v[i] = uint64(i * 7)
+		}
+		return v
+	}
+	genTwoBlock := func() []uint64 {
+		v := make([]uint64, blockSize)
+		for i := range v {
+			v[i] = 0x1_0000_0000 + uint64(i*1000)
+		}
+		return v
+	}
+	genFOR64 := func() []uint64 {
+		v := make([]uint64, blockSize)
+		base := uint64(1_700_000_000_000)
+		for i := range v {
+			v[i] = base + uint64(i*1000)
+		}
+		return v
+	}
+
+	methods := []string{"pac64", "unp64", "get64"}
+	type scenario struct {
+		name string
+		gen  func() []uint64
+	}
+	scenarios := []scenario{
+		{"fit32", genFit32},
+		{"two_block", genTwoBlock},
+		{"for64", genFOR64},
+	}
+	flags := []struct {
+		suffix string
+		flag   Flag
+	}{
+		{"", 0},
+		{"+delta", Delta},
+	}
+
+	var configs []matrixUint64Config
+	for _, m := range methods {
+		for _, s := range scenarios {
+			for _, f := range flags {
+				configs = append(configs, matrixUint64Config{
+					method: m,
+					name:   s.name + f.suffix,
+					flag:   f.flag,
+					values: s.gen(),
+				})
+			}
+		}
+	}
+	return configs
+}
+
+// BenchmarkMatrixUint64 benchmarks uint64 Pack/Unpack/Get across all
+// encoding modes (fit32, two_block, for64) with and without delta.
+func BenchmarkMatrixUint64(b *testing.B) {
+	for _, cfg := range allMatrixUint64Configs() {
+		cfg := cfg
+		b.Run(cfg.benchName(), func(b *testing.B) {
+			original := slices.Clone(cfg.values)
+			values := slices.Clone(cfg.values)
+
+			switch cfg.method {
+			case "pac64":
+				dst := make([]byte, 0, MaxBlockLength64(cfg.flag))
+				scratch := make([]uint32, ScratchLen64)
+				b.ReportAllocs()
+				b.SetBytes(int64(blockSize * 8))
+				b.ResetTimer()
+				for i := 0; i < b.N; i++ {
+					copy(values, original)
+					dst, _ = PackUint64(cfg.flag, values, dst[:0], scratch)
+				}
+
+			case "unp64":
+				packed, err := PackUint64(cfg.flag, slices.Clone(original), nil, nil)
+				if err != nil {
+					b.Fatalf("pack failed: %v", err)
+				}
+				dst := make([]uint64, blockSize)
+				scratch := make([]uint32, ScratchLen64)
+				b.ReportAllocs()
+				b.SetBytes(int64(blockSize * 8))
+				b.ResetTimer()
+				for i := 0; i < b.N; i++ {
+					UnpackUint64(dst, scratch, packed)
+				}
+
+			case "get64":
+				packed, err := PackUint64(cfg.flag, slices.Clone(original), nil, nil)
+				if err != nil {
+					b.Fatalf("pack failed: %v", err)
+				}
+				var sink uint64
+				scratch := make([]uint32, ScratchLen64)
+				b.ReportAllocs()
+				b.SetBytes(8)
+				b.ResetTimer()
+				for i := 0; i < b.N; i++ {
+					for pos := range blockSize {
+						v, _ := GetUint64(pos, packed, scratch)
+						sink += v
+					}
+				}
+				b.ReportMetric(float64(b.Elapsed())/float64(time.Nanosecond)/float64(b.N*blockSize), "ns/get")
+				benchSink64 = sink
+			}
+		})
+	}
+}
+
 // quickCompareConfigs returns ~20 representative benchmark configurations
 // for rapid cross-SIMD-level comparison. Covers pack and unpack across
 // different bitwidths, exception counts, FOR widths, and delta/zigzag.
@@ -456,6 +588,140 @@ func BenchmarkQuickCompare(b *testing.B) {
 				for i := 0; i < b.N; i++ {
 					Header(packed)
 				}
+			}
+		})
+	}
+}
+
+type quickUint64Config struct {
+	method string // "pac", "unp", "get", "mix"
+	name   string
+	flag   Flag
+	values []uint64
+}
+
+func quickCompareUint64Configs() []quickUint64Config {
+	genFit32 := func() []uint64 {
+		v := make([]uint64, blockSize)
+		for i := range v {
+			v[i] = uint64(i * 7)
+		}
+		return v
+	}
+	genTwoBlock := func() []uint64 {
+		v := make([]uint64, blockSize)
+		for i := range v {
+			v[i] = 0x1_0000_0000 + uint64(i*1000)
+		}
+		return v
+	}
+	genFOR64 := func() []uint64 {
+		v := make([]uint64, blockSize)
+		base := uint64(1_700_000_000_000)
+		for i := range v {
+			v[i] = base + uint64(i*1000)
+		}
+		return v
+	}
+
+	return []quickUint64Config{
+		// Pack-only
+		{method: "pac", name: "fit32", flag: 0, values: genFit32()},
+		{method: "pac", name: "two_block", flag: 0, values: genTwoBlock()},
+		{method: "pac", name: "for64", flag: 0, values: genFOR64()},
+		{method: "pac", name: "fit32+delta", flag: Delta, values: genFit32()},
+
+		// Pure unpack
+		{method: "unp", name: "fit32", flag: 0, values: genFit32()},
+		{method: "unp", name: "two_block", flag: 0, values: genTwoBlock()},
+		{method: "unp", name: "for64", flag: 0, values: genFOR64()},
+		{method: "unp", name: "fit32+delta", flag: Delta, values: genFit32()},
+
+		// Get-only probes over full block (report includes per-get metric)
+		{method: "get", name: "fit32", flag: 0, values: genFit32()},
+		{method: "get", name: "two_block", flag: 0, values: genTwoBlock()},
+		{method: "get", name: "for64", flag: 0, values: genFOR64()},
+		{method: "get", name: "fit32+delta", flag: Delta, values: genFit32()},
+
+		// Mixed pack+unpack+get on same block (pipeline realism)
+		{method: "mix", name: "fit32", flag: 0, values: genFit32()},
+		{method: "mix", name: "for64", flag: 0, values: genFOR64()},
+	}
+}
+
+// BenchmarkQuickCompareUint64 runs a small representative set of uint64
+// Pack/Unpack/Get benchmarks intended to be included in `make bench-quick`.
+func BenchmarkQuickCompareUint64(b *testing.B) {
+	for _, cfg := range quickCompareUint64Configs() {
+		cfg := cfg
+		b.Run(cfg.method+"_"+cfg.name, func(b *testing.B) {
+			original := slices.Clone(cfg.values)
+			values := slices.Clone(cfg.values)
+
+			switch cfg.method {
+			case "pac":
+				dst := make([]byte, 0, MaxBlockLength64(cfg.flag))
+				scratch := make([]uint32, ScratchLen64)
+				b.ReportAllocs()
+				b.SetBytes(int64(blockSize * 8))
+				b.ResetTimer()
+				for i := 0; i < b.N; i++ {
+					copy(values, original)
+					dst, _ = PackUint64(cfg.flag, values, dst[:0], scratch)
+				}
+
+			case "unp":
+				packed, err := PackUint64(cfg.flag, slices.Clone(original), nil, nil)
+				if err != nil {
+					b.Fatalf("pack failed: %v", err)
+				}
+				dst := make([]uint64, blockSize)
+				scratch := make([]uint32, ScratchLen64)
+				b.ReportAllocs()
+				b.SetBytes(int64(blockSize * 8))
+				b.ResetTimer()
+				for i := 0; i < b.N; i++ {
+					UnpackUint64(dst, scratch, packed)
+				}
+
+			case "get":
+				packed, err := PackUint64(cfg.flag, slices.Clone(original), nil, nil)
+				if err != nil {
+					b.Fatalf("pack failed: %v", err)
+				}
+				var sink uint64
+				scratch := make([]uint32, ScratchLen64)
+				b.ReportAllocs()
+				b.SetBytes(8)
+				b.ResetTimer()
+				for i := 0; i < b.N; i++ {
+					for pos := range blockSize {
+						v, _ := GetUint64(pos, packed, scratch)
+						sink += v
+					}
+				}
+				b.ReportMetric(float64(b.Elapsed())/float64(time.Nanosecond)/float64(b.N*blockSize), "ns/get")
+				benchSink64 = sink
+
+			case "mix":
+				positions := [4]int{0, 17, 64, 127}
+				packDst := make([]byte, 0, MaxBlockLength64(cfg.flag))
+				unpackDst := make([]uint64, blockSize)
+				scratch := make([]uint32, ScratchLen64)
+				var sink uint64
+				b.ReportAllocs()
+				b.SetBytes(int64(blockSize * 8))
+				b.ResetTimer()
+				for i := 0; i < b.N; i++ {
+					copy(values, original)
+					packed, _ := PackUint64(cfg.flag, values, packDst[:0], scratch)
+					UnpackUint64(unpackDst, scratch, packed)
+					for _, pos := range positions {
+						v, _ := GetUint64(pos, packed, scratch)
+						sink += v
+					}
+				}
+				benchSink64 = sink
 			}
 		})
 	}

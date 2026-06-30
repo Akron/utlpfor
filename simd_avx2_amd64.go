@@ -181,10 +181,10 @@ func zigzagDecodeAVX2(values []uint32) {
 	// TODO-PERF: Unroll?
 	for i := 0; i <= len(values)-8; i += 8 {
 		v := archsimd.LoadUint32x8(values[i : i+8])
-		half := v.ShiftAllRight(1)
-		signBit := v.And(one)
-		negSign := zero.Sub(signBit)
-		result := half.Xor(negSign)
+		half := v.ShiftAllRight(1)          // n >>> 1 (logical right shift)
+		signBit := v.And(one)               // n & 1: extract sign from LSB
+		negSign := zero.Sub(signBit)         // 0 - signBit: yields 0x00000000 or 0xFFFFFFFF
+		result := half.Xor(negSign)          // conditional bit-flip restores original value
 		result.Store(values[i : i+8])
 	}
 	// TODO-PERF: Use SSE for the tail initially
@@ -201,6 +201,8 @@ func zigzagDecodeAVX2(values []uint32) {
 func deltaEncodePerLaneAVX2(values []uint32) bool {
 	var anyBorrow uint8
 
+	// Iterate backwards: each position stores (cur - prev) for all 16 lanes.
+	// Two 8-wide groups cover lanes 0-7 and 8-15 per value position.
 	// TODO-PERF: Unroll!
 	for v := utlValuesPerLane - 1; v > 0; v-- {
 		curBase := v * utlLaneCount
@@ -214,6 +216,7 @@ func deltaEncodePerLaneAVX2(values []uint32) bool {
 		prev1 := archsimd.LoadUint32x8(values[prevBase+8 : prevBase+16])
 		delta1 := cur1.Sub(prev1)
 
+		// Detect unsigned underflow (prev > cur means negative delta)
 		anyBorrow |= prev0.Greater(cur0).ToBits()
 		anyBorrow |= prev1.Greater(cur1).ToBits()
 
@@ -221,6 +224,7 @@ func deltaEncodePerLaneAVX2(values []uint32) bool {
 		delta1.Store(values[curBase+8 : curBase+16])
 	}
 
+	// If any lane had a negative delta, apply zigzag to make all values positive
 	needZigZag := anyBorrow != 0
 	if needZigZag {
 		zigzagEncodeAVX2(values, len(values))
@@ -294,207 +298,33 @@ func deltaDecodePerLaneWithOverflowAVX2(values []uint32, useZigZag bool) int {
 	return overflowPos
 }
 
-// packUint32AVX2 is the full AVX2 packing pipeline.
-// Uses AVX2 for bit-packing and delta/zigzag encoding; scalar for exceptions and FOR.
+// packUint32AVX2 is the AVX2 packing pipeline. Delegates to packBlockAVX2
+// with uint32 type flags and Append handling.
 func packUint32AVX2(flag Flag, dst []byte, scratch []uint32, values []uint32) ([]byte, error) {
 	if len(values) == 0 || len(values) > blockSize {
 		return nil, ErrInvalidBuffer
 	}
-
-	off := 0
-	if flag&Append != 0 {
-		off = len(dst)
+	if flag&Append == 0 {
+		return packBlockAVX2(flag, values, dst, scratch, headerTypeUint32Flag, false)
 	}
-	flag &^= Append
-
-	headerFlags := headerTypeUint32Flag
-	headerFlags |= uint32(flag&Special) << 14
-
-	var useFOR bool
-	var baseValue uint32
-	var forW int
-	if flag&NoFOR == 0 {
-		useFOR, baseValue, forW = selectBitWidthWithFORAVX2(values)
-		if useFOR {
-			forSubtractAVX2(values, values, baseValue)
-			headerFlags |= uint32(forW) << forWidthShift
-		}
+	off := len(dst)
+	block, err := packBlockAVX2(flag&^Append, values, dst[off:off], scratch, headerTypeUint32Flag, false)
+	if err != nil {
+		return nil, err
 	}
-
-	if flag&Delta != 0 {
-		var needZZ bool
-		if len(values) == blockSize {
-			needZZ = deltaEncodePerLaneAVX2(values)
-		} else {
-			needZZ = deltaEncodePerLaneScalar(values)
-		}
-		if needZZ {
-			headerFlags |= headerZigZagFlag
-		}
-		headerFlags |= headerDeltaFlag
-	}
-
-	var bitWidth, excCount int
-	if flag&NoPatch != 0 {
-		bitWidth = selectBitWidthNoPatchAVX2(values)
-	} else {
-		bitWidth, excCount = selectBitWidthAVX2(values)
-	}
-	payloadBytes := utlPayloadBytes(bitWidth)
-	hasExceptions := excCount > 0
-	forBaseBytes := forBaseBytes(forW)
-
-	packInput := values
-	if len(values) < blockSize {
-		copy(scratch[:len(values)], values)
-		clear(scratch[len(values):blockSize])
-		packInput = scratch[:blockSize]
-	}
-
-	if !hasExceptions {
-		pOff := payloadOffset(forBaseBytes, false, false)
-		totalLen := pOff + payloadBytes
-		if off > 0 {
-			dst = ensureAppend(dst, off, totalLen)
-		} else {
-			dst = ensureLen(dst, totalLen)
-		}
-		block := dst[off:]
-		bo.PutUint32(block, encodeHeader(len(values), bitWidth, 0, headerFlags))
-		if useFOR {
-			writeFORBase(block, baseValue, forW, false)
-		}
-		packLanesUTLAVX2(block[pOff:pOff+payloadBytes], packInput, bitWidth)
-		archsimd.ClearAVXUpperBits()
+	totalLen := len(block)
+	if cap(dst) >= off+totalLen {
 		return dst[:off+totalLen], nil
 	}
-
-	excIdxSize := excIndexSize(excCount)
-	maxSvbLen := maxSVBEncodedLen(excCount)
-	pOff := payloadOffset(forBaseBytes, true, false)
-	maxTotalLen := pOff + payloadBytes + excIdxSize + maxSvbLen
-
-	if off > 0 {
-		dst = ensureAppend(dst, off, maxTotalLen)
-	} else {
-		dst = ensureLen(dst, maxTotalLen)
-	}
-	block := dst[off:]
-	bo.PutUint32(block, encodeHeader(len(values), bitWidth, excCount, headerFlags))
-	if useFOR {
-		writeFORBase(block, baseValue, forW, true)
-	}
-
-	packLanesUTLAVX2(block[pOff:pOff+payloadBytes], packInput, bitWidth)
-	archsimd.ClearAVXUpperBits()
-
-	highBits := scratch[:blockSize]
-
-	excOff := pOff + payloadBytes
-	collectAndWriteExceptions(values, bitWidth, block[excOff:], excCount, highBits)
-
-	svbOffset := excOff + excIdxSize
-	svbLen := encodeSVBIntoDst(block[svbOffset:maxTotalLen], highBits[:excCount])
-
-	bo.PutUint16(block[headerBytes:], uint16(svbLen))
-	return dst[:off+svbOffset+svbLen], nil
+	dst = ensureAppend(dst, off, totalLen)
+	copy(dst[off:], block)
+	return dst[:off+totalLen], nil
 }
 
-// unpackUint32AVX2 is the AVX2 unpacking pipeline.
-// It uses SSE2 per-bitwidth unpack kernels for the lane unpack step because
-// AVX2 right-shift codegen is still suboptimal on current toolchains.
-// AVX2 remains active for delta/zigzag and FOR operations.
+// unpackUint32AVX2 is the AVX2 unpacking pipeline. Delegates to
+// unpackBlockAVX2 with uint32 context (forUint64=false).
 func unpackUint32AVX2(dst []uint32, scratch []uint32, buf []byte) ([]uint32, int, error) {
-	if len(buf) < headerBytes {
-		return nil, 0, ErrInvalidBuffer
-	}
-
-	header := bo.Uint32(buf)
-	count, bitWidth, intType, excCount, forWidth, hasExceptions, hasDelta, hasZigZag, _, _ := decodeHeader(header)
-	hasFOR := forWidth > 0
-
-	if err := validateIntType(intType); err != nil {
-		return nil, 0, err
-	}
-
-	if uint(count-1) >= blockSize || uint(bitWidth) > 32 {
-		if count == 0 {
-			return dst[:0], headerBytes, nil
-		}
-		if count > blockSize {
-			return nil, 0, ErrInvalidBlockLength
-		}
-		return nil, 0, ErrInvalidBuffer
-	}
-
-	pOff := payloadOffset(0, hasExceptions, false)
-	var forBase uint32
-	if hasFOR {
-		forBase = readFORBase(buf, pOff, forWidth)
-		pOff += forBaseBytes(forWidth)
-	}
-
-	payloadBytes := utlPayloadBytes(bitWidth)
-
-	if len(buf) < pOff+payloadBytes {
-		return nil, 0, ErrInvalidBuffer
-	}
-
-	if cap(dst) < blockSize {
-		dst = make([]uint32, blockSize)
-	}
-	dst = dst[:blockSize]
-
-	payload := buf[pOff : pOff+payloadBytes]
-
-	// This requires https://github.com/golang/go/commit/aa80d7a7e6bf97aa27a74cc5056ef270a2a0c2f4
-	// which will likely be in Go 1.27.
-	// Until then, we may need SSE2 unpacker or gotip
-	unpackLanesUTLAVX2(dst, payload, blockSize, bitWidth)
-
-	dst = dst[:count]
-
-	consumed := pOff + payloadBytes
-
-	if hasExceptions {
-		archsimd.ClearAVXUpperBits()
-		excStart := pOff + payloadBytes
-		var err error
-		consumed, err = applyExceptions(dst, buf, excStart, count, bitWidth, excCount, scratch)
-		if err != nil {
-			return nil, 0, err
-		}
-	}
-
-	if hasDelta {
-		if hasZigZag {
-			if count == blockSize {
-				deltaDecodePerLaneAVX2(dst, true)
-			} else {
-				archsimd.ClearAVXUpperBits()
-				deltaDecodePerLaneScalar(dst, true)
-			}
-		} else {
-			var overflowPos int
-			if count == blockSize {
-				overflowPos = deltaDecodePerLaneWithOverflowAVX2(dst, false)
-			} else {
-				archsimd.ClearAVXUpperBits()
-				overflowPos = deltaDecodePerLaneWithOverflowScalar(dst, false)
-			}
-			if overflowPos > 0 {
-				archsimd.ClearAVXUpperBits()
-				return nil, 0, &ErrOverflow{Position: overflowPos}
-			}
-		}
-	}
-
-	if hasFOR {
-		forAddAVX2(dst, count, forBase)
-	}
-
-	archsimd.ClearAVXUpperBits()
-	return dst, consumed, nil
+	return unpackBlockAVX2(dst, scratch, buf, false)
 }
 
 // selectBitWidthAVX2 computes the optimal step bitwidth using SIMD threshold
@@ -628,4 +458,389 @@ func forAddAVX2(output []uint32, count int, baseValue uint32) {
 	for ; i < count; i++ {
 		output[i] += baseValue
 	}
+}
+
+// deinterleaveIdx selects even-indexed dwords (lower halves) into the
+// low 128-bit lane and odd-indexed dwords (upper halves) into the high
+// lane: [lo0,hi0,lo1,hi1,lo2,hi2,lo3,hi3] -> [lo0,lo1,lo2,lo3,hi0,hi1,hi2,hi3].
+var deinterleaveIdx = [8]uint32{0, 2, 4, 6, 1, 3, 5, 7}
+
+// splitUint64HalvesAVX2 extracts lower/upper uint32 halves using VPERMD
+// deinterleave (4 uint64 per iteration), and computes OR-accumulator
+// with Uint64x4. Min/max use scalar because Uint64x4.Min/Max require
+// AVX-512 (VPMINUQ).
+func splitUint64HalvesAVX2(lower, upper []uint32, values []uint64) (min64, max64, acc uint64) {
+	n := len(values)
+	if n < 4 {
+		return splitUint64Halves(lower, upper, values)
+	}
+
+	perm := archsimd.LoadUint32x8Array(&deinterleaveIdx)
+
+	// SIMD OR-accumulation + VPERMD deinterleave for extraction
+	v0 := archsimd.LoadUint64x4(values[:4])
+	accVec := v0
+
+	shuffled := v0.AsUint32x8().Permute(perm)
+	shuffled.GetLo().Store(lower[:4])
+	shuffled.GetHi().Store(upper[:4])
+
+	for i := 4; i+4 <= n; i += 4 {
+		chunk := archsimd.LoadUint64x4(values[i : i+4])
+		accVec = accVec.Or(chunk)
+
+		shuffled = chunk.AsUint32x8().Permute(perm)
+		shuffled.GetLo().Store(lower[i : i+4])
+		shuffled.GetHi().Store(upper[i : i+4])
+	}
+
+	// Reduce OR-accumulator to scalar
+	accR := accVec.GetLo().Or(accVec.GetHi())
+	var accL [2]uint64
+	accR.StoreArray(&accL)
+	acc = accL[0] | accL[1]
+
+	// Scalar tail for remaining values
+	tail := (n / 4) * 4
+	for i := tail; i < n; i++ {
+		v := values[i]
+		lower[i] = uint32(v)
+		upper[i] = uint32(v >> 32)
+		acc |= v
+	}
+
+	// Scalar min/max (uint64 min/max needs AVX-512 VPMINUQ)
+	min64, max64 = values[0], values[0]
+	for _, v := range values[1:] {
+		min64 = min(min64, v)
+		max64 = max(max64, v)
+	}
+	return
+}
+
+// allFitIn32BitsAVX2 checks if all uint64 values fit in 32 bits by
+// OR-accumulating with Uint64x4 (4 values per iteration) and checking
+// the upper 32 bits.
+func allFitIn32BitsAVX2(values []uint64) bool {
+	n := len(values)
+	if n < 4 {
+		var acc uint64
+		for _, v := range values {
+			acc |= v
+		}
+		return acc>>32 == 0
+	}
+
+	accVec := archsimd.LoadUint64x4(values[:4])
+
+	for i := 4; i+4 <= n; i += 4 {
+		chunk := archsimd.LoadUint64x4(values[i : i+4])
+		accVec = accVec.Or(chunk)
+	}
+
+	reduced := accVec.GetLo().Or(accVec.GetHi())
+	var lanes [2]uint64
+	reduced.Store(lanes[:])
+	acc := lanes[0] | lanes[1]
+
+	tail := (n / 4) * 4
+	for i := tail; i < n; i++ {
+		acc |= values[i]
+	}
+	return acc>>32 == 0
+}
+
+
+// packBlockAVX2 packs uint32 values into a UTL block using AVX2-accelerated
+// kernels for bit-packing, delta encoding, FOR selection, and bitwidth selection.
+// Accepts configurable typeFlags and hasCombine for use by uint64 sub-block paths.
+func packBlockAVX2(flag Flag, values []uint32, dst []byte, scratch []uint32, typeFlags uint32, hasCombine bool) ([]byte, error) {
+	if len(values) == 0 || len(values) > blockSize {
+		return nil, ErrInvalidBuffer
+	}
+
+	headerFlags := typeFlags
+	headerFlags |= uint32(flag&Special) << 14
+
+	var useFOR bool
+	var baseValue uint32
+	var forW int
+	if flag&NoFOR == 0 {
+		useFOR, baseValue, forW = selectBitWidthWithFORAVX2(values)
+		if useFOR {
+			forSubtractAVX2(values, values, baseValue)
+			headerFlags |= uint32(forW) << forWidthShift
+		}
+	}
+
+	if flag&Delta != 0 {
+		var needZZ bool
+		if len(values) == blockSize {
+			needZZ = deltaEncodePerLaneAVX2(values)
+		} else {
+			needZZ = deltaEncodePerLaneScalar(values)
+		}
+		if needZZ {
+			headerFlags |= headerZigZagFlag
+		}
+		headerFlags |= headerDeltaFlag
+	}
+
+	var bitWidth, excCount int
+	if flag&NoPatch != 0 {
+		bitWidth = selectBitWidthNoPatchAVX2(values)
+	} else {
+		bitWidth, excCount = selectBitWidthAVX2(values)
+	}
+	payloadSize := utlPayloadBytes(bitWidth)
+	hasExceptions := excCount > 0
+	forBBytes := forBaseBytes(forW)
+
+	packInput := values
+	if len(values) < blockSize {
+		copy(scratch[:len(values)], values)
+		clear(scratch[len(values):blockSize])
+		packInput = scratch[:blockSize]
+	}
+
+	if !hasExceptions {
+		pOff := payloadOffset(forBBytes, false, hasCombine)
+		totalLen := pOff + payloadSize
+		dst = ensureLen(dst, totalLen)
+		bo.PutUint32(dst, encodeHeader(len(values), bitWidth, 0, headerFlags))
+		if useFOR {
+			writeFORBase(dst, baseValue, forW, false)
+		}
+		packLanesUTLAVX2(dst[pOff:pOff+payloadSize], packInput, bitWidth)
+		archsimd.ClearAVXUpperBits()
+		return dst[:totalLen], nil
+	}
+
+	excIdxSize := excIndexSize(excCount)
+	maxSvbLen := maxSVBEncodedLen(excCount)
+	pOff := payloadOffset(forBBytes, true, hasCombine)
+	maxTotalLen := pOff + payloadSize + excIdxSize + maxSvbLen
+
+	dst = ensureLen(dst, maxTotalLen)
+	bo.PutUint32(dst, encodeHeader(len(values), bitWidth, excCount, headerFlags))
+	if useFOR {
+		writeFORBase(dst, baseValue, forW, true)
+	}
+
+	packLanesUTLAVX2(dst[pOff:pOff+payloadSize], packInput, bitWidth)
+	archsimd.ClearAVXUpperBits()
+
+	highBits := scratch[:blockSize]
+	excOff := pOff + payloadSize
+	collectAndWriteExceptions(values, bitWidth, dst[excOff:], excCount, highBits)
+	svbOffset := excOff + excIdxSize
+	svbLen := encodeSVBIntoDst(dst[svbOffset:maxTotalLen], highBits[:excCount])
+
+	bo.PutUint16(dst[headerBytes:], uint16(svbLen))
+	return dst[:svbOffset+svbLen], nil
+}
+
+// packUint64AVX2 is the AVX2 implementation of PackUint64.
+// Uses SIMD-accelerated extraction (VPERMD deinterleave + Uint64x4
+// min/max/OR), then delegates sub-block packing to packBlockAVX2.
+func packUint64AVX2(flag Flag, values []uint64, dst []byte, scratch []uint32) ([]byte, error) {
+	count := len(values)
+	if count == 0 || count > blockSize {
+		return nil, ErrInvalidBuffer
+	}
+
+	off := 0
+	if flag&Append != 0 {
+		off = len(dst)
+	}
+	innerFlag := flag &^ Append
+
+	dst = ensureCapacity64(dst, off, innerFlag)
+
+	upper := scratch[2*blockSize:]
+	min64, max64, acc := splitUint64HalvesAVX2(scratch, upper, values)
+
+	if innerFlag&NoFOR == 0 && min64 > 0 && (max64-min64) < (1<<32) {
+		forSubtract64AVX2(scratch[:count], values, min64)
+		result, err := packFor64(innerFlag, dst, scratch, off, count, min64, packBlockAVX2)
+		archsimd.ClearAVXUpperBits()
+		return result, err
+	}
+
+	if acc>>32 == 0 {
+		block, err := packBlockAVX2(innerFlag, scratch[:count], dst[off:off], scratch[blockSize:2*blockSize], headerTypeUint64Flag, false)
+		if err != nil {
+			return nil, err
+		}
+		archsimd.ClearAVXUpperBits()
+		return dst[:off+len(block)], nil
+	}
+
+	result, err := packUint64TwoBlock(innerFlag, dst, scratch, off, count, packBlockAVX2)
+	archsimd.ClearAVXUpperBits()
+	return result, err
+}
+
+// unpackBlockAVX2 unpacks a uint32 block using AVX2-accelerated kernels.
+// Accepts forUint64 to handle uint64 sub-block context (type validation,
+// FOR64 single-block handling, combine flag recognition).
+func unpackBlockAVX2(dst []uint32, scratch []uint32, buf []byte, forUint64 bool) ([]uint32, int, error) {
+	if len(buf) < headerBytes {
+		return nil, 0, ErrInvalidBuffer
+	}
+
+	header := bo.Uint32(buf)
+	count, bitWidth, intType, excCount, forWidth, hasExceptions, hasDelta, hasZigZag, _, hasCombine := decodeHeader(header)
+	hasFOR := forWidth > 0
+
+	if forUint64 {
+		if err := validateIntType64(intType); err != nil {
+			return nil, 0, err
+		}
+	} else {
+		if err := validateIntType(intType); err != nil {
+			return nil, 0, err
+		}
+		hasCombine = false
+	}
+
+	if uint(count-1) >= blockSize || uint(bitWidth) > 32 {
+		if count == 0 {
+			return dst[:0], headerBytes, nil
+		}
+		if count > blockSize {
+			return nil, 0, ErrInvalidBlockLength
+		}
+		return nil, 0, ErrInvalidBuffer
+	}
+
+	u64Single := forUint64 && isFor64SingleBlock(intType, forWidth, hasCombine)
+
+	pOff := headerBytes
+	if hasExceptions {
+		pOff += svbLenBytes
+	}
+	var forBase uint32
+	if hasFOR {
+		if u64Single {
+			pOff += for64BaseSize
+		} else {
+			forBase = readFORBase(buf, pOff, forWidth)
+			pOff += forBaseBytes(forWidth)
+		}
+	}
+	if hasCombine {
+		pOff += block2LenBytes
+	}
+
+	payloadBytes := utlPayloadBytes(bitWidth)
+	if len(buf) < pOff+payloadBytes {
+		return nil, 0, ErrInvalidBuffer
+	}
+
+	if cap(dst) < blockSize {
+		dst = make([]uint32, blockSize)
+	}
+	dst = dst[:blockSize]
+
+	payload := buf[pOff : pOff+payloadBytes]
+	unpackLanesUTLAVX2(dst, payload, blockSize, bitWidth)
+
+	dst = dst[:count]
+
+	consumed := pOff + payloadBytes
+
+	if hasExceptions {
+		archsimd.ClearAVXUpperBits()
+		excStart := pOff + payloadBytes
+		var err error
+		consumed, err = applyExceptions(dst, buf, excStart, count, bitWidth, excCount, scratch)
+		if err != nil {
+			return nil, 0, err
+		}
+	}
+
+	if hasDelta {
+		if hasZigZag {
+			if count == blockSize {
+				deltaDecodePerLaneAVX2(dst, true)
+			} else {
+				archsimd.ClearAVXUpperBits()
+				deltaDecodePerLaneScalar(dst, true)
+			}
+		} else {
+			var overflowPos int
+			if count == blockSize {
+				overflowPos = deltaDecodePerLaneWithOverflowAVX2(dst, false)
+			} else {
+				archsimd.ClearAVXUpperBits()
+				overflowPos = deltaDecodePerLaneWithOverflowScalar(dst, false)
+			}
+			if overflowPos > 0 {
+				archsimd.ClearAVXUpperBits()
+				return nil, 0, &ErrOverflow{Position: overflowPos}
+			}
+		}
+	}
+
+	if hasFOR && !u64Single {
+		forAddAVX2(dst, count, forBase)
+	}
+
+	archsimd.ClearAVXUpperBits()
+	return dst, consumed, nil
+}
+
+// combineUint64AVX2 merges lower and upper uint32 halves into uint64 values
+// using AVX2 VPMOVZXDQ (ExtendToUint64) + ShiftAllLeft + Or (4 values per iteration).
+func combineUint64AVX2(dst []uint64, lower, upper []uint32, count int) {
+	i := 0
+	for ; i+4 <= count; i += 4 {
+		loVec := archsimd.LoadUint32x4(lower[i : i+4]).ExtendToUint64()
+		hiVec := archsimd.LoadUint32x4(upper[i : i+4]).ExtendToUint64()
+		result := loVec.Or(hiVec.ShiftAllLeft(32))
+		result.StoreArray((*[4]uint64)(unsafe.Pointer(&dst[i])))
+	}
+	for ; i < count; i++ {
+		dst[i] = uint64(upper[i])<<32 | uint64(lower[i])
+	}
+}
+
+// forAdd64AVX2 adds a uint64 base to each uint32 value and stores as uint64.
+// Uses AVX2 VPMOVZXDQ (ExtendToUint64) + Add (4 values per iteration).
+func forAdd64AVX2(dst []uint64, values []uint32, base uint64, count int) {
+	baseVec := archsimd.BroadcastUint64x4(base)
+	i := 0
+	for ; i+4 <= count; i += 4 {
+		wide := archsimd.LoadUint32x4(values[i : i+4]).ExtendToUint64().Add(baseVec)
+		wide.StoreArray((*[4]uint64)(unsafe.Pointer(&dst[i])))
+	}
+	for ; i < count; i++ {
+		dst[i] = uint64(values[i]) + base
+	}
+}
+
+// forSubtract64AVX2 subtracts base from each uint64 value and stores as uint32.
+// Uses Uint64x4 Sub + VPERMD truncation (4 values per iteration).
+func forSubtract64AVX2(dst []uint32, values []uint64, base uint64) {
+	baseVec := archsimd.BroadcastUint64x4(base)
+	perm := archsimd.LoadUint32x8Array(&deinterleaveIdx)
+	n := len(values)
+	i := 0
+	for ; i+4 <= n; i += 4 {
+		diff := archsimd.LoadUint64x4(values[i : i+4]).Sub(baseVec)
+		truncated := diff.AsUint32x8().Permute(perm)
+		truncated.GetLo().Store(dst[i : i+4])
+	}
+	for ; i < n; i++ {
+		dst[i] = uint32(values[i] - base)
+	}
+}
+
+// unpackUint64AVX2 is the AVX2 implementation of UnpackUint64.
+// Uses AVX2 SIMD for combine and forAdd64 operations.
+func unpackUint64AVX2(dst []uint64, scratch []uint32, buf []byte) ([]uint64, int, error) {
+	dst, consumed, err := unpackUint64Block(dst, scratch, buf, unpackBlockAVX2, forAdd64AVX2, combineUint64AVX2)
+	archsimd.ClearAVXUpperBits()
+	return dst, consumed, err
 }

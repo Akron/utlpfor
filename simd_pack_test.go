@@ -535,6 +535,185 @@ func BenchmarkKernelPackAVX512(b *testing.B) {
 	}
 }
 
+// simdPackUnpackUint64 packs with SIMD and unpacks with SIMD, comparing
+// against a scalar roundtrip. It tests each available SIMD level directly.
+func simdPackUnpackUint64(t *testing.T, flag Flag, values []uint64, label string) {
+	t.Helper()
+
+	scratchScalar := make([]uint32, ScratchLen64)
+	scalarPacked, err := packUint64Scalar(flag, slices.Clone(values), nil, scratchScalar)
+	require.NoError(t, err, "%s: scalar pack", label)
+
+	scalarDst := make([]uint64, blockSize)
+	scalarUnpacked, scalarConsumed, err := unpackUint64Scalar(scalarDst, scratchScalar, scalarPacked)
+	require.NoError(t, err, "%s: scalar unpack", label)
+	require.Equal(t, values, scalarUnpacked, "%s: scalar roundtrip", label)
+
+	if simdLevel >= simdLevelSSE2 {
+		scratchSSE := make([]uint32, ScratchLen64)
+		ssePacked, err := packUint64SSE2(flag, slices.Clone(values), nil, scratchSSE)
+		require.NoError(t, err, "%s: SSE2 pack", label)
+		assert.Equal(t, scalarPacked, ssePacked, "%s: SSE2 packed output differs from scalar", label)
+
+		sseDst := make([]uint64, blockSize)
+		sseUnpacked, sseConsumed, err := unpackUint64SSE2(sseDst, scratchSSE, ssePacked)
+		require.NoError(t, err, "%s: SSE2 unpack", label)
+		assert.Equal(t, scalarConsumed, sseConsumed, "%s: SSE2 consumed differs", label)
+		assert.Equal(t, values, sseUnpacked, "%s: SSE2 roundtrip", label)
+	}
+
+	if simdLevel >= simdLevelAVX2 {
+		scratchAVX := make([]uint32, ScratchLen64)
+		avxPacked, err := packUint64AVX2(flag, slices.Clone(values), nil, scratchAVX)
+		require.NoError(t, err, "%s: AVX2 pack", label)
+		assert.Equal(t, scalarPacked, avxPacked, "%s: AVX2 packed output differs from scalar", label)
+
+		avxDst := make([]uint64, blockSize)
+		avxUnpacked, avxConsumed, err := unpackUint64AVX2(avxDst, scratchAVX, avxPacked)
+		require.NoError(t, err, "%s: AVX2 unpack", label)
+		assert.Equal(t, scalarConsumed, avxConsumed, "%s: AVX2 consumed differs", label)
+		assert.Equal(t, values, avxUnpacked, "%s: AVX2 roundtrip", label)
+	}
+
+	if simdLevel >= simdLevelAVX512 {
+		scratchAVX5 := make([]uint32, ScratchLen64)
+		avx5Packed, err := packUint64AVX512(flag, slices.Clone(values), nil, scratchAVX5)
+		require.NoError(t, err, "%s: AVX512 pack", label)
+
+		avx5Dst := make([]uint64, blockSize)
+		avx5Unpacked, avx5Consumed, err := unpackUint64AVX512(avx5Dst, scratchAVX5, avx5Packed)
+		require.NoError(t, err, "%s: AVX512 unpack", label)
+		assert.Equal(t, scalarConsumed, avx5Consumed, "%s: AVX512 consumed differs", label)
+		assert.Equal(t, values, avx5Unpacked, "%s: AVX512 roundtrip", label)
+	}
+}
+
+func TestPackUnpackUint64_SIMDMatchesScalar_AllZero(t *testing.T) {
+	values := make([]uint64, blockSize)
+	simdPackUnpackUint64(t, 0, values, "all-zero")
+}
+
+func TestPackUnpackUint64_SIMDMatchesScalar_AllFitIn32(t *testing.T) {
+	values := make([]uint64, blockSize)
+	for i := range values {
+		values[i] = uint64(i*13 + 7)
+	}
+	simdPackUnpackUint64(t, 0, values, "fit-in-32")
+}
+
+func TestPackUnpackUint64_SIMDMatchesScalar_TwoBlock(t *testing.T) {
+	values := make([]uint64, blockSize)
+	for i := range values {
+		values[i] = uint64(i)*1000 + (1 << 40)
+	}
+	simdPackUnpackUint64(t, 0, values, "two-block")
+}
+
+func TestPackUnpackUint64_SIMDMatchesScalar_FOR64(t *testing.T) {
+	base := uint64(1) << 50
+	values := make([]uint64, blockSize)
+	for i := range values {
+		values[i] = base + uint64(i*3)
+	}
+	simdPackUnpackUint64(t, 0, values, "for64")
+}
+
+func TestPackUnpackUint64_SIMDMatchesScalar_Partial(t *testing.T) {
+	for _, count := range []int{1, 7, 63, 100} {
+		t.Run(fmt.Sprintf("count%d", count), func(t *testing.T) {
+			values := make([]uint64, count)
+			for i := range values {
+				values[i] = uint64(i)*12345 + (1 << 33)
+			}
+			simdPackUnpackUint64(t, 0, values, fmt.Sprintf("partial-%d", count))
+		})
+	}
+}
+
+func TestPackUnpackUint64_SIMDMatchesScalar_WithDelta(t *testing.T) {
+	values := make([]uint64, blockSize)
+	for i := range values {
+		values[i] = uint64(1000000 + i*100)
+	}
+	simdPackUnpackUint64(t, Delta, values, "delta")
+}
+
+func TestPackUnpackUint64_SIMDMatchesScalar_WithNoPatch(t *testing.T) {
+	values := make([]uint64, blockSize)
+	for i := range values {
+		values[i] = uint64(i & 0xFF)
+	}
+	simdPackUnpackUint64(t, NoPatch, values, "no-patch")
+}
+
+func TestPackUnpackUint64_SIMDMatchesScalar_WithNoFOR(t *testing.T) {
+	base := uint64(1) << 50
+	values := make([]uint64, blockSize)
+	for i := range values {
+		values[i] = base + uint64(i*3)
+	}
+	simdPackUnpackUint64(t, NoFOR, values, "no-for")
+}
+
+func TestPackUnpackUint64_SIMDMatchesScalar_Random(t *testing.T) {
+	rng := rand.New(rand.NewSource(42))
+	for seed := range int64(200) {
+		rng.Seed(seed)
+		count := rng.Intn(blockSize) + 1
+		values := make([]uint64, count)
+		for i := range values {
+			values[i] = uint64(rng.Int63())
+		}
+		original := slices.Clone(values)
+		simdPackUnpackUint64(t, 0, original, fmt.Sprintf("random-seed%d", seed))
+	}
+}
+
+func TestPackUnpackUint64_SIMDMatchesScalar_FOR64_Random(t *testing.T) {
+	rng := rand.New(rand.NewSource(99))
+	for trial := range 50 {
+		base := uint64(rng.Int63n(1<<62)) + (1 << 32)
+		count := rng.Intn(blockSize) + 1
+		values := make([]uint64, count)
+		for i := range values {
+			values[i] = base + uint64(rng.Intn(1<<20))
+		}
+		original := slices.Clone(values)
+		simdPackUnpackUint64(t, 0, original, fmt.Sprintf("for64-random-%d", trial))
+	}
+}
+
+func TestPackUnpackUint64_SIMDMatchesScalar_CrossUnpack(t *testing.T) {
+	base := uint64(1) << 50
+	values := make([]uint64, blockSize)
+	for i := range values {
+		values[i] = base + uint64(i*3)
+	}
+
+	scratchScalar := make([]uint32, ScratchLen64)
+	scalarPacked, err := packUint64Scalar(0, slices.Clone(values), nil, scratchScalar)
+	require.NoError(t, err)
+
+	if simdLevel >= simdLevelSSE2 {
+		sseDst := make([]uint64, blockSize)
+		sseScratch := make([]uint32, ScratchLen64)
+		sseUnpacked, _, err := unpackUint64SSE2(sseDst, sseScratch, scalarPacked)
+		require.NoError(t, err, "SSE2 unpack of scalar-packed")
+		assert.Equal(t, values, sseUnpacked, "SSE2 cross-unpack")
+	}
+
+	if simdLevel >= simdLevelSSE2 {
+		sseScratch := make([]uint32, ScratchLen64)
+		ssePacked, err := packUint64SSE2(0, slices.Clone(values), nil, sseScratch)
+		require.NoError(t, err, "SSE2 pack")
+
+		scalarDst := make([]uint64, blockSize)
+		scalarUnpacked, _, err := unpackUint64Scalar(scalarDst, scratchScalar, ssePacked)
+		require.NoError(t, err, "scalar unpack of SSE2-packed")
+		assert.Equal(t, values, scalarUnpacked, "scalar cross-unpack of SSE2")
+	}
+}
+
 func TestPackUnpack_SIMDEdgeBitWidths(t *testing.T) {
 	for _, bw := range []int{0, 1, 31, 32} {
 		t.Run(fmt.Sprintf("bw%d", bw), func(t *testing.T) {
