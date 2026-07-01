@@ -157,11 +157,24 @@ func getUint32Scalar(pos int, src []byte, scratch []uint32, forUint64 bool) (uin
 // uint32 value from a uint64-typed block. Uses scratch[0:blockSize] as the
 // output buffer and scratch[2*blockSize:3*blockSize] as exception workspace,
 // matching the unpack scratch layout.
+// Dispatches to the SIMD-appropriate unpack kernel for the delta decode
+// and exception application steps.
 func getFullUnpackViaBlock(pos int, src []byte, scratch []uint32) (uint32, error) {
 	if len(scratch) < ScratchLen64 {
 		scratch = make([]uint32, ScratchLen64)
 	}
-	unpacked, _, err := unpackUint32Scalar(scratch[:0], scratch[2*blockSize:], src, true)
+	var unpacked []uint32
+	var err error
+	switch simdLevel {
+	case simdLevelAVX512VBMI, simdLevelAVX512:
+		unpacked, _, err = unpackBlockForUint64AVX512(scratch[:0], scratch[2*blockSize:], src)
+	case simdLevelAVX2:
+		unpacked, _, err = unpackBlockForUint64AVX2(scratch[:0], scratch[2*blockSize:], src)
+	case simdLevelSSE2:
+		unpacked, _, err = unpackBlockForUint64SSE2(scratch[:0], scratch[2*blockSize:], src)
+	default:
+		unpacked, _, err = unpackUint32Scalar(scratch[:0], scratch[2*blockSize:], src, true)
+	}
 	if err != nil {
 		return 0, err
 	}

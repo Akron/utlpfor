@@ -340,7 +340,12 @@ func unpackUint64Scalar(dst []uint64, scratch []uint32, buf []byte) ([]uint64, i
 // GetUint64 extracts a single uint64 value at the given position from
 // the packed block. scratch with capacity >= ScratchLen64 enables
 // zero-allocation operation; pass nil if zero-alloc is not required.
+// SIMD acceleration is applied internally when the delta full-unpack
+// fallback is triggered (via getFullUnpackViaBlock dispatch).
 func GetUint64(pos int, buf []byte, scratch []uint32) (uint64, error) {
+	if len(scratch) < ScratchLen64 {
+		scratch = make([]uint32, ScratchLen64)
+	}
 	return getUint64Scalar(pos, buf, scratch)
 }
 

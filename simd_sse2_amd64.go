@@ -296,6 +296,12 @@ func unpackUint32SSE2(dst []uint32, scratch []uint32, buf []byte) ([]uint32, int
 	return unpackBlockSSE2(dst, scratch, buf, false)
 }
 
+// unpackBlockSSE2 with uint64 sub-block context (forUint64=true).
+// Used by GetUint64 for SIMD-accelerated delta full-unpack fallback.
+func unpackBlockForUint64SSE2(dst, scratch []uint32, buf []byte) ([]uint32, int, error) {
+	return unpackBlockSSE2(dst, scratch, buf, true)
+}
+
 // selectBitWidthSSE2 computes the optimal step bitwidth using SIMD threshold
 // comparisons. Instead of computing bits.Len32 per value and incrementing a
 // histogram bin (scatter-add), this approach compares all values against each
