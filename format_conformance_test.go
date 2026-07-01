@@ -26,6 +26,7 @@ type kaitaiBlock struct {
 	forWidth      int
 	hasFOR        bool
 	forBaseBytes  int
+	hasCombine    bool
 	hasDelta      bool
 	hasZigZag     bool
 	excCount      int
@@ -33,9 +34,11 @@ type kaitaiBlock struct {
 	payloadSize   int
 	svbLength     uint16
 	forBase       []byte
+	block2Len     uint16
 	payload       []byte
 	excIndex      []byte
 	svbData       []byte
+	block2        *kaitaiBlock
 }
 
 func requireKaitaiSchema(t *testing.T) string {
@@ -48,6 +51,10 @@ func requireKaitaiSchema(t *testing.T) string {
 	require.Contains(t, content, "SPECIAL flag")
 	require.Contains(t, content, "bit  21")
 	require.Contains(t, content, "all-exception flag")
+	require.Contains(t, content, "combine-with-next")
+	require.Contains(t, content, "block2_len")
+	require.Contains(t, content, "for64_base")
+	require.Contains(t, content, "has_combine")
 	return content
 }
 
@@ -57,6 +64,19 @@ func parseKaitaiBlock(t *testing.T, data []byte) kaitaiBlock {
 	t.Helper()
 	requireKaitaiSchema(t)
 	s := kaitai.NewStream(bytes.NewReader(data))
+	b := readKaitaiBlockFromStream(t, s)
+
+	eof, err := s.EOF()
+	require.NoError(t, err, "kaitai: check EOF")
+	assert.True(t, eof, "kaitai: stream should be fully consumed")
+
+	return b
+}
+
+// readKaitaiBlockFromStream reads a single block from the stream without
+// checking EOF. Used for both standalone blocks and nested Block 2 parsing.
+func readKaitaiBlockFromStream(t *testing.T, s *kaitai.Stream) kaitaiBlock {
+	t.Helper()
 
 	raw, err := s.ReadU4le()
 	require.NoError(t, err, "kaitai: read header u4le")
@@ -68,16 +88,21 @@ func parseKaitaiBlock(t *testing.T, data []byte) kaitaiBlock {
 	b.intType = int((raw >> 13) & 0x03)
 	b.forWidth = int((raw >> 15) & 0x03)
 	b.hasFOR = b.forWidth != 0
-	switch b.forWidth {
-	case 1:
-		b.forBaseBytes = 1
-	case 2:
-		b.forBaseBytes = 2
-	case 3:
-		b.forBaseBytes = 4
-	default:
+	b.hasCombine = (raw & 0x00080000) != 0
+
+	switch {
+	case b.forWidth == 0:
 		b.forBaseBytes = 0
+	case b.forWidth == 1:
+		b.forBaseBytes = 1
+	case b.forWidth == 2:
+		b.forBaseBytes = 2
+	case b.intType == IntTypeUint64 && !b.hasCombine && b.forWidth == 3:
+		b.forBaseBytes = 8
+	default:
+		b.forBaseBytes = 4
 	}
+
 	b.hasDelta = (raw & 0x00400000) != 0
 	b.hasZigZag = (raw & 0x00800000) != 0
 	b.excCount = int((raw >> 24) & 0xFF)
@@ -100,6 +125,12 @@ func parseKaitaiBlock(t *testing.T, data []byte) kaitaiBlock {
 		require.NoError(t, err, "kaitai: read for_base")
 	}
 
+	if b.hasCombine {
+		block2LenVal, err := s.ReadU2le()
+		require.NoError(t, err, "kaitai: read block2_len u2le")
+		b.block2Len = block2LenVal
+	}
+
 	b.payload, err = s.ReadBytes(b.payloadSize)
 	require.NoError(t, err, "kaitai: read payload")
 
@@ -115,9 +146,10 @@ func parseKaitaiBlock(t *testing.T, data []byte) kaitaiBlock {
 		require.NoError(t, err, "kaitai: read svb_data")
 	}
 
-	eof, err := s.EOF()
-	require.NoError(t, err, "kaitai: check EOF")
-	assert.True(t, eof, "kaitai: stream should be fully consumed")
+	if b.hasCombine {
+		block2 := readKaitaiBlockFromStream(t, s)
+		b.block2 = &block2
+	}
 
 	return b
 }
@@ -127,6 +159,9 @@ func TestKaitaiSchemaFile_CurrentNameAndSpecialBit(t *testing.T) {
 	assert.False(t, strings.Contains(content, "utl_pfor.ksy"), "schema should use the current filename")
 	assert.Contains(t, content, "bit  17:    SPECIAL flag")
 	assert.Contains(t, content, "bit  21:    E1 block-length all-exception flag")
+	assert.Contains(t, content, "bit  19:    combine-with-next")
+	assert.Contains(t, content, "for64_base:8")
+	assert.Contains(t, content, "block2_len")
 }
 
 func TestFormatConformance_HeaderLayout(t *testing.T) {
@@ -739,4 +774,301 @@ func TestGoldenVectors_RoundTrip(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestKaitai_Uint64_Fit32_SingleBlock(t *testing.T) {
+	values := make([]uint64, 128)
+	for i := range values {
+		values[i] = uint64(128 + i)
+	}
+	packed, err := PackUint64(0, values, nil, nil)
+	require.NoError(t, err)
+
+	requireKaitaiSchema(t)
+	s := kaitai.NewStream(bytes.NewReader(packed))
+	b := readKaitaiBlockFromStream(t, s)
+
+	assert.Equal(t, 128, b.count)
+	assert.Equal(t, IntTypeUint64, b.intType)
+	assert.False(t, b.hasCombine, "fit-32 path must not set combine-with-next")
+	assert.Nil(t, b.block2, "fit-32 path must not have Block 2")
+
+	eof, err := s.EOF()
+	require.NoError(t, err)
+	assert.True(t, eof)
+
+	blockLen, err := BlockLength(packed)
+	require.NoError(t, err)
+	assert.Equal(t, len(packed), blockLen)
+}
+
+func TestKaitai_Uint64_FOR64_SingleBlock(t *testing.T) {
+	values := make([]uint64, 128)
+	for i := range values {
+		values[i] = 0x100000000 + uint64(i)
+	}
+	packed, err := PackUint64(0, values, nil, nil)
+	require.NoError(t, err)
+
+	requireKaitaiSchema(t)
+	s := kaitai.NewStream(bytes.NewReader(packed))
+	b := readKaitaiBlockFromStream(t, s)
+
+	assert.Equal(t, 128, b.count)
+	assert.Equal(t, IntTypeUint64, b.intType)
+	assert.False(t, b.hasCombine, "FOR64 single-block must not set combine")
+	assert.Equal(t, 3, b.forWidth, "FOR64 must have forWidth=3")
+	assert.Equal(t, 8, b.forBaseBytes, "FOR64 must use 8-byte base")
+	assert.Len(t, b.forBase, 8, "FOR64 base must be 8 bytes")
+	assert.Nil(t, b.block2)
+
+	for64Base := bo.Uint64(b.forBase)
+	assert.Equal(t, uint64(0x100000000), for64Base, "FOR64 base must be min value")
+
+	eof, err := s.EOF()
+	require.NoError(t, err)
+	assert.True(t, eof)
+
+	blockLen, err := BlockLength(packed)
+	require.NoError(t, err)
+	assert.Equal(t, len(packed), blockLen)
+}
+
+func TestKaitai_Uint64_TwoBlock(t *testing.T) {
+	values := make([]uint64, 128)
+	for i := range values {
+		values[i] = uint64(i) | (uint64(i%4) << 32)
+	}
+	packed, err := PackUint64(NoFOR, values, nil, nil)
+	require.NoError(t, err)
+
+	requireKaitaiSchema(t)
+	s := kaitai.NewStream(bytes.NewReader(packed))
+	b := readKaitaiBlockFromStream(t, s)
+
+	assert.Equal(t, 128, b.count)
+	assert.Equal(t, IntTypeUint64, b.intType)
+	assert.True(t, b.hasCombine, "two-block must set combine-with-next")
+	assert.Greater(t, int(b.block2Len), 0, "block2Len must be > 0")
+
+	require.NotNil(t, b.block2, "two-block must have Block 2")
+	assert.Equal(t, 128, b.block2.count, "Block 2 count must match")
+	assert.Equal(t, IntTypeUint64, b.block2.intType, "Block 2 must have intType=uint64")
+	assert.False(t, b.block2.hasCombine, "Block 2 must not set combine")
+
+	eof, err := s.EOF()
+	require.NoError(t, err)
+	assert.True(t, eof)
+
+	blockLen, err := BlockLength(packed)
+	require.NoError(t, err)
+	assert.Equal(t, len(packed), blockLen)
+}
+
+func TestKaitai_Uint64_TwoBlock_Block2LenMatchesActual(t *testing.T) {
+	values := make([]uint64, 128)
+	for i := range values {
+		values[i] = uint64(i) | (uint64(0xAB) << 32)
+	}
+	packed, err := PackUint64(NoFOR, values, nil, nil)
+	require.NoError(t, err)
+
+	requireKaitaiSchema(t)
+	s := kaitai.NewStream(bytes.NewReader(packed))
+	b := readKaitaiBlockFromStream(t, s)
+
+	require.True(t, b.hasCombine)
+	require.NotNil(t, b.block2)
+
+	block1Len, err := blockLengthSingleBlock(packed)
+	require.NoError(t, err)
+	actualBlock2Len := len(packed) - block1Len
+	assert.Equal(t, actualBlock2Len, int(b.block2Len),
+		"block2_len field must equal actual Block 2 byte size")
+}
+
+func TestKaitai_Uint64_FOR64_WireLayoutMatchesBlockLength(t *testing.T) {
+	tests := []struct {
+		name   string
+		values []uint64
+		flag   Flag
+	}{
+		{"for64_sequential", func() []uint64 {
+			v := make([]uint64, 128)
+			for i := range v {
+				v[i] = 1_000_000_000_000 + uint64(i)
+			}
+			return v
+		}(), 0},
+		{"for64_boundary_crossing", func() []uint64 {
+			v := make([]uint64, 128)
+			for i := range v {
+				v[i] = 0xFFFFFFC0 + uint64(i)
+			}
+			return v
+		}(), 0},
+		{"for64_with_delta", func() []uint64 {
+			v := make([]uint64, 128)
+			for i := range v {
+				v[i] = 0x200000000 + uint64(i*16)
+			}
+			return v
+		}(), Delta},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			packed, err := PackUint64(tt.flag, tt.values, nil, nil)
+			require.NoError(t, err)
+
+			requireKaitaiSchema(t)
+			s := kaitai.NewStream(bytes.NewReader(packed))
+			b := readKaitaiBlockFromStream(t, s)
+
+			assert.Equal(t, IntTypeUint64, b.intType)
+			assert.False(t, b.hasCombine, "FOR64 must be single-block")
+			assert.Equal(t, 8, b.forBaseBytes)
+
+			kaitaiLen := headerBytes + b.forBaseBytes + b.payloadSize
+			if b.hasExceptions {
+				excIdxSize := b.excCount
+				if b.excCount > excBitmapThreshold {
+					excIdxSize = 16
+				}
+				kaitaiLen = headerBytes + svbLenBytes + b.forBaseBytes + b.payloadSize + excIdxSize + int(b.svbLength)
+			}
+
+			blockLen, err := BlockLength(packed)
+			require.NoError(t, err)
+			assert.Equal(t, blockLen, kaitaiLen,
+				"kaitai-computed length must match BlockLength")
+			assert.Equal(t, len(packed), kaitaiLen,
+				"kaitai-computed length must match actual packed size")
+
+			eof, err := s.EOF()
+			require.NoError(t, err)
+			assert.True(t, eof)
+		})
+	}
+}
+
+func TestKaitai_Uint64_TwoBlock_WireLayoutMatchesBlockLength(t *testing.T) {
+	values := make([]uint64, 128)
+	for i := range values {
+		values[i] = uint64(i) | (uint64(i%7) << 32)
+	}
+	packed, err := PackUint64(NoFOR, values, nil, nil)
+	require.NoError(t, err)
+
+	blockLen, err := BlockLength(packed)
+	require.NoError(t, err)
+	assert.Equal(t, len(packed), blockLen,
+		"BlockLength must match actual packed size for two-block uint64")
+}
+
+func TestKaitai_Uint64_TypeSafety_Uint32RejectsUint64Block(t *testing.T) {
+	values := make([]uint64, 128)
+	for i := range values {
+		values[i] = uint64(i)
+	}
+	packed, err := PackUint64(0, values, nil, nil)
+	require.NoError(t, err)
+
+	_, _, err = UnpackUint32(packed, nil, nil)
+	assert.ErrorIs(t, err, ErrUnsupportedType,
+		"UnpackUint32 on uint64 block must return ErrUnsupportedType")
+
+	_, err = GetUint32(0, packed, nil)
+	assert.ErrorIs(t, err, ErrUnsupportedType,
+		"GetUint32 on uint64 block must return ErrUnsupportedType")
+}
+
+func TestKaitai_Uint64_RoundTrip_AllPaths(t *testing.T) {
+	tests := []struct {
+		name   string
+		values []uint64
+		flag   Flag
+	}{
+		{"fit32_sequential", func() []uint64 {
+			v := make([]uint64, 128)
+			for i := range v {
+				v[i] = uint64(i)
+			}
+			return v
+		}(), 0},
+		{"for64_timestamps", func() []uint64 {
+			v := make([]uint64, 128)
+			for i := range v {
+				v[i] = 1_719_300_000_000 + uint64(i)
+			}
+			return v
+		}(), 0},
+		{"two_block_mixed", func() []uint64 {
+			v := make([]uint64, 128)
+			for i := range v {
+				v[i] = uint64(i) | (uint64(i%5) << 32)
+			}
+			return v
+		}(), NoFOR},
+		{"fit32_delta", func() []uint64 {
+			v := make([]uint64, 128)
+			for i := range v {
+				v[i] = uint64(i * 100)
+			}
+			return v
+		}(), Delta},
+		{"for64_delta", func() []uint64 {
+			v := make([]uint64, 128)
+			for i := range v {
+				v[i] = 0x200000000 + uint64(i*16)
+			}
+			return v
+		}(), Delta},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			packed, err := PackUint64(tt.flag, tt.values, nil, nil)
+			require.NoError(t, err)
+
+			unpacked, consumed, err := UnpackUint64(nil, nil, packed)
+			require.NoError(t, err)
+			assert.Equal(t, tt.values, unpacked)
+
+			blockLen, err := BlockLength(packed)
+			require.NoError(t, err)
+			assert.Equal(t, consumed, blockLen, "consumed must match BlockLength")
+			assert.Equal(t, len(packed), blockLen, "packed length must match BlockLength")
+
+			scratch := make([]uint32, ScratchLen64)
+			for pos, want := range unpacked {
+				got, err := GetUint64(pos, packed, scratch)
+				require.NoError(t, err)
+				assert.Equal(t, want, got, "GetUint64 mismatch at pos=%d", pos)
+			}
+		})
+	}
+}
+
+// blockLengthSingleBlock computes Block 1's own length (excluding Block 2)
+// for two-block uint64 blocks, used to validate block2_len.
+func blockLengthSingleBlock(buf []byte) (int, error) {
+	if len(buf) < headerBytes {
+		return 0, ErrInvalidBuffer
+	}
+	header := bo.Uint32(buf)
+	_, bitWidth, intType, excCount, forWidth, hasExc, _, _, _, hasCombine := decodeHeader(header)
+	hasCombine = hasCombine && intType == IntTypeUint64
+
+	forBaseSize := forBaseBytesForBlock(forWidth, intType, hasCombine)
+	pOff := payloadOffset(forBaseSize, hasExc, hasCombine)
+	blockLen := pOff + utlPayloadBytes(bitWidth)
+
+	if hasExc {
+		excIdxSize := excCount
+		if excCount > excBitmapThreshold {
+			excIdxSize = 16
+		}
+		svbLen := int(bo.Uint16(buf[headerBytes:]))
+		blockLen += excIdxSize + svbLen
+	}
+	return blockLen, nil
 }

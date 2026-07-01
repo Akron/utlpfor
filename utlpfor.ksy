@@ -5,23 +5,38 @@ meta:
   file-extension: bin
 
 doc: |
-  A single UTL-PFOR compressed block containing up to 128 unsigned 32-bit
-  integers. Uses Unified Transposed Layout (UTL/FastLanes) with 16 lanes
-  and 8 values per lane. Payload is organized in 64-byte super-words.
+  A single UTL-PFOR compressed block containing up to 128 unsigned integers
+  (uint32 or uint64). Uses Unified Transposed Layout (UTL/FastLanes) with
+  16 lanes and 8 values per lane. Payload is organized in 64-byte super-words.
+
+  Uint64 values are encoded via a double-block strategy: the 64-bit values
+  are split into lower and upper 32-bit halves, each encoded as a standard
+  uint32 sub-block. A FOR64 gateway optimization encodes the entire block as
+  a single block when the value range fits in 32 bits after subtracting a
+  64-bit minimum.
 
   Header layout (32-bit little-endian):
     bits  0- 7: count (number of values, 0-128)
     bits  8-12: bw_step_index (0-8 for 128-block, step bitwidth / 4)
     bits 13-14: int_type (0=uint8, 1=uint16, 2=uint32, 3=uint64)
-    bits 15-16: for_width (00=no FOR, 01=uint8 1B, 10=uint16 2B, 11=uint32 4B)
+    bits 15-16: for_width (00=no FOR, 01=uint8 1B, 10=uint16 2B,
+                11=uint32 4B or uint64 8B; see below)
     bit  17:    SPECIAL flag (silently ignored by current decoder)
     bit  18:    reserved (must be 0)
-    bit  19:    E2 combine-with-next (reserved, must be 0)
+    bit  19:    combine-with-next (uint64 double-block: Block 2 follows)
     bit  20:    E1 block-length mode (reserved, must be 0)
     bit  21:    E1 block-length all-exception flag (reserved, silently ignored)
     bit  22:    delta flag
     bit  23:    zigzag flag
     bits 24-31: exc_count (0 = no exceptions, 1-128 = exception count)
+
+  for_width interpretation depends on context:
+    - int_type=uint64, combine-with-next=0, for_width=11:
+      FOR64 mode — 8-byte uint64 base (the block was range-reduced to uint32).
+    - int_type=uint64, combine-with-next=1, for_width=11 (in either sub-block):
+      Standard 4-byte uint32 base (each sub-block uses uint32 FOR semantics).
+    - int_type=uint32, for_width=11:
+      Standard 4-byte uint32 base.
 
   Step bitwidths: The encoded bw_step_index maps to the actual bitwidth
   as bit_width = bw_step_index * 4. Valid step bitwidths are:
@@ -33,10 +48,23 @@ doc: |
 
   Exception high bits are encoded using StreamVByte.
 
-  Wire layout (no exc, no FOR):    [header:4][payload:N]
-  Wire layout (no exc, FOR):       [header:4][for_base:1|2|4][payload:N]
-  Wire layout (exc, no FOR):       [header:4][svb_length:2][payload:N][exc_index][svb_data]
-  Wire layout (exc, FOR):          [header:4][svb_length:2][for_base:1|2|4][payload:N][exc_index][svb_data]
+  Uint32 wire layouts:
+    (no exc, no FOR):    [header:4][payload:N]
+    (no exc, FOR):       [header:4][for_base:1|2|4][payload:N]
+    (exc, no FOR):       [header:4][svb_length:2][payload:N][exc_index][svb_data]
+    (exc, FOR):          [header:4][svb_length:2][for_base:1|2|4][payload:N][exc_index][svb_data]
+
+  Uint64 wire layouts (int_type=3):
+    Single-block, all values < 2^32 (combine=0, for_width!=11):
+      Same as uint32 layout above.
+    FOR64 single-block (combine=0, for_width=11):
+      [header:4][svb_length:2?][for64_base:8][payload:N][exc_index?][svb_data?]
+    Two-block (combine=1):
+      Block 1: [header:4][svb_length:2?][for_base:0|1|2|4][block2_len:2][payload:N][exc_index?][svb_data?]
+      Block 2: [header:4][svb_length:2?][for_base:0|1|2|4][payload:N][exc_index?][svb_data?]
+
+  block2_len (uint16 LE) stores the total byte length of Block 2 (header
+  through last data byte). Present only when combine-with-next=1.
 
 seq:
   - id: header
@@ -49,8 +77,17 @@ seq:
     size: header.for_base_bytes
     if: header.has_for
     doc: |
-      FOR base value (minimum of original values). Width depends on
-      for_width: 1 byte (uint8), 2 bytes (uint16 LE), or 4 bytes (uint32 LE).
+      FOR base value. Width depends on context:
+      - uint32 blocks: 1 byte (uint8), 2 bytes (uint16 LE), or 4 bytes (uint32 LE).
+      - uint64 FOR64 single-block (int_type=3, combine=0, for_width=11):
+        8 bytes (uint64 LE).
+  - id: block2_len
+    type: u2
+    if: header.has_combine
+    doc: |
+      Total byte length of Block 2 (uint16 LE). Only present when
+      combine-with-next=1 (int_type=uint64, two-block mode). Enables
+      BlockLength to compute combined size from Block 1's header area alone.
   - id: payload
     size: header.payload_size
     doc: |
@@ -71,6 +108,14 @@ seq:
     size: svb_length
     if: header.has_exceptions
     doc: StreamVByte encoded high bits of exception values.
+  - id: block2
+    type: utlpfor_block
+    if: header.has_combine
+    doc: |
+      Block 2 (upper 32-bit halves) follows immediately after Block 1.
+      Has its own full header with the same count, int_type=uint64,
+      combine-with-next=0. Each sub-block independently selects bitwidth,
+      exceptions, delta/zigzag, and FOR parameters.
 
 types:
   block_header:
@@ -96,7 +141,9 @@ types:
       for_width:
         value: (raw >> 15) & 0x03
         doc: |
-          FOR width at bits 15-16 (00=no FOR, 01=uint8 1B, 10=uint16 2B, 11=uint32 4B).
+          FOR width at bits 15-16 (00=no FOR, 01=uint8 1B, 10=uint16 2B,
+          11=context-dependent: 4B for uint32 or two-block sub-blocks,
+          8B for uint64 FOR64 single-block).
       has_for:
         value: ((raw >> 15) & 0x03) != 0
         doc: True when frame-of-reference compression is active.
@@ -104,8 +151,17 @@ types:
         value: >-
           ((raw >> 15) & 0x03) == 0 ? 0 :
           ((raw >> 15) & 0x03) == 1 ? 1 :
-          ((raw >> 15) & 0x03) == 2 ? 2 : 4
-        doc: Number of bytes used for the FOR base value (0, 1, 2, or 4).
+          ((raw >> 15) & 0x03) == 2 ? 2 :
+          (((raw >> 13) & 0x03) == 3 && (raw & 0x00080000) == 0) ? 8 : 4
+        doc: |
+          Number of bytes used for the FOR base value.
+          0, 1, 2, 4 for standard blocks; 8 for FOR64 single-block
+          (int_type=uint64, combine-with-next=0, for_width=11).
+      has_combine:
+        value: (raw & 0x00080000) != 0
+        doc: |
+          Combine-with-next flag (bit 19). When set with int_type=uint64,
+          indicates a Block 2 (upper 32-bit halves) follows this block.
       has_delta:
         value: (raw & 0x00400000) != 0
         doc: Delta encoding flag (bit 22).
