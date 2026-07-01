@@ -411,7 +411,7 @@ func BenchmarkMatrixUint64(b *testing.B) {
 				b.SetBytes(int64(blockSize * 8))
 				b.ResetTimer()
 				for i := 0; i < b.N; i++ {
-					UnpackUint64(dst, scratch, packed)
+					UnpackUint64(packed, dst, scratch)
 				}
 
 			case "get64":
@@ -681,7 +681,7 @@ func BenchmarkQuickCompareUint64(b *testing.B) {
 				b.SetBytes(int64(blockSize * 8))
 				b.ResetTimer()
 				for i := 0; i < b.N; i++ {
-					UnpackUint64(dst, scratch, packed)
+					UnpackUint64(packed, dst, scratch)
 				}
 
 			case "get":
@@ -715,7 +715,7 @@ func BenchmarkQuickCompareUint64(b *testing.B) {
 				for i := 0; i < b.N; i++ {
 					copy(values, original)
 					packed, _ := PackUint64(cfg.flag, values, packDst[:0], scratch)
-					UnpackUint64(unpackDst, scratch, packed)
+					UnpackUint64(packed, unpackDst, scratch)
 					for _, pos := range positions {
 						v, _ := GetUint64(pos, packed, scratch)
 						sink += v

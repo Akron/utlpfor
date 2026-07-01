@@ -71,22 +71,22 @@ func packUint64AVX512(flag Flag, values []uint64, dst []byte, scratch []uint32) 
 	return packUint64Scalar(flag, values, dst, scratch)
 }
 
-func unpackUint64AVX512(dst []uint64, scratch []uint32, buf []byte) ([]uint64, int, error) {
-	return unpackUint64Scalar(dst, scratch, buf)
+func unpackUint64AVX512(buf []byte, dst []uint64, scratch []uint32) ([]uint64, int, error) {
+	return unpackUint64Scalar(buf, dst, scratch)
 }
 
 func packUint64AVX2(flag Flag, values []uint64, dst []byte, scratch []uint32) ([]byte, error) {
 	return packUint64Scalar(flag, values, dst, scratch)
 }
 
-func unpackUint64AVX2(dst []uint64, scratch []uint32, buf []byte) ([]uint64, int, error) {
-	return unpackUint64Scalar(dst, scratch, buf)
+func unpackUint64AVX2(buf []byte, dst []uint64, scratch []uint32) ([]uint64, int, error) {
+	return unpackUint64Scalar(buf, dst, scratch)
 }
 
 func packUint64SSE2(flag Flag, values []uint64, dst []byte, scratch []uint32) ([]byte, error) {
 	return packUint64Scalar(flag, values, dst, scratch)
 }
 
-func unpackUint64SSE2(dst []uint64, scratch []uint32, buf []byte) ([]uint64, int, error) {
-	return unpackUint64Scalar(dst, scratch, buf)
+func unpackUint64SSE2(buf []byte, dst []uint64, scratch []uint32) ([]uint64, int, error) {
+	return unpackUint64Scalar(buf, dst, scratch)
 }

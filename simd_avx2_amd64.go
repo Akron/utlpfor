@@ -914,8 +914,8 @@ func forSubtract64AVX2(dst []uint32, values []uint64, base uint64) {
 
 // unpackUint64AVX2 is the AVX2 implementation of UnpackUint64.
 // Uses AVX2 SIMD for combine and forAdd64 operations.
-func unpackUint64AVX2(dst []uint64, scratch []uint32, buf []byte) ([]uint64, int, error) {
-	dst, consumed, err := unpackUint64Block(dst, scratch, buf, unpackBlockAVX2, forAdd64AVX2, combineUint64AVX2)
+func unpackUint64AVX2(buf []byte, dst []uint64, scratch []uint32) ([]uint64, int, error) {
+	dst, consumed, err := unpackUint64Block(buf, dst, scratch, unpackBlockAVX2, forAdd64AVX2, combineUint64AVX2)
 	archsimd.ClearAVXUpperBits()
 	return dst, consumed, err
 }

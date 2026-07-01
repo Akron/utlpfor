@@ -248,7 +248,7 @@ func FuzzPackUnpackUint64RoundTrip(f *testing.F) {
 		require.NoError(t, err)
 
 		dst := make([]uint64, blockSize)
-		unpacked, consumed, err := UnpackUint64(dst, scratch, packed)
+		unpacked, consumed, err := UnpackUint64(packed, dst, scratch)
 		require.NoError(t, err)
 		require.Equal(t, len(packed), consumed)
 		require.Equal(t, original, unpacked)
@@ -272,7 +272,7 @@ func FuzzPackDeltaUint64RoundTrip(f *testing.F) {
 		require.NoError(t, err)
 
 		dst := make([]uint64, blockSize)
-		unpacked, _, err := UnpackUint64(dst, scratch, packed)
+		unpacked, _, err := UnpackUint64(packed, dst, scratch)
 		require.NoError(t, err)
 		require.Equal(t, original, unpacked)
 	})
@@ -293,7 +293,7 @@ func FuzzGetUint64MatchesUnpack(f *testing.F) {
 		require.NoError(t, err)
 
 		dst := make([]uint64, blockSize)
-		unpacked, _, err := UnpackUint64(dst, scratch, packed)
+		unpacked, _, err := UnpackUint64(packed, dst, scratch)
 		require.NoError(t, err)
 
 		for pos := range unpacked {
@@ -353,7 +353,7 @@ func FuzzBlockLengthUint64MatchesConsumed(f *testing.F) {
 		require.NoError(t, err)
 
 		dst := make([]uint64, blockSize)
-		_, consumed, err := UnpackUint64(dst, scratch, packed)
+		_, consumed, err := UnpackUint64(packed, dst, scratch)
 		require.NoError(t, err)
 		assert.Equal(t, consumed, bl, "BlockLength != consumed")
 	})

@@ -813,8 +813,8 @@ func unpackBlockAVX512(dst []uint32, scratch []uint32, buf []byte, forUint64 boo
 }
 
 // unpackUint64AVX512 is the AVX-512 implementation of UnpackUint64.
-func unpackUint64AVX512(dst []uint64, scratch []uint32, buf []byte) ([]uint64, int, error) {
-	dst, consumed, err := unpackUint64Block(dst, scratch, buf, unpackBlockAVX512, forAdd64AVX512, combineUint64AVX512)
+func unpackUint64AVX512(buf []byte, dst []uint64, scratch []uint32) ([]uint64, int, error) {
+	dst, consumed, err := unpackUint64Block(buf, dst, scratch, unpackBlockAVX512, forAdd64AVX512, combineUint64AVX512)
 	archsimd.ClearAVXUpperBits()
 	return dst, consumed, err
 }

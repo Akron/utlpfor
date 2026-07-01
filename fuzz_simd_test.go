@@ -172,11 +172,11 @@ func TestUint64_SIMDvsScalar_Unpack(t *testing.T) {
 				require.NoError(t, err)
 
 				scalarDst := make([]uint64, blockSize)
-				scalarResult, scalarConsumed, err := unpackUint64Scalar(scalarDst, make([]uint32, ScratchLen64), packed)
+				scalarResult, scalarConsumed, err := unpackUint64Scalar(packed, scalarDst, make([]uint32, ScratchLen64))
 				require.NoError(t, err)
 
 				simdDst := make([]uint64, blockSize)
-				simdResult, simdConsumed, err := UnpackUint64(simdDst, scratch, packed)
+				simdResult, simdConsumed, err := UnpackUint64(packed, simdDst, scratch)
 				require.NoError(t, err)
 
 				assert.Equal(t, scalarConsumed, simdConsumed,

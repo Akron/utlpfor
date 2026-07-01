@@ -43,7 +43,7 @@ AVX-512 > AVX2 > SSE2 > scalar fallback.
 ## API
 
 ```go
-func PackUint32(flag PackFlag, values []uint32, dst []byte, scratch []uint32) ([]byte, error)
+func PackUint32(flag Flag, values []uint32, dst []byte, scratch []uint32) ([]byte, error)
 func UnpackUint32(src []byte, values []uint32, scratch []uint32) ([]uint32, int, error)
 func GetUint32(pos int, src []byte, scratch []uint32) (uint32, error)
 func BlockLength(src []byte) (int, error)
@@ -51,8 +51,8 @@ func MaxBlockLength32(flag Flag) int
 func Header(src []byte) (count, bitWidth, excCount int, hasDelta, hasFOR, hasZigZag, hasSpecial bool, err error)
 
 func PackUint64(flag Flag, values []uint64, dst []byte, scratch []uint32) ([]byte, error)
-func UnpackUint64(dst []uint64, scratch []uint32, buf []byte) ([]uint64, int, error)
-func GetUint64(pos int, buf []byte, scratch []uint32) (uint64, error)
+func UnpackUint64(src []byte, values []uint64, scratch []uint32) ([]uint64, int, error)
+func GetUint64(pos int, src []byte, scratch []uint32) (uint64, error)
 func MaxBlockLength64(flag Flag) int
 ```
 
@@ -61,7 +61,7 @@ pipeline internally. 64-bit values are either range-reduced to 32 bits
 (via 64-bit *frame of reference*) or split into lower/upper 32-bit halves encoded
 as two consecutive uint32 sub-blocks.
 
-### PackFlag Constants
+### Flag Constants
 
 | Flag |  Description |
 |------|-------------|

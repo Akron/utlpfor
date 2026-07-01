@@ -786,6 +786,6 @@ func forSubtract64SSE2(dst []uint32, values []uint64, base uint64) {
 
 // unpackUint64SSE2 is the SSE2 implementation of UnpackUint64.
 // Uses SSE2 SIMD for combine and forAdd64 operations.
-func unpackUint64SSE2(dst []uint64, scratch []uint32, buf []byte) ([]uint64, int, error) {
-	return unpackUint64Block(dst, scratch, buf, unpackBlockSSE2, forAdd64SSE2, combineUint64SSE2)
+func unpackUint64SSE2(buf []byte, dst []uint64, scratch []uint32) ([]uint64, int, error) {
+	return unpackUint64Block(buf, dst, scratch, unpackBlockSSE2, forAdd64SSE2, combineUint64SSE2)
 }

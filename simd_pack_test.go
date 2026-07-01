@@ -545,7 +545,7 @@ func simdPackUnpackUint64(t *testing.T, flag Flag, values []uint64, label string
 	require.NoError(t, err, "%s: scalar pack", label)
 
 	scalarDst := make([]uint64, blockSize)
-	scalarUnpacked, scalarConsumed, err := unpackUint64Scalar(scalarDst, scratchScalar, scalarPacked)
+	scalarUnpacked, scalarConsumed, err := unpackUint64Scalar(scalarPacked, scalarDst, scratchScalar)
 	require.NoError(t, err, "%s: scalar unpack", label)
 	require.Equal(t, values, scalarUnpacked, "%s: scalar roundtrip", label)
 
@@ -556,7 +556,7 @@ func simdPackUnpackUint64(t *testing.T, flag Flag, values []uint64, label string
 		assert.Equal(t, scalarPacked, ssePacked, "%s: SSE2 packed output differs from scalar", label)
 
 		sseDst := make([]uint64, blockSize)
-		sseUnpacked, sseConsumed, err := unpackUint64SSE2(sseDst, scratchSSE, ssePacked)
+		sseUnpacked, sseConsumed, err := unpackUint64SSE2(ssePacked, sseDst, scratchSSE)
 		require.NoError(t, err, "%s: SSE2 unpack", label)
 		assert.Equal(t, scalarConsumed, sseConsumed, "%s: SSE2 consumed differs", label)
 		assert.Equal(t, values, sseUnpacked, "%s: SSE2 roundtrip", label)
@@ -569,7 +569,7 @@ func simdPackUnpackUint64(t *testing.T, flag Flag, values []uint64, label string
 		assert.Equal(t, scalarPacked, avxPacked, "%s: AVX2 packed output differs from scalar", label)
 
 		avxDst := make([]uint64, blockSize)
-		avxUnpacked, avxConsumed, err := unpackUint64AVX2(avxDst, scratchAVX, avxPacked)
+		avxUnpacked, avxConsumed, err := unpackUint64AVX2(avxPacked, avxDst, scratchAVX)
 		require.NoError(t, err, "%s: AVX2 unpack", label)
 		assert.Equal(t, scalarConsumed, avxConsumed, "%s: AVX2 consumed differs", label)
 		assert.Equal(t, values, avxUnpacked, "%s: AVX2 roundtrip", label)
@@ -581,7 +581,7 @@ func simdPackUnpackUint64(t *testing.T, flag Flag, values []uint64, label string
 		require.NoError(t, err, "%s: AVX512 pack", label)
 
 		avx5Dst := make([]uint64, blockSize)
-		avx5Unpacked, avx5Consumed, err := unpackUint64AVX512(avx5Dst, scratchAVX5, avx5Packed)
+		avx5Unpacked, avx5Consumed, err := unpackUint64AVX512(avx5Packed, avx5Dst, scratchAVX5)
 		require.NoError(t, err, "%s: AVX512 unpack", label)
 		assert.Equal(t, scalarConsumed, avx5Consumed, "%s: AVX512 consumed differs", label)
 		assert.Equal(t, values, avx5Unpacked, "%s: AVX512 roundtrip", label)
@@ -697,7 +697,7 @@ func TestPackUnpackUint64_SIMDMatchesScalar_CrossUnpack(t *testing.T) {
 	if simdLevel >= simdLevelSSE2 {
 		sseDst := make([]uint64, blockSize)
 		sseScratch := make([]uint32, ScratchLen64)
-		sseUnpacked, _, err := unpackUint64SSE2(sseDst, sseScratch, scalarPacked)
+		sseUnpacked, _, err := unpackUint64SSE2(scalarPacked, sseDst, sseScratch)
 		require.NoError(t, err, "SSE2 unpack of scalar-packed")
 		assert.Equal(t, values, sseUnpacked, "SSE2 cross-unpack")
 	}
@@ -708,7 +708,7 @@ func TestPackUnpackUint64_SIMDMatchesScalar_CrossUnpack(t *testing.T) {
 		require.NoError(t, err, "SSE2 pack")
 
 		scalarDst := make([]uint64, blockSize)
-		scalarUnpacked, _, err := unpackUint64Scalar(scalarDst, scratchScalar, ssePacked)
+		scalarUnpacked, _, err := unpackUint64Scalar(ssePacked, scalarDst, scratchScalar)
 		require.NoError(t, err, "scalar unpack of SSE2-packed")
 		assert.Equal(t, values, scalarUnpacked, "scalar cross-unpack of SSE2")
 	}

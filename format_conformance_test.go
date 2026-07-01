@@ -1029,7 +1029,7 @@ func TestKaitai_Uint64_RoundTrip_AllPaths(t *testing.T) {
 			packed, err := PackUint64(tt.flag, tt.values, nil, nil)
 			require.NoError(t, err)
 
-			unpacked, consumed, err := UnpackUint64(nil, nil, packed)
+			unpacked, consumed, err := UnpackUint64(packed, nil, nil)
 			require.NoError(t, err)
 			assert.Equal(t, tt.values, unpacked)
 

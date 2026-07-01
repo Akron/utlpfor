@@ -602,7 +602,7 @@ func BenchmarkUnpackUint64(b *testing.B) {
 			b.SetBytes(int64(blockSize * 8))
 			b.ResetTimer()
 			for b.Loop() {
-				UnpackUint64(dst, scratch, packed)
+				UnpackUint64(packed, dst, scratch)
 			}
 		})
 	}

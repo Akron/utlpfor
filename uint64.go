@@ -5,9 +5,9 @@ package utlpfor
 //
 // Three regions of blockSize (128) uint32 elements each:
 //
-//	scratch[0·blockSize : 1·blockSize]  – Block 1 values (lower halves / FOR64 work)
-//	scratch[1·blockSize : 2·blockSize]  – exception workspace for current block
-//	scratch[2·blockSize : 3·blockSize]  – Block 2 values (upper halves)
+//	scratch[0*blockSize : 1*blockSize]  - Block 1 values (lower halves / FOR64 work)
+//	scratch[1*blockSize : 2*blockSize]  - exception workspace for current block
+//	scratch[2*blockSize : 3*blockSize]  - Block 2 values (upper halves)
 //
 // Keeping lower and upper halves in separate, non-overlapping regions
 // lets the two-block unpack path combine them in a single fused loop
@@ -177,7 +177,7 @@ func packUint64TwoBlock(flag Flag, dst []byte, scratch []uint32, off, count int,
 // header decoding, single-block vs FOR64 vs two-block dispatch.
 // The caller provides SIMD-level-specific functions for block unpacking,
 // forAdd64, and combine.
-func unpackUint64Block(dst []uint64, scratch []uint32, buf []byte,
+func unpackUint64Block(buf []byte, dst []uint64, scratch []uint32,
 	unpackBlock func([]uint32, []uint32, []byte, bool) ([]uint32, int, error),
 	addBase func([]uint64, []uint32, uint64, int),
 	combine func([]uint64, []uint32, []uint32, int),
@@ -316,25 +316,25 @@ func packUint64Scalar(flag Flag, values []uint64, dst []byte, scratch []uint32) 
 // UnpackUint64 decodes a packed uint64 block into values, using scratch
 // as workspace. Returns the populated values slice, the number of bytes
 // consumed, and any error.
-func UnpackUint64(dst []uint64, scratch []uint32, buf []byte) ([]uint64, int, error) {
+func UnpackUint64(src []byte, values []uint64, scratch []uint32) ([]uint64, int, error) {
 	if len(scratch) < ScratchLen64 {
 		scratch = make([]uint32, ScratchLen64)
 	}
 	switch simdLevel {
 	case simdLevelAVX512VBMI, simdLevelAVX512:
-		return unpackUint64AVX512(dst, scratch, buf)
+		return unpackUint64AVX512(src, values, scratch)
 	case simdLevelAVX2:
-		return unpackUint64AVX2(dst, scratch, buf)
+		return unpackUint64AVX2(src, values, scratch)
 	case simdLevelSSE2:
-		return unpackUint64SSE2(dst, scratch, buf)
+		return unpackUint64SSE2(src, values, scratch)
 	default:
-		return unpackUint64Scalar(dst, scratch, buf)
+		return unpackUint64Scalar(src, values, scratch)
 	}
 }
 
 // unpackUint64Scalar is the scalar implementation of UnpackUint64.
-func unpackUint64Scalar(dst []uint64, scratch []uint32, buf []byte) ([]uint64, int, error) {
-	return unpackUint64Block(dst, scratch, buf, unpackUint32Scalar, forAdd64, combineUint64Scalar)
+func unpackUint64Scalar(buf []byte, dst []uint64, scratch []uint32) ([]uint64, int, error) {
+	return unpackUint64Block(buf, dst, scratch, unpackUint32Scalar, forAdd64, combineUint64Scalar)
 }
 
 // GetUint64 extracts a single uint64 value at the given position from
@@ -342,11 +342,11 @@ func unpackUint64Scalar(dst []uint64, scratch []uint32, buf []byte) ([]uint64, i
 // zero-allocation operation; pass nil if zero-alloc is not required.
 // SIMD acceleration is applied internally when the delta full-unpack
 // fallback is triggered (via getFullUnpackViaBlock dispatch).
-func GetUint64(pos int, buf []byte, scratch []uint32) (uint64, error) {
+func GetUint64(pos int, src []byte, scratch []uint32) (uint64, error) {
 	if len(scratch) < ScratchLen64 {
 		scratch = make([]uint32, ScratchLen64)
 	}
-	return getUint64Scalar(pos, buf, scratch)
+	return getUint64Scalar(pos, src, scratch)
 }
 
 // getUint64Scalar is the scalar implementation of GetUint64.

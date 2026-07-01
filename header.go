@@ -6,7 +6,7 @@ import "encoding/binary"
 var bo = binary.LittleEndian
 
 const (
-	blockSize         = 128 // That's the value count - not to be confused with BlockLength32!
+	blockSize         = 128 // value count per block, not byte length (see BlockLength)
 	utlLaneCount      = 16
 	utlValuesPerLane  = 8
 	utlSuperWordBytes = 64
@@ -22,10 +22,13 @@ const (
 	headerTypeMask  = (1 << headerTypeBits) - 1
 	headerTypeShift = 13
 
-	// Integer type constants for bits 13-14.
-	IntTypeUint8  = 0
+	// IntTypeUint8 is the header integer type for uint8 (reserved, not yet supported).
+	IntTypeUint8 = 0
+	// IntTypeUint16 is the header integer type for uint16 blocks.
 	IntTypeUint16 = 1
+	// IntTypeUint32 is the header integer type for uint32 blocks.
 	IntTypeUint32 = 2
+	// IntTypeUint64 is the header integer type for uint64 blocks.
 	IntTypeUint64 = 3
 
 	headerTypeUint16Flag = uint32(IntTypeUint16) << headerTypeShift

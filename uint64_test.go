@@ -69,7 +69,7 @@ func packUnpackUint64RoundTrip(t *testing.T, flag Flag, values []uint64) {
 	require.NotNil(t, packed)
 
 	dst := make([]uint64, blockSize)
-	unpacked, consumed, err := UnpackUint64(dst, scratch, packed)
+	unpacked, consumed, err := UnpackUint64(packed, dst, scratch)
 	require.NoError(t, err)
 	assert.Equal(t, len(packed), consumed, "consumed bytes should match packed length")
 	require.Equal(t, len(values), len(unpacked))
@@ -282,7 +282,7 @@ func TestGetUint64_VerifyAgainstUnpack(t *testing.T) {
 	require.NoError(t, err)
 
 	dst := make([]uint64, blockSize)
-	unpacked, _, err := UnpackUint64(dst, scratch, packed)
+	unpacked, _, err := UnpackUint64(packed, dst, scratch)
 	require.NoError(t, err)
 
 	for i, want := range unpacked {
@@ -401,7 +401,7 @@ func TestBlockLength_Uint64MatchesConsumedBytes(t *testing.T) {
 		require.NoError(t, err, "trial %d", trial)
 
 		dst := make([]uint64, blockSize)
-		_, consumed, err := UnpackUint64(dst, scratch, packed)
+		_, consumed, err := UnpackUint64(packed, dst, scratch)
 		require.NoError(t, err, "trial %d", trial)
 		assert.Equal(t, consumed, bl, "trial %d: BlockLength != consumed", trial)
 	}
@@ -446,7 +446,7 @@ func TestPackUint64_NilScratchWorks(t *testing.T) {
 	require.NotNil(t, packed)
 
 	dst := make([]uint64, blockSize)
-	unpacked, _, err := UnpackUint64(dst, nil, packed)
+	unpacked, _, err := UnpackUint64(packed, dst, nil)
 	require.NoError(t, err)
 	assert.Equal(t, values, unpacked)
 }
@@ -461,7 +461,7 @@ func TestUnpackUint64_NilScratchWorks(t *testing.T) {
 	require.NoError(t, err)
 
 	dst := make([]uint64, blockSize)
-	unpacked, _, err := UnpackUint64(dst, nil, packed)
+	unpacked, _, err := UnpackUint64(packed, dst, nil)
 	require.NoError(t, err)
 	assert.Equal(t, values, unpacked)
 }
@@ -476,7 +476,7 @@ func TestPackUint64_UndersizedScratchWorks(t *testing.T) {
 	require.NoError(t, err)
 
 	dst := make([]uint64, blockSize)
-	unpacked, _, err := UnpackUint64(dst, nil, packed)
+	unpacked, _, err := UnpackUint64(packed, dst, nil)
 	require.NoError(t, err)
 	assert.Equal(t, values, unpacked)
 }
@@ -491,7 +491,7 @@ func TestPackUint64_PreAllocatedScratch(t *testing.T) {
 	require.NoError(t, err)
 
 	dst := make([]uint64, blockSize)
-	unpacked, _, err := UnpackUint64(dst, scratch, packed)
+	unpacked, _, err := UnpackUint64(packed, dst, scratch)
 	require.NoError(t, err)
 	assert.Equal(t, values, unpacked)
 }
@@ -604,13 +604,13 @@ func TestPackUnpackUint64_WithAppend(t *testing.T) {
 
 	// Unpack first block
 	out := make([]uint64, blockSize)
-	unpacked1, consumed1, err := UnpackUint64(out, scratch, dst[:block1Len])
+	unpacked1, consumed1, err := UnpackUint64(dst[:block1Len], out, scratch)
 	require.NoError(t, err)
 	assert.Equal(t, block1Len, consumed1)
 	assert.Equal(t, values1, unpacked1)
 
 	// Unpack second block
-	unpacked2, _, err := UnpackUint64(out, scratch, dst[block1Len:])
+	unpacked2, _, err := UnpackUint64(dst[block1Len:], out, scratch)
 	require.NoError(t, err)
 	assert.Equal(t, values2, unpacked2)
 }
@@ -744,7 +744,7 @@ func TestBlockLength_Uint64_FOR64MatchesConsumed(t *testing.T) {
 			require.NoError(t, err)
 
 			dst := make([]uint64, blockSize)
-			_, consumed, err := UnpackUint64(dst, scratch, packed)
+			_, consumed, err := UnpackUint64(packed, dst, scratch)
 			require.NoError(t, err)
 			assert.Equal(t, consumed, bl, "BlockLength != consumed")
 		})
@@ -1133,7 +1133,7 @@ func TestInsertFor64Base(t *testing.T) {
 		require.NoError(t, err)
 
 		dst := make([]uint64, blockSize)
-		unpacked, _, err := UnpackUint64(dst, scratch, packed)
+		unpacked, _, err := UnpackUint64(packed, dst, scratch)
 		require.NoError(t, err)
 		assert.Equal(t, values, unpacked)
 	})
@@ -1150,7 +1150,7 @@ func TestUint64_DeltaWrappingCorrectness(t *testing.T) {
 	require.NoError(t, err)
 
 	dst := make([]uint64, blockSize)
-	unpacked, consumed, err := UnpackUint64(dst, scratch, packed)
+	unpacked, consumed, err := UnpackUint64(packed, dst, scratch)
 	require.NoError(t, err)
 	assert.Equal(t, len(packed), consumed)
 	require.Equal(t, len(values), len(unpacked))
@@ -1179,7 +1179,7 @@ func TestUint64_DeltaWrappingCorrectness_LargerStep(t *testing.T) {
 			require.NoError(t, err)
 
 			dst := make([]uint64, blockSize)
-			unpacked, _, err := UnpackUint64(dst, scratch, packed)
+			unpacked, _, err := UnpackUint64(packed, dst, scratch)
 			require.NoError(t, err)
 			assert.Equal(t, values, unpacked)
 		})
@@ -1197,7 +1197,7 @@ func TestUint64_ZigzagBoundaryStress(t *testing.T) {
 	require.NoError(t, err)
 
 	dst := make([]uint64, blockSize)
-	unpacked, _, err := UnpackUint64(dst, scratch, packed)
+	unpacked, _, err := UnpackUint64(packed, dst, scratch)
 	require.NoError(t, err)
 	assert.Equal(t, values, unpacked)
 }
@@ -1213,7 +1213,7 @@ func TestUint64_ZigzagBoundaryStress_NearIntMin(t *testing.T) {
 	require.NoError(t, err)
 
 	dst := make([]uint64, blockSize)
-	unpacked, _, err := UnpackUint64(dst, scratch, packed)
+	unpacked, _, err := UnpackUint64(packed, dst, scratch)
 	require.NoError(t, err)
 	assert.Equal(t, values, unpacked)
 }
@@ -1229,7 +1229,7 @@ func TestUint64_ZigzagBoundaryStress_UpperHalves(t *testing.T) {
 	require.NoError(t, err)
 
 	dst := make([]uint64, blockSize)
-	unpacked, _, err := UnpackUint64(dst, scratch, packed)
+	unpacked, _, err := UnpackUint64(packed, dst, scratch)
 	require.NoError(t, err)
 	assert.Equal(t, values, unpacked)
 }
@@ -1343,7 +1343,7 @@ func TestUint64_TwoBlockOverhead_ForcedTwoBlock(t *testing.T) {
 		len(packed), uncompressed)
 
 	dst := make([]uint64, blockSize)
-	unpacked, _, err := UnpackUint64(dst, scratch, packed)
+	unpacked, _, err := UnpackUint64(packed, dst, scratch)
 	require.NoError(t, err)
 	assert.Equal(t, values, unpacked)
 }
@@ -1368,7 +1368,7 @@ func TestUint64_TwoBlockOverhead_WideSpread(t *testing.T) {
 		"wide-spread values should use two-block path (range >= 2^32)")
 
 	dst := make([]uint64, blockSize)
-	unpacked, _, err := UnpackUint64(dst, scratch, packed)
+	unpacked, _, err := UnpackUint64(packed, dst, scratch)
 	require.NoError(t, err)
 	assert.Equal(t, values, unpacked)
 }
@@ -1396,11 +1396,11 @@ func TestUint64_FOR64CompressionImprovement(t *testing.T) {
 		"FOR64 should produce smaller output than two-block for boundary-crossing data")
 
 	dst := make([]uint64, blockSize)
-	unpacked, _, err := UnpackUint64(dst, scratch, packedFOR64)
+	unpacked, _, err := UnpackUint64(packedFOR64, dst, scratch)
 	require.NoError(t, err)
 	assert.Equal(t, values, unpacked)
 
-	unpacked, _, err = UnpackUint64(dst, scratch, packedTwoBlock)
+	unpacked, _, err = UnpackUint64(packedTwoBlock, dst, scratch)
 	require.NoError(t, err)
 	assert.Equal(t, values, unpacked)
 }
@@ -1428,7 +1428,7 @@ func TestUint64_FOR64CompressionImprovement_Timestamps(t *testing.T) {
 		"FOR64 timestamps should compress well")
 
 	dst := make([]uint64, blockSize)
-	unpacked, _, err := UnpackUint64(dst, scratch, packedFOR64)
+	unpacked, _, err := UnpackUint64(packedFOR64, dst, scratch)
 	require.NoError(t, err)
 	assert.Equal(t, values, unpacked)
 }
@@ -1463,7 +1463,7 @@ func TestUint64_ZeroAllocations_Unpack(t *testing.T) {
 	dst := make([]uint64, blockSize)
 
 	allocs := testing.AllocsPerRun(10, func() {
-		_, _, _ = UnpackUint64(dst, scratch, packed)
+		_, _, _ = UnpackUint64(packed, dst, scratch)
 	})
 	assert.Equal(t, float64(0), allocs,
 		"UnpackUint64 should have zero allocations with pre-allocated buffers")
@@ -1499,7 +1499,7 @@ func TestUint64_ZeroAllocations_Unpack_FitIn32(t *testing.T) {
 	dst := make([]uint64, blockSize)
 
 	allocs := testing.AllocsPerRun(10, func() {
-		_, _, _ = UnpackUint64(dst, scratch, packed)
+		_, _, _ = UnpackUint64(packed, dst, scratch)
 	})
 	assert.Equal(t, float64(0), allocs,
 		"UnpackUint64 (fit-32) should have zero allocations with pre-allocated buffers")
@@ -1537,7 +1537,7 @@ func TestUint64_ZeroAllocations_Unpack_TwoBlock(t *testing.T) {
 	dst := make([]uint64, blockSize)
 
 	allocs := testing.AllocsPerRun(10, func() {
-		_, _, _ = UnpackUint64(dst, scratch, packed)
+		_, _, _ = UnpackUint64(packed, dst, scratch)
 	})
 	assert.Equal(t, float64(0), allocs,
 		"UnpackUint64 (two-block) should have zero allocations with pre-allocated buffers")
