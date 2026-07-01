@@ -420,9 +420,13 @@ func forAddSSE2(output []uint32, count int, baseValue uint32) {
 
 // analyzeUint64SSE2 computes OR-accumulator and min/max of uint64 values
 // in a single fused pass. SIMD Uint64x2 handles OR-accumulation while
-// scalar handles min/max (VPMINUQ requires AVX-512). No lower/upper
-// extraction is performed, avoiding wasted writes when the FOR64 or
-// all-fit-32 path is taken.
+// scalar pair-comparison handles min/max (VPMINUQ requires AVX-512).
+// No lower/upper extraction is performed, avoiding wasted writes when
+// the FOR64 or all-fit-32 path is taken.
+//
+// Pair-comparison: each iteration loads 2 values, sorts the pair with
+// one comparison, then updates min from the smaller and max from the
+// larger candidate. This reduces branches from 4 to 3 per pair.
 func analyzeUint64SSE2(values []uint64) (min64, max64, acc uint64) {
 	n := len(values)
 	if n < 2 {
@@ -430,29 +434,23 @@ func analyzeUint64SSE2(values []uint64) (min64, max64, acc uint64) {
 	}
 
 	accVec := archsimd.LoadUint64x2(values[:2])
-	min64, max64 = values[0], values[0]
-	v1 := values[1]
-	if v1 < min64 {
-		min64 = v1
+	a, b := values[0], values[1]
+	if a > b {
+		a, b = b, a
 	}
-	if v1 > max64 {
-		max64 = v1
-	}
+	min64, max64 = a, b
 
 	for i := 2; i+2 <= n; i += 2 {
 		accVec = accVec.Or(archsimd.LoadUint64x2(values[i : i+2]))
-		va, vb := values[i], values[i+1]
-		if va < min64 {
-			min64 = va
+		a, b = values[i], values[i+1]
+		if a > b {
+			a, b = b, a
 		}
-		if va > max64 {
-			max64 = va
+		if a < min64 {
+			min64 = a
 		}
-		if vb < min64 {
-			min64 = vb
-		}
-		if vb > max64 {
-			max64 = vb
+		if b > max64 {
+			max64 = b
 		}
 	}
 

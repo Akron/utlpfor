@@ -467,8 +467,13 @@ var deinterleaveIdx = [8]uint32{0, 2, 4, 6, 1, 3, 5, 7}
 
 // analyzeUint64AVX2 computes OR-accumulator and min/max of uint64 values
 // in a single fused pass. SIMD Uint64x4 handles OR-accumulation (4 values
-// per iteration) while scalar handles min/max (VPMINUQ requires AVX-512).
-// No lower/upper extraction is performed.
+// per iteration) while scalar pair-comparison handles min/max (VPMINUQ
+// requires AVX-512). No lower/upper extraction is performed.
+//
+// Pair-comparison: each iteration loads 4 values as 2 pairs, sorts each
+// pair with one comparison, then updates min from the smaller candidates
+// and max from the larger candidates. This reduces branches from 8 to 6
+// per 4-value chunk (2 pair sorts + 2 min updates + 2 max updates).
 func analyzeUint64AVX2(values []uint64) (min64, max64, acc uint64) {
 	n := len(values)
 	if n < 4 {
@@ -476,27 +481,45 @@ func analyzeUint64AVX2(values []uint64) (min64, max64, acc uint64) {
 	}
 
 	accVec := archsimd.LoadUint64x4(values[:4])
-	min64, max64 = values[0], values[0]
-	for j := 1; j < 4; j++ {
-		v := values[j]
-		if v < min64 {
-			min64 = v
-		}
-		if v > max64 {
-			max64 = v
-		}
+
+	a0, b0 := values[0], values[1]
+	if a0 > b0 {
+		a0, b0 = b0, a0
+	}
+	a1, b1 := values[2], values[3]
+	if a1 > b1 {
+		a1, b1 = b1, a1
+	}
+	min64 = a0
+	if a1 < min64 {
+		min64 = a1
+	}
+	max64 = b0
+	if b1 > max64 {
+		max64 = b1
 	}
 
 	for i := 4; i+4 <= n; i += 4 {
 		accVec = accVec.Or(archsimd.LoadUint64x4(values[i : i+4]))
-		for j := range 4 {
-			v := values[i+j]
-			if v < min64 {
-				min64 = v
-			}
-			if v > max64 {
-				max64 = v
-			}
+		a0, b0 = values[i], values[i+1]
+		if a0 > b0 {
+			a0, b0 = b0, a0
+		}
+		a1, b1 = values[i+2], values[i+3]
+		if a1 > b1 {
+			a1, b1 = b1, a1
+		}
+		if a0 < min64 {
+			min64 = a0
+		}
+		if a1 < min64 {
+			min64 = a1
+		}
+		if b0 > max64 {
+			max64 = b0
+		}
+		if b1 > max64 {
+			max64 = b1
 		}
 	}
 
