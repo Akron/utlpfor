@@ -34,7 +34,7 @@ AVX-512 > AVX2 > SSE2 > scalar fallback.
 
 - **Go 1.26+** with `GOEXPERIMENT=simd` for SIMD acceleration
 - Scalar fallback works without the experiment flag on any architecture
-- **Recommended**: Use `gotip` (Go 1.27-devel) for optimal AVx2/AVx-512
+- **Recommended**: Use `gotip` (Go 1.27-devel) for optimal AVX2/AVX-512
   performance until Go 1.27 is released. Go 1.26.x compilers have a
   known (and [fixed](https://github.com/golang/go/commit/aa80d7a7e6bf97aa27a74cc5056ef270a2a0c2f4))
   issue generating suboptimal code, resulting in performance degradation on AVX2 and AVX-512
@@ -49,7 +49,17 @@ func GetUint32(pos int, src []byte, scratch []uint32) (uint32, error)
 func BlockLength(src []byte) (int, error)
 func MaxBlockLength32(flag Flag) int
 func Header(src []byte) (count, bitWidth, excCount int, hasDelta, hasFOR, hasZigZag, hasSpecial bool, err error)
+
+func PackUint64(flag Flag, values []uint64, dst []byte, scratch []uint32) ([]byte, error)
+func UnpackUint64(dst []uint64, scratch []uint32, buf []byte) ([]uint64, int, error)
+func GetUint64(pos int, buf []byte, scratch []uint32) (uint64, error)
+func MaxBlockLength64(flag Flag) int
 ```
+
+The uint64 functions use the same block format and reuse the entire uint32
+pipeline internally. 64-bit values are either range-reduced to 32 bits
+(via 64-bit *frame of reference*) or split into lower/upper 32-bit halves encoded
+as two consecutive uint32 sub-blocks.
 
 ### PackFlag Constants
 
