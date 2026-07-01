@@ -1155,3 +1155,407 @@ func TestInsertFor64Base(t *testing.T) {
 		assert.Equal(t, values, unpacked)
 	})
 }
+
+func TestUint64_DeltaWrappingCorrectness(t *testing.T) {
+	values := make([]uint64, blockSize)
+	for i := range values {
+		values[i] = 0xFFFFFFC0 + uint64(i)
+	}
+
+	scratch := make([]uint32, ScratchLen64)
+	packed, err := PackUint64(Delta, slices.Clone(values), nil, scratch)
+	require.NoError(t, err)
+
+	dst := make([]uint64, blockSize)
+	unpacked, consumed, err := UnpackUint64(dst, scratch, packed)
+	require.NoError(t, err)
+	assert.Equal(t, len(packed), consumed)
+	require.Equal(t, len(values), len(unpacked))
+	assert.Equal(t, values, unpacked)
+
+	uncompressed := blockSize * 8
+	assert.Less(t, len(packed), uncompressed,
+		"delta-encoded boundary-crossing block should compress (got %d, raw %d)",
+		len(packed), uncompressed)
+
+	assert.Less(t, len(packed), uncompressed/2,
+		"lower-block deltas should be small; packed %d should be well under %d",
+		len(packed), uncompressed/2)
+}
+
+func TestUint64_DeltaWrappingCorrectness_LargerStep(t *testing.T) {
+	for _, step := range []uint64{1, 7, 16, 100, 1000} {
+		t.Run("", func(t *testing.T) {
+			values := make([]uint64, blockSize)
+			for i := range values {
+				values[i] = 0xFFFFFFC0 + uint64(i)*step
+			}
+
+			scratch := make([]uint32, ScratchLen64)
+			packed, err := PackUint64(Delta, slices.Clone(values), nil, scratch)
+			require.NoError(t, err)
+
+			dst := make([]uint64, blockSize)
+			unpacked, _, err := UnpackUint64(dst, scratch, packed)
+			require.NoError(t, err)
+			assert.Equal(t, values, unpacked)
+		})
+	}
+}
+
+func TestUint64_ZigzagBoundaryStress(t *testing.T) {
+	values := make([]uint64, blockSize)
+	for i := range values {
+		values[i] = 0x80000000 + uint64(i)
+	}
+
+	scratch := make([]uint32, ScratchLen64)
+	packed, err := PackUint64(Delta, slices.Clone(values), nil, scratch)
+	require.NoError(t, err)
+
+	dst := make([]uint64, blockSize)
+	unpacked, _, err := UnpackUint64(dst, scratch, packed)
+	require.NoError(t, err)
+	assert.Equal(t, values, unpacked)
+}
+
+func TestUint64_ZigzagBoundaryStress_NearIntMin(t *testing.T) {
+	values := make([]uint64, blockSize)
+	for i := range values {
+		values[i] = uint64(0x7FFFFFF0+i) + uint64(i)*16
+	}
+
+	scratch := make([]uint32, ScratchLen64)
+	packed, err := PackUint64(Delta, slices.Clone(values), nil, scratch)
+	require.NoError(t, err)
+
+	dst := make([]uint64, blockSize)
+	unpacked, _, err := UnpackUint64(dst, scratch, packed)
+	require.NoError(t, err)
+	assert.Equal(t, values, unpacked)
+}
+
+func TestUint64_ZigzagBoundaryStress_UpperHalves(t *testing.T) {
+	values := make([]uint64, blockSize)
+	for i := range values {
+		values[i] = uint64(0x80000000)*uint64(1<<32) + uint64(i)
+	}
+
+	scratch := make([]uint32, ScratchLen64)
+	packed, err := PackUint64(Delta, slices.Clone(values), nil, scratch)
+	require.NoError(t, err)
+
+	dst := make([]uint64, blockSize)
+	unpacked, _, err := UnpackUint64(dst, scratch, packed)
+	require.NoError(t, err)
+	assert.Equal(t, values, unpacked)
+}
+
+func TestUint64_CompressionRatio_Sequential(t *testing.T) {
+	values := make([]uint64, blockSize)
+	for i := range values {
+		values[i] = uint64(i + 1)
+	}
+
+	scratch := make([]uint32, ScratchLen64)
+	packed, err := PackUint64(0, slices.Clone(values), nil, scratch)
+	require.NoError(t, err)
+
+	uncompressed := blockSize * 8
+	assert.Less(t, len(packed), uncompressed,
+		"sequential values should compress: packed=%d, raw=%d", len(packed), uncompressed)
+}
+
+func TestUint64_CompressionRatio_Timestamps(t *testing.T) {
+	values := make([]uint64, blockSize)
+	base := uint64(1_719_300_000_000)
+	for i := range values {
+		values[i] = base + uint64(i)
+	}
+
+	scratch := make([]uint32, ScratchLen64)
+	packed, err := PackUint64(0, slices.Clone(values), nil, scratch)
+	require.NoError(t, err)
+
+	uncompressed := blockSize * 8
+	assert.Less(t, len(packed), uncompressed/4,
+		"timestamps should compress well: packed=%d, raw=%d", len(packed), uncompressed)
+}
+
+func TestUint64_CompressionRatio_Random(t *testing.T) {
+	rng := rand.New(rand.NewSource(42))
+	values := make([]uint64, blockSize)
+	for i := range values {
+		values[i] = rng.Uint64()
+	}
+
+	scratch := make([]uint32, ScratchLen64)
+	packed, err := PackUint64(0, slices.Clone(values), nil, scratch)
+	require.NoError(t, err)
+
+	uncompressed := blockSize * 8
+	assert.Less(t, len(packed), uncompressed*2,
+		"random values should not expand excessively: packed=%d, raw=%d", len(packed), uncompressed)
+}
+
+func TestUint64_CompressionRatio_ClusteredAbove32(t *testing.T) {
+	values := make([]uint64, blockSize)
+	base := uint64(0x100000000)
+	for i := range values {
+		values[i] = base + uint64(i)*7
+	}
+
+	scratch := make([]uint32, ScratchLen64)
+	packed, err := PackUint64(0, slices.Clone(values), nil, scratch)
+	require.NoError(t, err)
+
+	uncompressed := blockSize * 8
+	assert.Less(t, len(packed), uncompressed,
+		"clustered values above 2^32 should compress: packed=%d, raw=%d", len(packed), uncompressed)
+}
+
+func TestUint64_TwoBlockOverhead_UniformUpper_FOR64Eliminates(t *testing.T) {
+	values := make([]uint64, blockSize)
+	for i := range values {
+		values[i] = 0x100000000 + uint64(i)
+	}
+
+	scratch := make([]uint32, ScratchLen64)
+	packed, err := PackUint64(0, slices.Clone(values), nil, scratch)
+	require.NoError(t, err)
+
+	header := bo.Uint32(packed)
+	_, _, _, _, _, _, _, _, _, hasCombine := decodeHeader(header)
+	assert.False(t, hasCombine,
+		"FOR64 should eliminate the two-block path for uniform upper halves")
+
+	uncompressed := blockSize * 8
+	assert.Less(t, len(packed), uncompressed/4,
+		"FOR64 single-block should compress well: packed=%d, raw=%d", len(packed), uncompressed)
+}
+
+func TestUint64_TwoBlockOverhead_ForcedTwoBlock(t *testing.T) {
+	values := make([]uint64, blockSize)
+	for i := range values {
+		values[i] = 0x100000000 + uint64(i)
+	}
+
+	scratch := make([]uint32, ScratchLen64)
+	packed, err := PackUint64(NoFOR, slices.Clone(values), nil, scratch)
+	require.NoError(t, err)
+
+	header := bo.Uint32(packed)
+	_, _, _, _, _, _, _, _, _, hasCombine := decodeHeader(header)
+	require.True(t, hasCombine, "NoFOR should force two-block path")
+
+	_, _, _, _, fw, hasExceptions, _, _, _, _ := decodeHeader(header)
+	forBBytes := forBaseBytes(fw)
+	block2LenVal := int(readBlock2Len(packed, forBBytes, hasExceptions))
+
+	t.Logf("Block 2 size with NoFOR forced two-block: %d bytes", block2LenVal)
+
+	uncompressed := blockSize * 8
+	assert.Less(t, len(packed), uncompressed,
+		"two-block encoding should still be smaller than uncompressed: packed=%d, raw=%d",
+		len(packed), uncompressed)
+
+	dst := make([]uint64, blockSize)
+	unpacked, _, err := UnpackUint64(dst, scratch, packed)
+	require.NoError(t, err)
+	assert.Equal(t, values, unpacked)
+}
+
+func TestUint64_TwoBlockOverhead_WideSpread(t *testing.T) {
+	values := make([]uint64, blockSize)
+	for i := range values {
+		if i < blockSize/2 {
+			values[i] = uint64(i)
+		} else {
+			values[i] = 0xFFFFFFFF00000000 + uint64(i)
+		}
+	}
+
+	scratch := make([]uint32, ScratchLen64)
+	packed, err := PackUint64(0, slices.Clone(values), nil, scratch)
+	require.NoError(t, err)
+
+	header := bo.Uint32(packed)
+	_, _, _, _, _, _, _, _, _, hasCombine := decodeHeader(header)
+	assert.True(t, hasCombine,
+		"wide-spread values should use two-block path (range >= 2^32)")
+
+	dst := make([]uint64, blockSize)
+	unpacked, _, err := UnpackUint64(dst, scratch, packed)
+	require.NoError(t, err)
+	assert.Equal(t, values, unpacked)
+}
+
+func TestUint64_FOR64CompressionImprovement(t *testing.T) {
+	values := make([]uint64, blockSize)
+	for i := range values {
+		values[i] = 0xFFFFFFC0 + uint64(i)
+	}
+
+	scratch := make([]uint32, ScratchLen64)
+
+	packedFOR64, err := PackUint64(0, slices.Clone(values), nil, scratch)
+	require.NoError(t, err)
+
+	packedTwoBlock, err := PackUint64(NoFOR, slices.Clone(values), nil, scratch)
+	require.NoError(t, err)
+
+	t.Logf("FOR64 block: %d bytes, two-block: %d bytes, savings: %d bytes (%.1f%%)",
+		len(packedFOR64), len(packedTwoBlock),
+		len(packedTwoBlock)-len(packedFOR64),
+		float64(len(packedTwoBlock)-len(packedFOR64))/float64(len(packedTwoBlock))*100)
+
+	assert.Less(t, len(packedFOR64), len(packedTwoBlock),
+		"FOR64 should produce smaller output than two-block for boundary-crossing data")
+
+	dst := make([]uint64, blockSize)
+	unpacked, _, err := UnpackUint64(dst, scratch, packedFOR64)
+	require.NoError(t, err)
+	assert.Equal(t, values, unpacked)
+
+	unpacked, _, err = UnpackUint64(dst, scratch, packedTwoBlock)
+	require.NoError(t, err)
+	assert.Equal(t, values, unpacked)
+}
+
+func TestUint64_FOR64CompressionImprovement_Timestamps(t *testing.T) {
+	values := make([]uint64, blockSize)
+	base := uint64(1_719_300_000_000)
+	for i := range values {
+		values[i] = base + uint64(i)
+	}
+
+	scratch := make([]uint32, ScratchLen64)
+
+	packedFOR64, err := PackUint64(0, slices.Clone(values), nil, scratch)
+	require.NoError(t, err)
+
+	packedNoFOR, err := PackUint64(NoFOR, slices.Clone(values), nil, scratch)
+	require.NoError(t, err)
+
+	t.Logf("FOR64 block: %d bytes, NoFOR two-block: %d bytes",
+		len(packedFOR64), len(packedNoFOR))
+
+	uncompressed := blockSize * 8
+	assert.Less(t, len(packedFOR64), uncompressed/4,
+		"FOR64 timestamps should compress well")
+
+	dst := make([]uint64, blockSize)
+	unpacked, _, err := UnpackUint64(dst, scratch, packedFOR64)
+	require.NoError(t, err)
+	assert.Equal(t, values, unpacked)
+}
+
+func TestUint64_ZeroAllocations_Pack(t *testing.T) {
+	values := make([]uint64, blockSize)
+	for i := range values {
+		values[i] = 0x100000000 + uint64(i)*7
+	}
+
+	dst := make([]byte, 0, MaxBlockLength64(0))
+	scratch := make([]uint32, ScratchLen64)
+
+	allocs := testing.AllocsPerRun(10, func() {
+		dst = dst[:0]
+		_, _ = PackUint64(0, values, dst, scratch)
+	})
+	assert.Equal(t, float64(0), allocs,
+		"PackUint64 should have zero allocations with pre-allocated buffers")
+}
+
+func TestUint64_ZeroAllocations_Unpack(t *testing.T) {
+	values := make([]uint64, blockSize)
+	for i := range values {
+		values[i] = 0x100000000 + uint64(i)*7
+	}
+
+	scratch := make([]uint32, ScratchLen64)
+	packed, err := PackUint64(0, values, nil, scratch)
+	require.NoError(t, err)
+
+	dst := make([]uint64, blockSize)
+
+	allocs := testing.AllocsPerRun(10, func() {
+		_, _, _ = UnpackUint64(dst, scratch, packed)
+	})
+	assert.Equal(t, float64(0), allocs,
+		"UnpackUint64 should have zero allocations with pre-allocated buffers")
+}
+
+func TestUint64_ZeroAllocations_Pack_FitIn32(t *testing.T) {
+	values := make([]uint64, blockSize)
+	for i := range values {
+		values[i] = uint64(i * 100)
+	}
+
+	dst := make([]byte, 0, MaxBlockLength64(0))
+	scratch := make([]uint32, ScratchLen64)
+
+	allocs := testing.AllocsPerRun(10, func() {
+		dst = dst[:0]
+		_, _ = PackUint64(0, values, dst, scratch)
+	})
+	assert.Equal(t, float64(0), allocs,
+		"PackUint64 (fit-32) should have zero allocations with pre-allocated buffers")
+}
+
+func TestUint64_ZeroAllocations_Unpack_FitIn32(t *testing.T) {
+	values := make([]uint64, blockSize)
+	for i := range values {
+		values[i] = uint64(i * 100)
+	}
+
+	scratch := make([]uint32, ScratchLen64)
+	packed, err := PackUint64(0, values, nil, scratch)
+	require.NoError(t, err)
+
+	dst := make([]uint64, blockSize)
+
+	allocs := testing.AllocsPerRun(10, func() {
+		_, _, _ = UnpackUint64(dst, scratch, packed)
+	})
+	assert.Equal(t, float64(0), allocs,
+		"UnpackUint64 (fit-32) should have zero allocations with pre-allocated buffers")
+}
+
+func TestUint64_ZeroAllocations_Pack_TwoBlock(t *testing.T) {
+	rng := rand.New(rand.NewSource(99))
+	values := make([]uint64, blockSize)
+	for i := range values {
+		values[i] = rng.Uint64()
+	}
+
+	dst := make([]byte, 0, MaxBlockLength64(0))
+	scratch := make([]uint32, ScratchLen64)
+
+	allocs := testing.AllocsPerRun(10, func() {
+		dst = dst[:0]
+		_, _ = PackUint64(0, values, dst, scratch)
+	})
+	assert.Equal(t, float64(0), allocs,
+		"PackUint64 (two-block) should have zero allocations with pre-allocated buffers")
+}
+
+func TestUint64_ZeroAllocations_Unpack_TwoBlock(t *testing.T) {
+	rng := rand.New(rand.NewSource(99))
+	values := make([]uint64, blockSize)
+	for i := range values {
+		values[i] = rng.Uint64()
+	}
+
+	scratch := make([]uint32, ScratchLen64)
+	packed, err := PackUint64(0, slices.Clone(values), nil, scratch)
+	require.NoError(t, err)
+
+	dst := make([]uint64, blockSize)
+
+	allocs := testing.AllocsPerRun(10, func() {
+		_, _, _ = UnpackUint64(dst, scratch, packed)
+	})
+	assert.Equal(t, float64(0), allocs,
+		"UnpackUint64 (two-block) should have zero allocations with pre-allocated buffers")
+}
