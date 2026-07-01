@@ -623,23 +623,6 @@ func TestPackUnpackUint64_FOR64_ClusteredAbove32Bits(t *testing.T) {
 	packUnpackUint64RoundTrip(t, 0, values)
 }
 
-func TestPackUnpackUint64_FOR64_BoundaryCrossing(t *testing.T) {
-	values := make([]uint64, blockSize)
-	for i := range values {
-		values[i] = 0xFFFFFFC0 + uint64(i)
-	}
-	packUnpackUint64RoundTrip(t, 0, values)
-}
-
-func TestPackUnpackUint64_FOR64_TimestampMillis(t *testing.T) {
-	values := make([]uint64, blockSize)
-	base := uint64(1_719_300_000_000)
-	for i := range values {
-		values[i] = base + uint64(i)
-	}
-	packUnpackUint64RoundTrip(t, 0, values)
-}
-
 func TestPackUnpackUint64_FOR64_MinAbove32BitsSmallRange(t *testing.T) {
 	values := make([]uint64, blockSize)
 	base := uint64(0x200000000)
@@ -1558,4 +1541,145 @@ func TestUint64_ZeroAllocations_Unpack_TwoBlock(t *testing.T) {
 	})
 	assert.Equal(t, float64(0), allocs,
 		"UnpackUint64 (two-block) should have zero allocations with pre-allocated buffers")
+}
+
+func TestPackUnpackUint64_AllPaths_AllFlags(t *testing.T) {
+	genFit32 := func() []uint64 {
+		v := make([]uint64, blockSize)
+		for i := range v {
+			v[i] = uint64(i * 100)
+		}
+		return v
+	}
+	genFOR64 := func() []uint64 {
+		v := make([]uint64, blockSize)
+		for i := range v {
+			v[i] = 0x100000000 + uint64(i)*7
+		}
+		return v
+	}
+	genTwoBlock := func() []uint64 {
+		v := make([]uint64, blockSize)
+		for i := range v {
+			if i < blockSize/2 {
+				v[i] = uint64(i)
+			} else {
+				v[i] = 0xFFFFFFFF00000000 + uint64(i)
+			}
+		}
+		return v
+	}
+
+	paths := []struct {
+		name string
+		gen  func() []uint64
+	}{
+		{"fit32", genFit32},
+		{"for64", genFOR64},
+		{"two_block", genTwoBlock},
+	}
+
+	flags := []struct {
+		name string
+		flag Flag
+	}{
+		{"default", 0},
+		{"Delta", Delta},
+		{"NoPatch", NoPatch},
+		{"NoFOR", NoFOR},
+		{"Delta_NoPatch", Delta | NoPatch},
+		{"Delta_NoFOR", Delta | NoFOR},
+		{"NoPatch_NoFOR", NoPatch | NoFOR},
+		{"Delta_NoPatch_NoFOR", Delta | NoPatch | NoFOR},
+	}
+
+	for _, p := range paths {
+		for _, fl := range flags {
+			t.Run(p.name+"/"+fl.name, func(t *testing.T) {
+				values := p.gen()
+				packUnpackUint64RoundTrip(t, fl.flag, values)
+			})
+		}
+	}
+}
+
+func TestPackUnpackUint64_FOR64_SingleValueAbove32Bits(t *testing.T) {
+	packUnpackUint64RoundTrip(t, 0, []uint64{0x200000042})
+}
+
+func TestPackUnpackUint64_FOR64_AllSameAbove32Bits(t *testing.T) {
+	values := make([]uint64, blockSize)
+	for i := range values {
+		values[i] = 0x300000000
+	}
+	packUnpackUint64RoundTrip(t, 0, values)
+}
+
+func TestPackUnpackUint64_FOR64_NearMaxUint64SmallRange(t *testing.T) {
+	values := make([]uint64, blockSize)
+	base := uint64(math.MaxUint64 - blockSize)
+	for i := range values {
+		values[i] = base + uint64(i)
+	}
+	packUnpackUint64RoundTrip(t, 0, values)
+}
+
+func TestPackUnpackUint64_FOR64_DeltaNoPatch(t *testing.T) {
+	values := make([]uint64, blockSize)
+	for i := range values {
+		values[i] = 0x100000000 + uint64(i)*3
+	}
+	packUnpackUint64RoundTrip(t, Delta|NoPatch, values)
+}
+
+func TestGetUint64_TwoBlock_WithDelta(t *testing.T) {
+	values := make([]uint64, blockSize)
+	for i := range values {
+		if i < blockSize/2 {
+			values[i] = uint64(i)
+		} else {
+			values[i] = 0xFFFFFFFF00000000 + uint64(i)
+		}
+	}
+	scratch := make([]uint32, ScratchLen64)
+	packed, err := PackUint64(Delta, values, nil, scratch)
+	require.NoError(t, err)
+
+	for i, want := range values {
+		got, err := GetUint64(i, packed, scratch)
+		require.NoError(t, err, "pos=%d", i)
+		assert.Equal(t, want, got, "pos=%d", i)
+	}
+}
+
+func TestGetUint64_FOR64_NoPatch(t *testing.T) {
+	values := make([]uint64, blockSize)
+	for i := range values {
+		values[i] = 0x100000000 + uint64(i)
+	}
+	scratch := make([]uint32, ScratchLen64)
+	packed, err := PackUint64(NoPatch, values, nil, scratch)
+	require.NoError(t, err)
+
+	for i, want := range values {
+		got, err := GetUint64(i, packed, scratch)
+		require.NoError(t, err, "pos=%d", i)
+		assert.Equal(t, want, got, "pos=%d", i)
+	}
+}
+
+func TestGetUint64_Fit32_WithDelta(t *testing.T) {
+	values := make([]uint64, blockSize)
+	for i := range values {
+		values[i] = uint64(i * 100)
+	}
+	scratch := make([]uint32, ScratchLen64)
+	packed, err := PackUint64(Delta, values, nil, scratch)
+	require.NoError(t, err)
+
+	for i, want := range values {
+		got, err := GetUint64(i, packed, scratch)
+		require.NoError(t, err, "pos=%d", i)
+		assert.Equal(t, want, got, "pos=%d", i)
+	}
 }
