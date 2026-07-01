@@ -714,6 +714,231 @@ func TestPackUnpackUint64_SIMDMatchesScalar_CrossUnpack(t *testing.T) {
 	}
 }
 
+// TestAnalyzeUint64_SIMDMatchesScalar verifies that the fused analyze
+// functions (analyzeUint64SSE2, analyzeUint64AVX2, analyzeUint64AVX512)
+// produce the same min/max/acc as the scalar analyzeUint64.
+func TestAnalyzeUint64_SIMDMatchesScalar(t *testing.T) {
+	patterns := []struct {
+		name string
+		gen  func() []uint64
+	}{
+		{"sequential", func() []uint64 {
+			v := make([]uint64, blockSize)
+			for i := range v {
+				v[i] = uint64(i * 7)
+			}
+			return v
+		}},
+		{"for64_timestamps", func() []uint64 {
+			v := make([]uint64, blockSize)
+			base := uint64(1_700_000_000_000)
+			for i := range v {
+				v[i] = base + uint64(i*1000)
+			}
+			return v
+		}},
+		{"boundary_crossing", func() []uint64 {
+			v := make([]uint64, blockSize)
+			for i := range v {
+				v[i] = 0xFFFFFFC0 + uint64(i)
+			}
+			return v
+		}},
+		{"above_32bit", func() []uint64 {
+			v := make([]uint64, blockSize)
+			for i := range v {
+				v[i] = 0x1_0000_0000 + uint64(i*1000)
+			}
+			return v
+		}},
+		{"max_uint64", func() []uint64 {
+			v := make([]uint64, blockSize)
+			for i := range v {
+				v[i] = ^uint64(0) - uint64(i)
+			}
+			return v
+		}},
+		{"single_value", func() []uint64 {
+			return []uint64{42}
+		}},
+		{"two_values", func() []uint64 {
+			return []uint64{100, 200}
+		}},
+		{"three_values", func() []uint64 {
+			return []uint64{0x1_0000_0000, 0x2_0000_0000, 0x3_0000_0000}
+		}},
+		{"random", func() []uint64 {
+			rng := rand.New(rand.NewSource(123))
+			v := make([]uint64, blockSize)
+			for i := range v {
+				v[i] = uint64(rng.Int63())
+			}
+			return v
+		}},
+	}
+
+	for _, p := range patterns {
+		t.Run(p.name, func(t *testing.T) {
+			values := p.gen()
+			scalarMin, scalarMax, scalarAcc := analyzeUint64(values)
+
+			if simdLevel >= simdLevelSSE2 {
+				sseMin, sseMax, sseAcc := analyzeUint64SSE2(values)
+				assert.Equal(t, scalarMin, sseMin, "SSE2 min mismatch")
+				assert.Equal(t, scalarMax, sseMax, "SSE2 max mismatch")
+				assert.Equal(t, scalarAcc, sseAcc, "SSE2 acc mismatch")
+			}
+
+			if simdLevel >= simdLevelAVX2 {
+				avxMin, avxMax, avxAcc := analyzeUint64AVX2(values)
+				assert.Equal(t, scalarMin, avxMin, "AVX2 min mismatch")
+				assert.Equal(t, scalarMax, avxMax, "AVX2 max mismatch")
+				assert.Equal(t, scalarAcc, avxAcc, "AVX2 acc mismatch")
+			}
+
+			if simdLevel >= simdLevelAVX512 {
+				a512Min, a512Max, a512Acc := analyzeUint64AVX512(values)
+				assert.Equal(t, scalarMin, a512Min, "AVX512 min mismatch")
+				assert.Equal(t, scalarMax, a512Max, "AVX512 max mismatch")
+				assert.Equal(t, scalarAcc, a512Acc, "AVX512 acc mismatch")
+			}
+		})
+	}
+}
+
+// TestSplitUint64Only_SIMDMatchesScalar verifies that splitUint64OnlyAVX2
+// produces the same lower/upper halves as the scalar splitUint64Only.
+func TestSplitUint64Only_SIMDMatchesScalar(t *testing.T) {
+	patterns := []struct {
+		name string
+		gen  func() []uint64
+	}{
+		{"above_32bit", func() []uint64 {
+			v := make([]uint64, blockSize)
+			for i := range v {
+				v[i] = 0x1_0000_0000 + uint64(i*1000)
+			}
+			return v
+		}},
+		{"random", func() []uint64 {
+			rng := rand.New(rand.NewSource(456))
+			v := make([]uint64, blockSize)
+			for i := range v {
+				v[i] = uint64(rng.Int63())
+			}
+			return v
+		}},
+		{"small_count", func() []uint64 {
+			return []uint64{0x1_0000_0000, 0x2_0000_0000, 0x3_0000_0000}
+		}},
+	}
+
+	for _, p := range patterns {
+		t.Run(p.name, func(t *testing.T) {
+			values := p.gen()
+			n := len(values)
+
+			sLower := make([]uint32, n)
+			sUpper := make([]uint32, n)
+			splitUint64Only(sLower, sUpper, values)
+
+			if simdLevel >= simdLevelAVX2 {
+				aLower := make([]uint32, n)
+				aUpper := make([]uint32, n)
+				splitUint64OnlyAVX2(aLower, aUpper, values)
+				assert.Equal(t, sLower, aLower, "AVX2 lower mismatch")
+				assert.Equal(t, sUpper, aUpper, "AVX2 upper mismatch")
+			}
+		})
+	}
+}
+
+// TestNarrowToUint32 verifies that narrowToUint32 and its SIMD variants
+// produce correct output matching scalar truncation.
+func TestNarrowToUint32(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		n    int
+	}{
+		{"full_block", blockSize},
+		{"small", 3},
+		{"one", 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			values := make([]uint64, tc.n)
+			for i := range values {
+				values[i] = uint64(i*13 + 7)
+			}
+
+			expected := make([]uint32, tc.n)
+			narrowToUint32(expected, values, tc.n)
+			for i := range tc.n {
+				assert.Equal(t, uint32(values[i]), expected[i], "scalar pos %d", i)
+			}
+
+			if simdLevel >= simdLevelAVX2 {
+				dst := make([]uint32, tc.n)
+				narrowToUint32AVX2(dst, values, tc.n)
+				assert.Equal(t, expected, dst, "AVX2 mismatch")
+			}
+
+			if simdLevel >= simdLevelAVX512 {
+				dst := make([]uint32, tc.n)
+				narrowToUint32AVX512(dst, values, tc.n)
+				assert.Equal(t, expected, dst, "AVX512 mismatch")
+			}
+		})
+	}
+}
+
+// BenchmarkAnalyzeUint64_FOR64 benchmarks the fused analysis function
+// used by the FOR64 pack path at each SIMD level.
+func BenchmarkAnalyzeUint64_FOR64(b *testing.B) {
+	values := make([]uint64, blockSize)
+	base := uint64(1_700_000_000_000)
+	for i := range values {
+		values[i] = base + uint64(i*1000)
+	}
+
+	b.Run("analyze_scalar", func(b *testing.B) {
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			analyzeUint64(values)
+		}
+	})
+
+	if simdLevel >= simdLevelSSE2 {
+		b.Run("analyze_SSE2", func(b *testing.B) {
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				analyzeUint64SSE2(values)
+			}
+		})
+	}
+
+	if simdLevel >= simdLevelAVX2 {
+		b.Run("analyze_AVX2", func(b *testing.B) {
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				analyzeUint64AVX2(values)
+			}
+		})
+	}
+
+	if simdLevel >= simdLevelAVX512 {
+		b.Run("analyze_AVX512", func(b *testing.B) {
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				analyzeUint64AVX512(values)
+			}
+		})
+	}
+}
+
 func TestPackUnpack_SIMDEdgeBitWidths(t *testing.T) {
 	for _, bw := range []int{0, 1, 31, 32} {
 		t.Run(fmt.Sprintf("bw%d", bw), func(t *testing.T) {

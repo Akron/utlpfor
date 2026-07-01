@@ -418,35 +418,57 @@ func forAddSSE2(output []uint32, count int, baseValue uint32) {
 	}
 }
 
-// splitUint64HalvesSSE2 extracts lower/upper uint32 halves from uint64
-// values, computes OR-accumulator using SSE2 SIMD for the all-fit-in-32
-// fast path detection. Min/max use scalar because SSE2/AVX2 lack native
-// uint64 min/max (VPMINUQ requires AVX-512).
-func splitUint64HalvesSSE2(lower, upper []uint32, values []uint64) (min64, max64, acc uint64) {
+// analyzeUint64SSE2 computes OR-accumulator and min/max of uint64 values
+// in a single fused pass. SIMD Uint64x2 handles OR-accumulation while
+// scalar handles min/max (VPMINUQ requires AVX-512). No lower/upper
+// extraction is performed, avoiding wasted writes when the FOR64 or
+// all-fit-32 path is taken.
+func analyzeUint64SSE2(values []uint64) (min64, max64, acc uint64) {
 	n := len(values)
 	if n < 2 {
-		return splitUint64Halves(lower, upper, values)
+		return analyzeUint64(values)
 	}
 
-	// SIMD OR-accumulation for fast all-fit-in-32 detection
 	accVec := archsimd.LoadUint64x2(values[:2])
+	min64, max64 = values[0], values[0]
+	v1 := values[1]
+	if v1 < min64 {
+		min64 = v1
+	}
+	if v1 > max64 {
+		max64 = v1
+	}
+
 	for i := 2; i+2 <= n; i += 2 {
 		accVec = accVec.Or(archsimd.LoadUint64x2(values[i : i+2]))
+		va, vb := values[i], values[i+1]
+		if va < min64 {
+			min64 = va
+		}
+		if va > max64 {
+			max64 = va
+		}
+		if vb < min64 {
+			min64 = vb
+		}
+		if vb > max64 {
+			max64 = vb
+		}
 	}
+
 	var accL [2]uint64
 	accVec.StoreArray(&accL)
 	acc = accL[0] | accL[1]
-	if n%2 != 0 {
-		acc |= values[n-1]
-	}
 
-	// Scalar extraction + min/max (uint64 min/max needs AVX-512)
-	min64, max64 = values[0], values[0]
-	for i, v := range values {
-		lower[i] = uint32(v)
-		upper[i] = uint32(v >> 32)
-		min64 = min(min64, v)
-		max64 = max(max64, v)
+	if n%2 != 0 {
+		v := values[n-1]
+		acc |= v
+		if v < min64 {
+			min64 = v
+		}
+		if v > max64 {
+			max64 = v
+		}
 	}
 	return
 }
@@ -567,8 +589,9 @@ func packBlockSSE2(flag Flag, values []uint32, dst []byte, scratch []uint32, typ
 }
 
 // packUint64SSE2 is the SSE2 implementation of PackUint64.
-// Uses SIMD-accelerated min/max/OR reduction (Uint64x2), then delegates
-// sub-block packing to packBlockSSE2 for SIMD-accelerated bit-packing.
+// Uses a fused analysis pass (SIMD OR-acc + scalar min/max) followed by
+// a single path-specific data pass. This eliminates wasted lower/upper
+// extraction when the FOR64 path is taken.
 func packUint64SSE2(flag Flag, values []uint64, dst []byte, scratch []uint32) ([]byte, error) {
 	count := len(values)
 	if count == 0 || count > blockSize {
@@ -583,8 +606,7 @@ func packUint64SSE2(flag Flag, values []uint64, dst []byte, scratch []uint32) ([
 
 	dst = ensureCapacity64(dst, off, innerFlag)
 
-	upper := scratch[2*blockSize:]
-	min64, max64, acc := splitUint64HalvesSSE2(scratch, upper, values)
+	min64, max64, acc := analyzeUint64SSE2(values)
 
 	if innerFlag&NoFOR == 0 && min64 > 0 && (max64-min64) < (1<<32) {
 		forSubtract64SSE2(scratch[:count], values, min64)
@@ -592,6 +614,7 @@ func packUint64SSE2(flag Flag, values []uint64, dst []byte, scratch []uint32) ([
 	}
 
 	if acc>>32 == 0 {
+		narrowToUint32(scratch, values, count)
 		block, err := packBlockSSE2(innerFlag, scratch[:count], dst[off:off], scratch[blockSize:2*blockSize], headerTypeUint64Flag, false)
 		if err != nil {
 			return nil, err
@@ -599,6 +622,8 @@ func packUint64SSE2(flag Flag, values []uint64, dst []byte, scratch []uint32) ([
 		return dst[:off+len(block)], nil
 	}
 
+	upper := scratch[2*blockSize:]
+	splitUint64Only(scratch, upper, values)
 	return packUint64TwoBlock(innerFlag, dst, scratch, off, count, packBlockSSE2)
 }
 

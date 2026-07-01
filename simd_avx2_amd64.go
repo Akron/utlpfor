@@ -465,57 +465,85 @@ func forAddAVX2(output []uint32, count int, baseValue uint32) {
 // lane: [lo0,hi0,lo1,hi1,lo2,hi2,lo3,hi3] -> [lo0,lo1,lo2,lo3,hi0,hi1,hi2,hi3].
 var deinterleaveIdx = [8]uint32{0, 2, 4, 6, 1, 3, 5, 7}
 
-// splitUint64HalvesAVX2 extracts lower/upper uint32 halves using VPERMD
-// deinterleave (4 uint64 per iteration), and computes OR-accumulator
-// with Uint64x4. Min/max use scalar because Uint64x4.Min/Max require
-// AVX-512 (VPMINUQ).
-func splitUint64HalvesAVX2(lower, upper []uint32, values []uint64) (min64, max64, acc uint64) {
+// analyzeUint64AVX2 computes OR-accumulator and min/max of uint64 values
+// in a single fused pass. SIMD Uint64x4 handles OR-accumulation (4 values
+// per iteration) while scalar handles min/max (VPMINUQ requires AVX-512).
+// No lower/upper extraction is performed.
+func analyzeUint64AVX2(values []uint64) (min64, max64, acc uint64) {
 	n := len(values)
 	if n < 4 {
-		return splitUint64Halves(lower, upper, values)
+		return analyzeUint64SSE2(values)
 	}
 
-	perm := archsimd.LoadUint32x8Array(&deinterleaveIdx)
-
-	// SIMD OR-accumulation + VPERMD deinterleave for extraction
-	v0 := archsimd.LoadUint64x4(values[:4])
-	accVec := v0
-
-	shuffled := v0.AsUint32x8().Permute(perm)
-	shuffled.GetLo().Store(lower[:4])
-	shuffled.GetHi().Store(upper[:4])
+	accVec := archsimd.LoadUint64x4(values[:4])
+	min64, max64 = values[0], values[0]
+	for j := 1; j < 4; j++ {
+		v := values[j]
+		if v < min64 {
+			min64 = v
+		}
+		if v > max64 {
+			max64 = v
+		}
+	}
 
 	for i := 4; i+4 <= n; i += 4 {
-		chunk := archsimd.LoadUint64x4(values[i : i+4])
-		accVec = accVec.Or(chunk)
-
-		shuffled = chunk.AsUint32x8().Permute(perm)
-		shuffled.GetLo().Store(lower[i : i+4])
-		shuffled.GetHi().Store(upper[i : i+4])
+		accVec = accVec.Or(archsimd.LoadUint64x4(values[i : i+4]))
+		for j := range 4 {
+			v := values[i+j]
+			if v < min64 {
+				min64 = v
+			}
+			if v > max64 {
+				max64 = v
+			}
+		}
 	}
 
-	// Reduce OR-accumulator to scalar
 	accR := accVec.GetLo().Or(accVec.GetHi())
 	var accL [2]uint64
 	accR.StoreArray(&accL)
 	acc = accL[0] | accL[1]
 
-	// Scalar tail for remaining values
+	tail := (n / 4) * 4
+	for i := tail; i < n; i++ {
+		v := values[i]
+		acc |= v
+		if v < min64 {
+			min64 = v
+		}
+		if v > max64 {
+			max64 = v
+		}
+	}
+	return
+}
+
+// splitUint64OnlyAVX2 extracts lower/upper uint32 halves using VPERMD
+// deinterleave (4 uint64 per iteration) without computing min/max or
+// OR-accumulator. Used after analyzeUint64AVX2 has determined that the
+// two-block path is needed.
+func splitUint64OnlyAVX2(lower, upper []uint32, values []uint64) {
+	n := len(values)
+	if n < 4 {
+		splitUint64Only(lower, upper, values)
+		return
+	}
+
+	perm := archsimd.LoadUint32x8Array(&deinterleaveIdx)
+
+	for i := 0; i+4 <= n; i += 4 {
+		shuffled := archsimd.LoadUint64x4(values[i : i+4]).AsUint32x8().Permute(perm)
+		shuffled.GetLo().Store(lower[i : i+4])
+		shuffled.GetHi().Store(upper[i : i+4])
+	}
+
 	tail := (n / 4) * 4
 	for i := tail; i < n; i++ {
 		v := values[i]
 		lower[i] = uint32(v)
 		upper[i] = uint32(v >> 32)
-		acc |= v
 	}
-
-	// Scalar min/max (uint64 min/max needs AVX-512 VPMINUQ)
-	min64, max64 = values[0], values[0]
-	for _, v := range values[1:] {
-		min64 = min(min64, v)
-		max64 = max(max64, v)
-	}
-	return
 }
 
 // allFitIn32BitsAVX2 checks if all uint64 values fit in 32 bits by
@@ -641,8 +669,9 @@ func packBlockAVX2(flag Flag, values []uint32, dst []byte, scratch []uint32, typ
 }
 
 // packUint64AVX2 is the AVX2 implementation of PackUint64.
-// Uses SIMD-accelerated extraction (VPERMD deinterleave + Uint64x4
-// min/max/OR), then delegates sub-block packing to packBlockAVX2.
+// Uses a fused analysis pass (SIMD OR-acc + scalar min/max) followed by
+// a single path-specific data pass. This eliminates wasted VPERMD
+// extraction when the FOR64 path is taken.
 func packUint64AVX2(flag Flag, values []uint64, dst []byte, scratch []uint32) ([]byte, error) {
 	count := len(values)
 	if count == 0 || count > blockSize {
@@ -657,8 +686,7 @@ func packUint64AVX2(flag Flag, values []uint64, dst []byte, scratch []uint32) ([
 
 	dst = ensureCapacity64(dst, off, innerFlag)
 
-	upper := scratch[2*blockSize:]
-	min64, max64, acc := splitUint64HalvesAVX2(scratch, upper, values)
+	min64, max64, acc := analyzeUint64AVX2(values)
 
 	if innerFlag&NoFOR == 0 && min64 > 0 && (max64-min64) < (1<<32) {
 		forSubtract64AVX2(scratch[:count], values, min64)
@@ -668,6 +696,7 @@ func packUint64AVX2(flag Flag, values []uint64, dst []byte, scratch []uint32) ([
 	}
 
 	if acc>>32 == 0 {
+		narrowToUint32AVX2(scratch, values, count)
 		block, err := packBlockAVX2(innerFlag, scratch[:count], dst[off:off], scratch[blockSize:2*blockSize], headerTypeUint64Flag, false)
 		if err != nil {
 			return nil, err
@@ -676,6 +705,8 @@ func packUint64AVX2(flag Flag, values []uint64, dst []byte, scratch []uint32) ([
 		return dst[:off+len(block)], nil
 	}
 
+	upper := scratch[2*blockSize:]
+	splitUint64OnlyAVX2(scratch, upper, values)
 	result, err := packUint64TwoBlock(innerFlag, dst, scratch, off, count, packBlockAVX2)
 	archsimd.ClearAVXUpperBits()
 	return result, err
@@ -817,6 +848,21 @@ func forAdd64AVX2(dst []uint64, values []uint32, base uint64, count int) {
 	}
 	for ; i < count; i++ {
 		dst[i] = uint64(values[i]) + base
+	}
+}
+
+// narrowToUint32AVX2 copies uint64 values to uint32 by truncation using
+// VPERMD deinterleave (4 values per iteration). Extracts the lower dword
+// of each uint64 by shuffling [lo0,hi0,lo1,hi1,lo2,hi2,lo3,hi3] ->
+// [lo0,lo1,lo2,lo3,...] and storing the low 128-bit lane.
+func narrowToUint32AVX2(dst []uint32, values []uint64, count int) {
+	perm := archsimd.LoadUint32x8Array(&deinterleaveIdx)
+	i := 0
+	for ; i+4 <= count; i += 4 {
+		archsimd.LoadUint64x4(values[i : i+4]).AsUint32x8().Permute(perm).GetLo().Store(dst[i : i+4])
+	}
+	for ; i < count; i++ {
+		dst[i] = uint32(values[i])
 	}
 }
 

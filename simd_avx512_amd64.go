@@ -463,6 +463,18 @@ func findMinMax64AVX512(values []uint64) (uint64, uint64) {
 	return minResult, maxResult
 }
 
+// narrowToUint32AVX512 copies uint64 values to uint32 by truncation using
+// AVX-512 TruncToUint32 (VPMOVQD, 8 values per iteration).
+func narrowToUint32AVX512(dst []uint32, values []uint64, count int) {
+	i := 0
+	for ; i+8 <= count; i += 8 {
+		archsimd.LoadUint64x8(values[i : i+8]).TruncToUint32().Store(dst[i : i+8])
+	}
+	for ; i < count; i++ {
+		dst[i] = uint32(values[i])
+	}
+}
+
 // forSubtract64AVX512 subtracts base from each uint64 value and stores as uint32.
 // Uses AVX-512 Sub + TruncToUint32 (8 values per iteration).
 func forSubtract64AVX512(dst []uint32, values []uint64, base uint64) {
@@ -597,10 +609,53 @@ func packBlockAVX512(flag Flag, values []uint32, dst []byte, scratch []uint32, t
 	return dst[:svbOffset+svbLen], nil
 }
 
+// analyzeUint64AVX512 computes OR-accumulator and min/max of uint64 values
+// in a single fully-SIMD pass. Uses Uint64x8.Min/Max (VPMINUQ/VPMAXUQ)
+// and Uint64x8.Or, processing 8 values per iteration.
+func analyzeUint64AVX512(values []uint64) (min64, max64, acc uint64) {
+	n := len(values)
+	if n < 8 {
+		return analyzeUint64AVX2(values)
+	}
+
+	chunk0 := archsimd.LoadUint64x8(values[:8])
+	minVec, maxVec, accVec := chunk0, chunk0, chunk0
+
+	for i := 8; i+8 <= n; i += 8 {
+		v := archsimd.LoadUint64x8(values[i : i+8])
+		minVec = minVec.Min(v)
+		maxVec = maxVec.Max(v)
+		accVec = accVec.Or(v)
+	}
+
+	min4 := minVec.GetLo().Min(minVec.GetHi())
+	max4 := maxVec.GetLo().Max(maxVec.GetHi())
+	acc4 := accVec.GetLo().Or(accVec.GetHi())
+	min2 := min4.GetLo().Min(min4.GetHi())
+	max2 := max4.GetLo().Max(max4.GetHi())
+	acc2 := acc4.GetLo().Or(acc4.GetHi())
+
+	var minL, maxL, accL [2]uint64
+	min2.Store(minL[:])
+	max2.Store(maxL[:])
+	acc2.Store(accL[:])
+	min64 = min(minL[0], minL[1])
+	max64 = max(maxL[0], maxL[1])
+	acc = accL[0] | accL[1]
+
+	tail := (n / 8) * 8
+	for i := tail; i < n; i++ {
+		v := values[i]
+		acc |= v
+		min64 = min(min64, v)
+		max64 = max(max64, v)
+	}
+	return
+}
+
 // packUint64AVX512 is the AVX-512 implementation of PackUint64.
-// Uses AVX-512 SIMD for findMinMax64, splitUint64, allFitIn32Bits, and
-// forSubtract64; delegates block packing to packBlockAVX512 via the
-// common packFor64SingleBlockCommon orchestration.
+// Uses a fused analysis pass (SIMD min/max + OR-acc via VPMINUQ/VPMAXUQ)
+// followed by path-specific dispatch, consistent with the SSE2/AVX2 pattern.
 func packUint64AVX512(flag Flag, values []uint64, dst []byte, scratch []uint32) ([]byte, error) {
 	count := len(values)
 	if count == 0 || count > blockSize {
@@ -615,24 +670,17 @@ func packUint64AVX512(flag Flag, values []uint64, dst []byte, scratch []uint32) 
 
 	dst = ensureCapacity64(dst, off, innerFlag)
 
-	min64, max64 := findMinMax64AVX512(values)
+	min64, max64, acc := analyzeUint64AVX512(values)
 
 	if innerFlag&NoFOR == 0 && min64 > 0 && (max64-min64) < (1<<32) {
 		forSubtract64AVX512(scratch[:count], values, min64)
-		innerOff := off + for64BaseSize
-		dst = dst[:innerOff]
-		inner, err := packBlockAVX512(innerFlag|NoFOR, scratch[:count], dst[innerOff:innerOff], scratch[blockSize:], headerTypeUint64Flag, false)
-		if err != nil {
-			return nil, err
-		}
+		result, err := packFor64(innerFlag, dst, scratch, off, count, min64, packBlockAVX512)
 		archsimd.ClearAVXUpperBits()
-		return wrapFor64SingleBlock(dst, off, min64, inner), nil
+		return result, err
 	}
 
-	upper := scratch[2*blockSize:]
-	splitUint64AVX512(scratch, upper, values, count)
-
-	if allFitIn32BitsAVX512(values) {
+	if acc>>32 == 0 {
+		narrowToUint32AVX512(scratch, values, count)
 		block, err := packBlockAVX512(innerFlag, scratch[:count], dst[off:off], scratch[blockSize:2*blockSize], headerTypeUint64Flag, false)
 		if err != nil {
 			return nil, err
@@ -641,26 +689,11 @@ func packUint64AVX512(flag Flag, values []uint64, dst []byte, scratch []uint32) 
 		return dst[:off+len(block)], nil
 	}
 
-	block1, err := packBlockAVX512(innerFlag, scratch[:count], dst[off:off], scratch[blockSize:2*blockSize], headerTypeUint64Flag|headerCombineFlag, true)
-	if err != nil {
-		return nil, err
-	}
-	block1Len := len(block1)
-
-	b2Off := off + block1Len
-	dst = dst[:b2Off]
-	block2, err := packBlockAVX512(innerFlag, upper[:count], dst[b2Off:b2Off], scratch[blockSize:2*blockSize], headerTypeUint64Flag, false)
-	if err != nil {
-		return nil, err
-	}
-	block2Len := len(block2)
-
-	block1Header := bo.Uint32(block1)
-	_, _, _, _, forWidth, hasExceptions, _, _, _, _ := decodeHeader(block1Header)
-	writeBlock2Len(block1, forBaseBytes(forWidth), hasExceptions, uint16(block2Len))
-
+	upper := scratch[2*blockSize:]
+	splitUint64AVX512(scratch, upper, values, count)
+	result, err := packUint64TwoBlock(innerFlag, dst, scratch, off, count, packBlockAVX512)
 	archsimd.ClearAVXUpperBits()
-	return dst[:off+block1Len+block2Len], nil
+	return result, err
 }
 
 // unpackBlockAVX512 unpacks a uint32 block using AVX-512-accelerated kernels.

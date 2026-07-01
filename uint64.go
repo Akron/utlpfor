@@ -70,19 +70,40 @@ func forBaseBytesForBlock(forWidth, intType int, hasCombine bool) int {
 	return forBaseBytes(forWidth)
 }
 
-// splitUint64Halves extracts lower and upper uint32 halves from uint64
-// values, tracks min/max, and OR-accumulates all values in a single pass.
-// Used by scalar, SSE2, and AVX2 pack paths. AVX512 uses dedicated SIMD.
-func splitUint64Halves(lower, upper []uint32, values []uint64) (min64, max64, acc uint64) {
+// analyzeUint64 computes OR-accumulator and min/max of uint64 values
+// in a single pass without extracting lower/upper halves. This avoids
+// wasted writes when the FOR64 or all-fit-32 path makes extraction
+// unnecessary.
+func analyzeUint64(values []uint64) (min64, max64, acc uint64) {
 	min64, max64 = values[0], values[0]
+	for _, v := range values {
+		acc |= v
+		if v < min64 {
+			min64 = v
+		}
+		if v > max64 {
+			max64 = v
+		}
+	}
+	return
+}
+
+// narrowToUint32 copies uint64 values to uint32 by truncation. Used on
+// the all-fit-in-32-bits path where all upper 32 bits are zero.
+func narrowToUint32(dst []uint32, values []uint64, count int) {
+	for i := range count {
+		dst[i] = uint32(values[i])
+	}
+}
+
+// splitUint64Only extracts lower and upper uint32 halves without
+// computing min/max or OR-accumulator. Used after analyzeUint64 has
+// already determined that the two-block path is needed.
+func splitUint64Only(lower, upper []uint32, values []uint64) {
 	for i, v := range values {
 		lower[i] = uint32(v)
 		upper[i] = uint32(v >> 32)
-		acc |= v
-		min64 = min(min64, v)
-		max64 = max(max64, v)
 	}
-	return
 }
 
 // wrapFor64SingleBlock wraps an already-packed inner block with FOR64 metadata.
@@ -254,6 +275,9 @@ func PackUint64(flag Flag, values []uint64, dst []byte, scratch []uint32) ([]byt
 }
 
 // packUint64Scalar is the scalar implementation of PackUint64.
+// Uses a two-phase approach: lightweight analysis pass (min/max + OR-acc)
+// followed by a single path-specific data pass. This avoids wasted
+// lower/upper extraction when the FOR64 path is taken.
 func packUint64Scalar(flag Flag, values []uint64, dst []byte, scratch []uint32) ([]byte, error) {
 	count := len(values)
 	if count == 0 || count > blockSize {
@@ -268,8 +292,7 @@ func packUint64Scalar(flag Flag, values []uint64, dst []byte, scratch []uint32) 
 
 	dst = ensureCapacity64(dst, off, innerFlag)
 
-	upper := scratch[2*blockSize:]
-	min64, max64, acc := splitUint64Halves(scratch, upper, values)
+	min64, max64, acc := analyzeUint64(values)
 
 	if innerFlag&NoFOR == 0 && min64 > 0 && (max64-min64) < (1<<32) {
 		forSubtract64(scratch[:count], values, min64)
@@ -277,6 +300,7 @@ func packUint64Scalar(flag Flag, values []uint64, dst []byte, scratch []uint32) 
 	}
 
 	if acc>>32 == 0 {
+		narrowToUint32(scratch, values, count)
 		block, err := packBlockScalar(innerFlag, scratch[:count], dst[off:off], scratch[blockSize:2*blockSize], headerTypeUint64Flag, false)
 		if err != nil {
 			return nil, err
@@ -284,6 +308,8 @@ func packUint64Scalar(flag Flag, values []uint64, dst []byte, scratch []uint32) 
 		return dst[:off+len(block)], nil
 	}
 
+	upper := scratch[2*blockSize:]
+	splitUint64Only(scratch, upper, values)
 	return packUint64TwoBlock(innerFlag, dst, scratch, off, count, packBlockScalar)
 }
 
