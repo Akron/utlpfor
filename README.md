@@ -1,6 +1,6 @@
 # UTL-PFOR
 
-UTL-PFOR is an integer compression library for Go using native SIMD.
+UTL-PFOR is an integer compression library for Go using native SIMD support.
 
 It is the successor to [fastpfor-go](https://github.com/Akron/fastpfor-go),
 which uses PFOR [1] based on the [FastPFOR](https://github.com/fast-pack/FastPFOR) [2]
@@ -24,22 +24,6 @@ a variable-byte encoding scheme optimized for SIMD (specifically SSE2).
 
 Work in progress. The library is functional but not yet final.
 
-## Requirements
-
-This library uses Go's native SIMD support (`simd/archsimd`) introduced
-in Go 1.26 (via `GOEXPERIMENT=simd`).
-
-Runtime dispatch selects the best path at startup:
-AVX-512 > AVX2 > SSE2 > scalar fallback.
-
-- **Go 1.26+** with `GOEXPERIMENT=simd` for SIMD acceleration
-- Scalar fallback works without the experiment flag on any architecture
-- **Recommended**: Use `gotip` (Go 1.27-devel) for optimal AVX2/AVX-512
-  performance until Go 1.27 is released. Go 1.26.x compilers have a
-  known (and [fixed](https://github.com/golang/go/commit/aa80d7a7e6bf97aa27a74cc5056ef270a2a0c2f4))
-  issue generating suboptimal code, resulting in performance degradation on AVX2 and AVX-512
-  bitpacking kernels.
-
 ## API
 
 ```go
@@ -49,7 +33,10 @@ func GetUint32(pos int, src []byte, scratch []uint32) (uint32, error)
 func BlockLength(src []byte) (int, error)
 func MaxBlockLength32(flag Flag) int
 func Header(src []byte) (count, bitWidth, excCount int, hasDelta, hasFOR, hasZigZag, hasSpecial bool, err error)
+```
 
+And for `[]uint64` handling:
+```
 func PackUint64(flag Flag, values []uint64, dst []byte, scratch []uint32) ([]byte, error)
 func UnpackUint64(src []byte, values []uint64, scratch []uint32) ([]uint64, int, error)
 func GetUint64(pos int, src []byte, scratch []uint32) (uint64, error)
@@ -76,6 +63,22 @@ Flags can be combined with bitwise OR, e.g. `Delta | NoFOR`.
 The `Append` flag is a pack-time control flag only and is never stored in
 the on-disk block header.
 
+## Requirements
+
+This library uses Go's native SIMD support (`simd/archsimd`) introduced
+in Go 1.26 (via `GOEXPERIMENT=simd`).
+
+Runtime dispatch selects the best path at startup:
+AVX-512 > AVX2 > SSE2 > scalar fallback.
+
+- **Go 1.26+** with `GOEXPERIMENT=simd` for SIMD acceleration
+- Scalar fallback works without the experiment flag on any architecture
+- **Recommended**: Use `gotip` (Go 1.27-devel) for optimal AVX2/AVX-512
+  performance until Go 1.27 is released. Go 1.26.x compilers have a
+  known (and [fixed](https://github.com/golang/go/commit/aa80d7a7e6bf97aa27a74cc5056ef270a2a0c2f4))
+  issue generating suboptimal code, resulting in performance degradation on AVX2 and AVX-512
+  bitpacking kernels.
+
 ## Quick Start
 
 ```bash
@@ -88,6 +91,11 @@ GOEXPERIMENT=simd gotip test ./...
 # Benchmarks
 GOEXPERIMENT=simd gotip test -bench=. -benchmem -count=5 ./...
 ```
+
+## Data Format
+
+A [Kaitai Struct](https://kaitai.io/) definition file is part of this repository.
+
 
 ## Disclaimer
 

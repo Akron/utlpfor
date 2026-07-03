@@ -259,22 +259,22 @@ bench-threshold-full: bench-threshold threshold-analyze
 #   UTL_SIMD_LEVEL=scalar ./utlpfor-bench.test \
 #       -test.bench='BenchmarkMatrix/|BenchmarkMatrixUint64/' \
 #       -test.benchmem -test.count=5 -test.run='^$' -test.timeout=600s \
-#       > matrix-scalar.txt
+#       > utlpfor-matrix-scalar.txt
 #   UTL_SIMD_LEVEL=sse2 ./utlpfor-bench.test \
 #       -test.bench='BenchmarkMatrix/|BenchmarkMatrixUint64/' \
 #       -test.benchmem -test.count=5 -test.run='^$' -test.timeout=600s \
-#       > matrix-sse2.txt
+#       > utlpfor-matrix-sse2.txt
 #   UTL_SIMD_LEVEL=avx2 ./utlpfor-bench.test \
 #       -test.bench='BenchmarkMatrix/|BenchmarkMatrixUint64/' \
 #       -test.benchmem -test.count=5 -test.run='^$' -test.timeout=600s \
-#       > matrix-avx2.txt
+#       > utlpfor-matrix-avx2.txt
 #   UTL_SIMD_LEVEL=avx512 ./utlpfor-bench.test \
 #       -test.bench='BenchmarkMatrix/|BenchmarkMatrixUint64/' \
 #       -test.benchmem -test.count=5 -test.run='^$' -test.timeout=600s \
-#       > matrix-avx512.txt
+#       > utlpfor-matrix-avx512.txt
 #   # Copy results back and format:
 #   scp user@remote:matrix-*.txt benchmarks/
-#   make bench-matrix-table
+#   make bench-matrix-table ...
 #
 # Cross-compilation for different architectures:
 #   GOOS=linux GOARCH=amd64 make bench-binary
