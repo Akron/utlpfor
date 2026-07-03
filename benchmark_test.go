@@ -115,7 +115,6 @@ func BenchmarkGetUint64(b *testing.B) {
 	}
 
 	for _, tc := range cases {
-		tc := tc
 		b.Run(tc.name, func(b *testing.B) {
 			packed, _ := PackUint64(tc.flag, slices.Clone(tc.values), nil, nil)
 			scratch := make([]uint32, ScratchLen64)

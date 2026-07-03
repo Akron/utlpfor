@@ -36,7 +36,8 @@ func Header(src []byte) (count, bitWidth, excCount int, hasDelta, hasFOR, hasZig
 ```
 
 And for `[]uint64` handling:
-```
+
+```go
 func PackUint64(flag Flag, values []uint64, dst []byte, scratch []uint32) ([]byte, error)
 func UnpackUint64(src []byte, values []uint64, scratch []uint32) ([]uint64, int, error)
 func GetUint64(pos int, src []byte, scratch []uint32) (uint64, error)

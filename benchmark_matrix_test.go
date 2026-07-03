@@ -383,7 +383,6 @@ func allMatrixUint64Configs() []matrixUint64Config {
 // encoding modes (fit32, two_block, for64) with and without delta.
 func BenchmarkMatrixUint64(b *testing.B) {
 	for _, cfg := range allMatrixUint64Configs() {
-		cfg := cfg
 		b.Run(cfg.benchName(), func(b *testing.B) {
 			original := slices.Clone(cfg.values)
 			values := slices.Clone(cfg.values)
@@ -653,7 +652,6 @@ func quickCompareUint64Configs() []quickUint64Config {
 // Pack/Unpack/Get benchmarks intended to be included in `make bench-quick`.
 func BenchmarkQuickCompareUint64(b *testing.B) {
 	for _, cfg := range quickCompareUint64Configs() {
-		cfg := cfg
 		b.Run(cfg.method+"_"+cfg.name, func(b *testing.B) {
 			original := slices.Clone(cfg.values)
 			values := slices.Clone(cfg.values)
