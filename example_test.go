@@ -239,3 +239,77 @@ func ExampleMaxBlockLength64() {
 	// max block64 (default): 2038 bytes
 	// max block64 (NoPatch): 1042 bytes
 }
+
+func ExampleNewUint32() {
+	c := utlpfor.NewUint32()
+
+	values := []uint32{10, 20, 30, 40, 50}
+
+	packed, _ := c.Compress(0, nil, values)
+
+	unpacked, _, _ := c.Decompress(nil, packed)
+
+	fmt.Printf("round-trip: %v\n", unpacked)
+	// Output:
+	// round-trip: [10 20 30 40 50]
+}
+
+func ExampleNewUint32_delta() {
+	c := utlpfor.NewUint32()
+
+	values := make([]uint32, 128)
+	for i := range values {
+		values[i] = uint32(1000 + i*4)
+	}
+
+	packed, _ := c.Compress(utlpfor.Delta, nil, slices.Clone(values))
+
+	fmt.Printf("delta-compressed 128 values into %d bytes\n", len(packed))
+
+	unpacked, _, _ := c.Decompress(nil, packed)
+
+	fmt.Printf("first 5 values: %v\n", unpacked[:5])
+	// Output:
+	// delta-compressed 128 values into 170 bytes
+	// first 5 values: [1000 1004 1008 1012 1016]
+}
+
+func ExampleNewUint32_get() {
+	c := utlpfor.NewUint32()
+
+	values := []uint32{100, 200, 300, 400, 500}
+	packed, _ := c.Compress(0, nil, values)
+
+	val, _ := c.Get(2, packed)
+
+	fmt.Printf("value at position 2: %d\n", val)
+	// Output:
+	// value at position 2: 300
+}
+
+func ExampleNewUint64() {
+	c := utlpfor.NewUint64()
+
+	values := []uint64{1_000_000_000_000, 1_000_000_000_001, 1_000_000_000_002}
+
+	packed, _ := c.Compress(0, nil, values)
+
+	unpacked, _, _ := c.Decompress(nil, packed)
+
+	fmt.Printf("round-trip: %v\n", unpacked)
+	// Output:
+	// round-trip: [1000000000000 1000000000001 1000000000002]
+}
+
+func ExampleNewUint64_get() {
+	c := utlpfor.NewUint64()
+
+	values := []uint64{1_000_000_000_000, 2_000_000_000_000, 3_000_000_000_000}
+	packed, _ := c.Compress(0, nil, values)
+
+	val, _ := c.Get(1, packed)
+
+	fmt.Printf("value at position 1: %d\n", val)
+	// Output:
+	// value at position 1: 2000000000000
+}

@@ -49,6 +49,30 @@ pipeline internally. 64-bit values are either range-reduced to 32 bits
 (via 64-bit *frame of reference*) or split into lower/upper 32-bit halves encoded
 as two consecutive uint32 sub-blocks.
 
+### Compressor
+
+The compressor objects own a reusable scratch buffer
+and provide a simplified API for compression, decompression,
+and random access. Callers no longer need to allocate or
+pass scratch buffers.
+
+```go
+// uint32
+c := utlpfor.NewUint32()
+packed, err := c.Compress(utlpfor.Delta, dst, values)
+unpacked, consumed, err := c.Decompress(dst, packed)
+val, err := c.Get(pos, packed)
+
+// uint64
+c64 := utlpfor.NewUint64()
+packed, err := c64.Compress(utlpfor.Delta, dst, values)
+unpacked, consumed, err := c64.Decompress(dst, packed)
+val, err := c64.Get(pos, packed)
+```
+
+A single compressor handles both compression and decompression. It is
+not safe for concurrent use; each goroutine should create its own.
+
 ### Flag Constants
 
 | Flag |  Description |
