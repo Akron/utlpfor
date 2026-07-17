@@ -273,19 +273,16 @@ func packUint32SSE2(flag Flag, dst []byte, scratch []uint32, values []uint32) ([
 	if len(values) == 0 || len(values) > blockSize {
 		return nil, ErrInvalidBuffer
 	}
-	// Strip Append (handled here); NoInPlace is already set by the caller.
-	off := len(dst) * int((flag&Append)>>4)
+	if flag&Append == 0 {
+		return packBlockSSE2(flag, values, dst, scratch, headerTypeUint32Flag, false)
+	}
+	off := len(dst)
+	dst = ensureCapacity32(dst, off)
 	block, err := packBlockSSE2(flag&^Append, values, dst[off:off], scratch, headerTypeUint32Flag, false)
 	if err != nil {
 		return nil, err
 	}
-	totalLen := len(block)
-	if cap(dst) >= off+totalLen {
-		return dst[:off+totalLen], nil
-	}
-	dst = ensureAppend(dst, off, totalLen)
-	copy(dst[off:], block)
-	return dst[:off+totalLen], nil
+	return dst[:off+len(block)], nil
 }
 
 // unpackUint32SSE2 is the SSE2 unpacking pipeline. Delegates to

@@ -301,6 +301,171 @@ func TestAppend_ValuesUnmodified(t *testing.T) {
 	})
 }
 
+func TestAppend_StaleDataWithExceptions(t *testing.T) {
+	// When the Append path's packBlockScalar allocates a new buffer
+	// (because maxTotalLen > remaining cap) but the actual encoded size
+	// fits in the original dst, the Append code must copy the new data
+	// back -- otherwise dst contains stale bytes.
+	scratch := make([]uint32, ScratchLen)
+
+	makeBlock := func(outlierVal uint32) []uint32 {
+		vals := make([]uint32, 128)
+		for i := range vals {
+			vals[i] = uint32(i % 16)
+		}
+		// Outliers at regular intervals force exception encoding,
+		// creating a gap between worst-case and actual SVB size.
+		for i := 0; i < 128; i += 4 {
+			vals[i] = outlierVal
+		}
+		return vals
+	}
+
+	block1 := makeBlock(0x10000)
+	block2 := makeBlock(0x20000)
+	orig1 := slices.Clone(block1)
+	orig2 := slices.Clone(block2)
+
+	// Probe actual packed size.
+	probe, err := PackUint32(0, slices.Clone(block1), nil, scratch)
+	require.NoError(t, err)
+	actualLen := len(probe)
+
+	// Cap = 2*actualLen: the second block's actual size fits in the
+	// remaining capacity, but its worst-case size (with max SVB) does not.
+	dst := make([]byte, 0, 2*actualLen)
+
+	dst, err = PackUint32(Append, block1, dst, scratch)
+	require.NoError(t, err)
+
+	dst, err = PackUint32(Append, block2, dst, scratch)
+	require.NoError(t, err)
+
+	decoded1, consumed1, err := UnpackUint32(dst, nil, scratch)
+	require.NoError(t, err)
+	assert.Equal(t, orig1, decoded1, "block 1 must round-trip")
+
+	decoded2, _, err := UnpackUint32(dst[consumed1:], nil, scratch)
+	require.NoError(t, err)
+	assert.Equal(t, orig2, decoded2, "block 2 must not contain stale data")
+}
+
+func TestAppend_DeltaWithExceptions(t *testing.T) {
+	// Append + Delta where the encoded block contains exceptions.
+	scratch := make([]uint32, ScratchLen)
+
+	makeBlock := func(base, outlier uint32) []uint32 {
+		vals := make([]uint32, 128)
+		for i := range vals {
+			vals[i] = base + uint32(i*3)
+		}
+		for i := 0; i < 128; i += 4 {
+			vals[i] = outlier
+		}
+		return vals
+	}
+
+	block1 := makeBlock(1000, 500000)
+	block2 := makeBlock(2000, 600000)
+	orig1 := slices.Clone(block1)
+	orig2 := slices.Clone(block2)
+
+	probe, err := PackUint32(Delta, slices.Clone(block1), nil, scratch)
+	require.NoError(t, err)
+
+	dst := make([]byte, 0, 2*len(probe))
+
+	dst, err = PackUint32(Delta|Append, block1, dst, scratch)
+	require.NoError(t, err)
+
+	dst, err = PackUint32(Delta|Append, block2, dst, scratch)
+	require.NoError(t, err)
+
+	decoded1, consumed1, err := UnpackUint32(dst, nil, scratch)
+	require.NoError(t, err)
+	assert.Equal(t, orig1, decoded1, "block 1 round-trip with Delta")
+
+	decoded2, _, err := UnpackUint32(dst[consumed1:], nil, scratch)
+	require.NoError(t, err)
+	assert.Equal(t, orig2, decoded2, "block 2 round-trip with Delta")
+}
+
+func TestAppend_NoFORWithExceptions(t *testing.T) {
+	// Append + NoFOR where the encoded block contains exceptions.
+	scratch := make([]uint32, ScratchLen)
+
+	makeBlock := func(outlier uint32) []uint32 {
+		vals := make([]uint32, 128)
+		for i := range vals {
+			vals[i] = uint32(i % 16)
+		}
+		for i := 0; i < 128; i += 4 {
+			vals[i] = outlier
+		}
+		return vals
+	}
+
+	block1 := makeBlock(0x10000)
+	block2 := makeBlock(0x20000)
+	orig1 := slices.Clone(block1)
+	orig2 := slices.Clone(block2)
+
+	probe, err := PackUint32(NoFOR, slices.Clone(block1), nil, scratch)
+	require.NoError(t, err)
+
+	dst := make([]byte, 0, 2*len(probe))
+
+	dst, err = PackUint32(NoFOR|Append, block1, dst, scratch)
+	require.NoError(t, err)
+
+	dst, err = PackUint32(NoFOR|Append, block2, dst, scratch)
+	require.NoError(t, err)
+
+	decoded1, consumed1, err := UnpackUint32(dst, nil, scratch)
+	require.NoError(t, err)
+	assert.Equal(t, orig1, decoded1, "block 1 round-trip with NoFOR")
+
+	decoded2, _, err := UnpackUint32(dst[consumed1:], nil, scratch)
+	require.NoError(t, err)
+	assert.Equal(t, orig2, decoded2, "block 2 round-trip with NoFOR")
+}
+
+func TestAppend_NonAppendThenAppendWithExceptions(t *testing.T) {
+	// Common pattern: pack block 1 without Append, then Append block 2
+	// into the resulting buffer. The first call sets dst capacity;
+	// the second must handle a potential reallocation correctly.
+	scratch := make([]uint32, ScratchLen)
+
+	block1 := make([]uint32, 128)
+	for i := range block1 {
+		block1[i] = uint32(i * 7)
+	}
+	orig1 := slices.Clone(block1)
+
+	block2 := make([]uint32, 128)
+	for i := range block2 {
+		block2[i] = uint32(i % 16)
+	}
+	for i := 0; i < 128; i += 4 {
+		block2[i] = 0x10000
+	}
+	orig2 := slices.Clone(block2)
+
+	dst, err := PackUint32(0, block1, nil, scratch)
+	require.NoError(t, err)
+
+	dst, err = PackUint32(Append, block2, dst, scratch)
+	require.NoError(t, err)
+
+	decoded1, consumed1, err := UnpackUint32(dst, nil, scratch)
+	require.NoError(t, err)
+	assert.Equal(t, orig1, decoded1, "block 1 from non-Append call")
+
+	decoded2, _, err := UnpackUint32(dst[consumed1:], nil, scratch)
+	require.NoError(t, err)
+	assert.Equal(t, orig2, decoded2, "block 2 from Append call")
+}
+
 func TestAppend_FlagNotInHeader(t *testing.T) {
 	// Append is a control flag only and must not be persisted to header bits.
 	values := make([]uint32, 128)

@@ -18,15 +18,21 @@ func ensureLen(dst []byte, n int) []byte {
 	return make([]byte, n)
 }
 
-// ensureAppend returns dst with len set to off+n, preserving dst[:off].
-// If cap(dst) is sufficient, the slice is resliced; otherwise a new slice
-// is allocated and the prefix is copied.
-func ensureAppend(dst []byte, off, n int) []byte {
-	needed := off + n
-	if cap(dst) >= needed {
-		return dst[:needed]
+// maxBlockLen32 is the precomputed worst-case byte length of any single
+// packed uint32 block (MaxBlockLength32(0)). Using the flag=0 maximum
+// is safe for all flag combinations since it is the global upper bound.
+var maxBlockLen32 = MaxBlockLength32(0)
+
+// ensureCapacity32 ensures dst has cap >= off+maxBlockLen32,
+// preserving dst[:off]. Called once in the Append path so all inner
+// pack paths can unconditionally trust the capacity.
+// On the hot path (pre-allocated dst), this is a single comparison that
+// the branch predictor always predicts correctly.
+func ensureCapacity32(dst []byte, off int) []byte {
+	if cap(dst)-off >= maxBlockLen32 {
+		return dst
 	}
-	grown := make([]byte, needed)
+	grown := make([]byte, off, off+maxBlockLen32)
 	copy(grown, dst[:off])
 	return grown
 }

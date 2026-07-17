@@ -792,3 +792,65 @@ func BenchmarkForwardWritePattern(b *testing.B) {
 		}
 	})
 }
+
+func BenchmarkAppendWithExceptions(b *testing.B) {
+	for _, nBlocks := range []int{1, 5, 10} {
+		b.Run(fmt.Sprintf("blocks=%d", nBlocks), func(b *testing.B) {
+			scratch := make([]uint32, ScratchLen)
+			vals := make([]uint32, blockSize)
+			for i := range vals {
+				vals[i] = uint32(i % 16)
+			}
+			for i := 0; i < blockSize; i += 4 {
+				vals[i] = 0x10000
+			}
+			origVals := slices.Clone(vals)
+			maxCap := MaxBlockLength32(0) * nBlocks
+			dst := make([]byte, 0, maxCap)
+
+			b.ReportAllocs()
+			b.SetBytes(int64(nBlocks * blockSize * 4))
+			b.ResetTimer()
+			for range b.N {
+				dst = dst[:0]
+				for range nBlocks {
+					copy(vals, origVals)
+					dst, _ = PackUint32(Append, vals, dst, scratch)
+				}
+			}
+		})
+	}
+}
+
+func BenchmarkAppendWithExceptions_TightCap(b *testing.B) {
+	// Append where dst capacity triggers the reallocation path:
+	// remaining cap is between actual and worst-case block size.
+	scratch := make([]uint32, ScratchLen)
+	vals := make([]uint32, blockSize)
+	for i := range vals {
+		vals[i] = uint32(i % 16)
+	}
+	for i := 0; i < blockSize; i += 4 {
+		vals[i] = 0x10000
+	}
+	origVals := slices.Clone(vals)
+
+	probe, _ := PackUint32(0, slices.Clone(vals), nil, scratch)
+	actualLen := len(probe)
+
+	// Cap = 2*actualLen: second block triggers the tight-capacity path.
+	dst := make([]byte, 0, 2*actualLen)
+
+	b.ReportAllocs()
+	b.SetBytes(int64(2 * blockSize * 4))
+	b.ResetTimer()
+	for range b.N {
+		dst = dst[:0]
+		copy(vals, origVals)
+		dst, _ = PackUint32(Append, vals, dst, scratch)
+
+		copy(vals, origVals)
+		dst, _ = PackUint32(Append, vals, dst, scratch)
+	}
+}
+}

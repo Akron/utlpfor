@@ -113,6 +113,46 @@ func TestCompressor_NoInPlacePreservesValues(t *testing.T) {
 		"compressor.Compress with NoInPlace must not modify the values slice")
 }
 
+func TestCompressor_AppendWithExceptions(t *testing.T) {
+	// Compressor-level Append where packed blocks contain exceptions.
+	c := utlpfor.NewUint32()
+
+	makeBlock := func(outlier uint32) []uint32 {
+		vals := make([]uint32, 128)
+		for i := range vals {
+			vals[i] = uint32(i % 16)
+		}
+		for i := 0; i < 128; i += 4 {
+			vals[i] = outlier
+		}
+		return vals
+	}
+
+	block1 := makeBlock(0x10000)
+	block2 := makeBlock(0x20000)
+	orig1 := slices.Clone(block1)
+	orig2 := slices.Clone(block2)
+
+	// Probe actual size for controlled capacity.
+	probe, err := c.Compress(0, nil, slices.Clone(block1))
+	require.NoError(t, err)
+
+	dst := make([]byte, 0, 2*len(probe))
+	dst, err = c.Compress(utlpfor.Append, dst, block1)
+	require.NoError(t, err)
+
+	dst, err = c.Compress(utlpfor.Append, dst, block2)
+	require.NoError(t, err)
+
+	decoded1, consumed1, err := c.Decompress(nil, dst)
+	require.NoError(t, err)
+	assert.Equal(t, orig1, decoded1, "block 1 round-trip")
+
+	decoded2, _, err := c.Decompress(nil, dst[consumed1:])
+	require.NoError(t, err)
+	assert.Equal(t, orig2, decoded2, "block 2 must not contain stale data")
+}
+
 func TestCompressor_Get(t *testing.T) {
 	c := utlpfor.NewUint32()
 	values := []uint32{100, 200, 300, 400, 500}

@@ -241,20 +241,17 @@ func packUint32Scalar(flag Flag, dst []byte, scratch []uint32, values []uint32) 
 		return nil, ErrInvalidBuffer
 	}
 
-	// Append and NoInPlace share a bit pattern: shifting the Append bit by
-	// one makes the destination offset branchless (`0` or `len(dst)`).
-	off := len(dst) * int((flag&Append)>>4)
+	if flag&Append == 0 {
+		return packBlockScalar(flag, values, dst, scratch, headerTypeUint32Flag, false)
+	}
+
+	off := len(dst)
+	dst = ensureCapacity32(dst, off)
 	block, err := packBlockScalar(flag&^Append, values, dst[off:off], scratch, headerTypeUint32Flag, false)
 	if err != nil {
 		return nil, err
 	}
-	totalLen := len(block)
-	if cap(dst) >= off+totalLen {
-		return dst[:off+totalLen], nil
-	}
-	dst = ensureAppend(dst, off, totalLen)
-	copy(dst[off:], block)
-	return dst[:off+totalLen], nil
+	return dst[:off+len(block)], nil
 }
 
 // unpackUint32Scalar is the shared unpack implementation for both uint32 and
