@@ -78,6 +78,30 @@ func ExamplePackUint32_append() {
 	// two blocks concatenated: 15 + 17 = 32 bytes
 }
 
+func ExamplePackUint32_noInPlace() {
+	// A shared fixed-size buffer packed multiple times without cloning.
+	var buf [128]uint32
+	for i := range buf {
+		buf[i] = uint32(500 + i*3)
+	}
+
+	scratch := make([]uint32, utlpfor.ScratchLenNoInPlace)
+	var dst []byte
+	var err error
+
+	// Append implies NoInPlace: the buf array is never modified.
+	for range 3 {
+		dst, err = utlpfor.PackUint32(utlpfor.Append, buf[:], dst, scratch)
+		if err != nil {
+			panic(err)
+		}
+	}
+	fmt.Printf("packed 3 blocks (%d bytes), buf[0]=%d (unchanged)\n",
+		len(dst), buf[0])
+	// Output:
+	// packed 3 blocks (588 bytes), buf[0]=500 (unchanged)
+}
+
 func ExamplePackUint32_zeroAlloc() {
 	values := make([]uint32, 128) // 128 x 4 = 512 bytes unpacked
 	for i := range values {
@@ -87,10 +111,11 @@ func ExamplePackUint32_zeroAlloc() {
 	// Pre-allocate dst with MaxBlockLength32 to avoid allocation during packing.
 	dst := make([]byte, 0, utlpfor.MaxBlockLength32(0))
 
-	// ScratchLen (128) is the minimum scratch buffer capacity (in uint32
-	// elements) for zero-allocation uint32 Pack/Unpack operations.
+	// ScratchLenNoInPlace (256) is the minimum scratch buffer capacity
+	// (in uint32 elements) for zero-allocation packing with Append or
+	// NoInPlace. Use ScratchLen (128) when neither flag is needed.
 	// For uint64 operations, use ScratchLen64 (384) instead.
-	scratch := make([]uint32, utlpfor.ScratchLen)
+	scratch := make([]uint32, utlpfor.ScratchLenNoInPlace)
 
 	packed, err := utlpfor.PackUint32(utlpfor.Append, values, dst, scratch)
 	if err != nil {

@@ -606,3 +606,189 @@ func BenchmarkUnpackUint64(b *testing.B) {
 		})
 	}
 }
+
+// BenchmarkCloneOverhead measures the cost of cloning values before packing,
+// which is required because PackUint32 modifies values in-place (FOR subtraction,
+// delta encoding). This quantifies the performance penalty for callers that
+// cannot pass ownership of their values slice.
+//
+// Scenarios:
+//   - Alloc: allocate a new slice + copy each iteration (current Krawfish pattern)
+//   - Reuse: copy into a pre-allocated buffer (potential optimization with NoInPlace)
+//   - NoFOR: use NoFOR flag to avoid FOR in-place modification (no copy needed for flag=0)
+//   - Direct: pass values directly (only safe if caller owns the slice; baseline)
+func BenchmarkCloneOverhead(b *testing.B) {
+	type scenario struct {
+		name string
+		flag Flag
+	}
+	scenarios := []scenario{
+		{"raw", 0},
+		{"delta", Delta},
+	}
+
+	for _, sc := range scenarios {
+		// Generate representative data (term IDs typical of forward index)
+		source := make([]uint32, blockSize)
+		for i := range source {
+			source[i] = uint32(1000 + i%500)
+		}
+
+		b.Run(sc.name+"/alloc_clone", func(b *testing.B) {
+			dst := make([]byte, 0, MaxBlockLength32(sc.flag))
+			scratch := make([]uint32, ScratchLen)
+			b.ReportAllocs()
+			b.SetBytes(int64(blockSize * 4))
+			b.ResetTimer()
+			for b.Loop() {
+				clone := make([]uint32, len(source))
+				copy(clone, source)
+				dst, _ = PackUint32(sc.flag, clone, dst[:0], scratch)
+			}
+		})
+
+		b.Run(sc.name+"/reuse_copy", func(b *testing.B) {
+			dst := make([]byte, 0, MaxBlockLength32(sc.flag))
+			scratch := make([]uint32, ScratchLen)
+			work := make([]uint32, blockSize)
+			b.ReportAllocs()
+			b.SetBytes(int64(blockSize * 4))
+			b.ResetTimer()
+			for b.Loop() {
+				copy(work, source)
+				dst, _ = PackUint32(sc.flag, work, dst[:0], scratch)
+			}
+		})
+
+		b.Run(sc.name+"/direct", func(b *testing.B) {
+			dst := make([]byte, 0, MaxBlockLength32(sc.flag))
+			scratch := make([]uint32, ScratchLen)
+			work := slices.Clone(source)
+			b.ReportAllocs()
+			b.SetBytes(int64(blockSize * 4))
+			b.ResetTimer()
+			for b.Loop() {
+				copy(work, source)
+				dst, _ = PackUint32(sc.flag, work, dst[:0], scratch)
+			}
+		})
+
+		b.Run(sc.name+"/noinplace", func(b *testing.B) {
+			dst := make([]byte, 0, MaxBlockLength32(sc.flag))
+			scratch := make([]uint32, ScratchLenNoInPlace)
+			b.ReportAllocs()
+			b.SetBytes(int64(blockSize * 4))
+			b.ResetTimer()
+			for b.Loop() {
+				dst, _ = PackUint32(sc.flag|NoInPlace, source, dst[:0], scratch)
+			}
+		})
+
+		b.Run(sc.name+"/append", func(b *testing.B) {
+			dst := make([]byte, 0, MaxBlockLength32(sc.flag))
+			scratch := make([]uint32, ScratchLenNoInPlace)
+			b.ReportAllocs()
+			b.SetBytes(int64(blockSize * 4))
+			b.ResetTimer()
+			for b.Loop() {
+				dst, _ = PackUint32(sc.flag|Append, source, dst[:0], scratch)
+			}
+		})
+
+		// NoFOR avoids FOR in-place modification; for flag=0 (no delta),
+		// this means NO in-place modification at all.
+		if sc.flag == 0 {
+			b.Run(sc.name+"/nofor_no_clone", func(b *testing.B) {
+				dst := make([]byte, 0, MaxBlockLength32(NoFOR))
+				scratch := make([]uint32, ScratchLen)
+				b.ReportAllocs()
+				b.SetBytes(int64(blockSize * 4))
+				b.ResetTimer()
+				for b.Loop() {
+					dst, _ = PackUint32(NoFOR, source, dst[:0], scratch)
+				}
+			})
+		}
+	}
+}
+
+// BenchmarkForwardWritePattern simulates the Krawfish forward writer pattern:
+// pack multiple blocks in sequence, appending each to a growing payload.
+// Compares clone-per-block vs a hypothetical NoInPlace approach.
+func BenchmarkForwardWritePattern(b *testing.B) {
+	const numBlocks = 10
+	blocks := make([][blockSize]uint32, numBlocks)
+	for blk := range blocks {
+		for i := range blocks[blk] {
+			blocks[blk][i] = uint32(1000 + (blk*blockSize+i)%500)
+		}
+	}
+
+	b.Run("current_clone_per_block", func(b *testing.B) {
+		dst := make([]byte, 0, MaxBlockLength32(0))
+		scratch := make([]uint32, ScratchLen)
+		payload := make([]byte, 0, numBlocks*256)
+		b.ReportAllocs()
+		b.SetBytes(int64(numBlocks * blockSize * 4))
+		b.ResetTimer()
+		for b.Loop() {
+			payload = payload[:0]
+			for blk := range numBlocks {
+				clone := make([]uint32, blockSize)
+				copy(clone, blocks[blk][:])
+				packed, _ := PackUint32(0, clone, dst[:0], scratch)
+				payload = append(payload, packed...)
+			}
+		}
+	})
+
+	b.Run("reuse_workbuf", func(b *testing.B) {
+		dst := make([]byte, 0, MaxBlockLength32(0))
+		scratch := make([]uint32, ScratchLen)
+		work := make([]uint32, blockSize)
+		payload := make([]byte, 0, numBlocks*256)
+		b.ReportAllocs()
+		b.SetBytes(int64(numBlocks * blockSize * 4))
+		b.ResetTimer()
+		for b.Loop() {
+			payload = payload[:0]
+			for blk := range numBlocks {
+				copy(work, blocks[blk][:])
+				packed, _ := PackUint32(0, work, dst[:0], scratch)
+				payload = append(payload, packed...)
+			}
+		}
+	})
+
+	b.Run("noinplace_append", func(b *testing.B) {
+		scratch := make([]uint32, ScratchLenNoInPlace)
+		payload := make([]byte, 0, numBlocks*256)
+		b.ReportAllocs()
+		b.SetBytes(int64(numBlocks * blockSize * 4))
+		b.ResetTimer()
+		for b.Loop() {
+			payload = payload[:0]
+			for blk := range numBlocks {
+				var err error
+				payload, err = PackUint32(Append, blocks[blk][:], payload, scratch)
+				_ = err
+			}
+		}
+	})
+
+	b.Run("nofor_no_clone", func(b *testing.B) {
+		dst := make([]byte, 0, MaxBlockLength32(NoFOR))
+		scratch := make([]uint32, ScratchLen)
+		payload := make([]byte, 0, numBlocks*256)
+		b.ReportAllocs()
+		b.SetBytes(int64(numBlocks * blockSize * 4))
+		b.ResetTimer()
+		for b.Loop() {
+			payload = payload[:0]
+			for blk := range numBlocks {
+				packed, _ := PackUint32(NoFOR, blocks[blk][:], dst[:0], scratch)
+				payload = append(payload, packed...)
+			}
+		}
+	})
+}

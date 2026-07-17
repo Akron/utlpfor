@@ -18,10 +18,11 @@ type compressor struct {
 }
 
 // NewUint32 creates a [compressor] with a pre-allocated scratch buffer
-// for uint32 block operations.
+// for uint32 block operations. The scratch buffer is sized to support
+// NoInPlace and Append without internal allocation.
 func NewUint32() *compressor {
 	return &compressor{
-		scratch: make([]uint32, ScratchLen),
+		scratch: make([]uint32, ScratchLenNoInPlace),
 	}
 }
 
@@ -30,9 +31,9 @@ func NewUint32() *compressor {
 // is allocated.
 // When flags includes [Append], the block is written after the existing
 // content of dst; otherwise dst is overwritten from index 0.
-// The values slice may be modified in-place (FOR subtraction, delta
-// encoding). Callers that need the original values must copy them
-// before calling.
+// When flags includes [Append] or [NoInPlace], the values slice is
+// guaranteed unmodified after the call. Without these flags, values
+// may be modified in-place (FOR subtraction, delta encoding).
 func (c *compressor) Compress(flags Flag, dst []byte, values []uint32) ([]byte, error) {
 	return PackUint32(flags, values, dst, c.scratch)
 }

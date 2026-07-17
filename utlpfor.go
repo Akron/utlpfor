@@ -46,12 +46,26 @@ const Special Flag = 1 << 3
 // content of dst (starting at len(dst)) instead of overwriting from
 // index 0. The returned slice includes the preserved prefix.
 // This is a pack-time control flag only, never stored on disk.
+// Append automatically implies NoInPlace: the input values slice is
+// guaranteed unmodified after the call.
 //
 //	dst = dst[:0]
 //	dst, _ = PackUint32(Delta|Append, block1, dst, scratch)
 //	dst, _ = PackUint32(Delta|Append, block2, dst, scratch)
 //	// dst now contains both blocks concatenated
 const Append Flag = 1 << 4
+
+// NoInPlace guarantees that PackUint32 (and PackUint64) will not modify
+// the input values slice. The library internally uses a work buffer from
+// scratch for FOR subtraction and delta encoding. This is a pack-time
+// control flag only, never stored on disk.
+//
+// For zero-allocation operation, provide scratch with capacity >=
+// ScratchLenNoInPlace (256). If scratch is smaller, a temporary buffer
+// is allocated internally.
+//
+// Append automatically implies NoInPlace.
+const NoInPlace Flag = 1 << 5
 
 // ErrInvalidBuffer is returned when the input buffer is nil, empty, or truncated.
 var ErrInvalidBuffer = errors.New("UTLpfor: invalid buffer")

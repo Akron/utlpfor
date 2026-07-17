@@ -79,6 +79,40 @@ func TestCompressor_Append(t *testing.T) {
 	assert.Equal(t, orig2, unpacked)
 }
 
+func TestCompressor_AppendPreservesValues(t *testing.T) {
+	c := utlpfor.NewUint32()
+
+	values := make([]uint32, 128)
+	for i := range values {
+		values[i] = uint32(1000 + i*7)
+	}
+	original := slices.Clone(values)
+
+	var dst []byte
+	var err error
+	for range 3 {
+		dst, err = c.Compress(utlpfor.Append, dst, values)
+		require.NoError(t, err)
+	}
+	assert.Equal(t, original, values,
+		"compressor.Compress with Append must not modify the values slice")
+}
+
+func TestCompressor_NoInPlacePreservesValues(t *testing.T) {
+	c := utlpfor.NewUint32()
+
+	values := make([]uint32, 128)
+	for i := range values {
+		values[i] = uint32(1000 + i*7)
+	}
+	original := slices.Clone(values)
+
+	_, err := c.Compress(utlpfor.NoInPlace, nil, values)
+	require.NoError(t, err)
+	assert.Equal(t, original, values,
+		"compressor.Compress with NoInPlace must not modify the values slice")
+}
+
 func TestCompressor_Get(t *testing.T) {
 	c := utlpfor.NewUint32()
 	values := []uint32{100, 200, 300, 400, 500}

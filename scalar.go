@@ -121,15 +121,27 @@ func unpackLanePairUTL64(dst []uint32, payload []byte, lane0, bitWidth, count in
 // and optionally headerCombineFlag.
 // hasCombine controls whether block2Len space is reserved in the metadata.
 // Always writes from dst[0]; the caller handles Append semantics.
-// values are modified in-place (FOR subtraction, delta encoding).
+// When NoInPlace is set, the input values slice is not modified;
+// scratch is used as a work buffer instead.
 func packBlockScalar(flag Flag, values []uint32, dst []byte, scratch []uint32, typeFlags uint32, hasCombine bool) ([]byte, error) {
 	if len(values) == 0 || len(values) > blockSize {
 		return nil, ErrInvalidBuffer
 	}
 
+	noInPlace := flag&NoInPlace != 0
+	if noInPlace && len(scratch) < ScratchLenNoInPlace {
+		scratch = make([]uint32, ScratchLenNoInPlace)
+	}
+
 	// Build header flags from caller-supplied type and encoding flags.
 	headerFlags := typeFlags
 	headerFlags |= uint32(flag&Special) << 14
+
+	// workValues is the slice used for all steps after FOR/delta.
+	// Without NoInPlace, workValues == values (in-place as before).
+	// With NoInPlace, workValues points to scratch[0:blockSize].
+	workValues := values
+	workRedirected := false
 
 	// Step 1: FOR - subtract minimum value if beneficial.
 	var useFOR bool
@@ -138,14 +150,27 @@ func packBlockScalar(flag Flag, values []uint32, dst []byte, scratch []uint32, t
 	if flag&NoFOR == 0 {
 		useFOR, baseValue, forW = selectBitWidthWithFOR(values)
 		if useFOR {
-			forSubtractScalar(values, values, baseValue)
+			if noInPlace {
+				// Write FOR-subtracted result into scratch, leaving values untouched.
+				workValues = scratch[:len(values)]
+				forSubtractScalar(workValues, values, baseValue)
+				workRedirected = true
+			} else {
+				forSubtractScalar(values, values, baseValue)
+			}
 			headerFlags |= uint32(forW) << forWidthShift
 		}
 	}
 
 	// Step 2: Delta encode per lane (with optional zigzag).
 	if flag&Delta != 0 {
-		needZZ := deltaEncodePerLaneScalar(values)
+		if noInPlace && !workRedirected {
+			// FOR was not applied, so workValues still aliases values.
+			// Copy values into scratch before delta encoding modifies them.
+			workValues = scratch[:len(values)]
+			copy(workValues, values)
+		}
+		needZZ := deltaEncodePerLaneScalar(workValues)
 		if needZZ {
 			headerFlags |= headerZigZagFlag
 		}
@@ -155,9 +180,9 @@ func packBlockScalar(flag Flag, values []uint32, dst []byte, scratch []uint32, t
 	// Step 3: Select step bitwidth and identify exceptions.
 	var bitWidth, excCount int
 	if flag&NoPatch != 0 {
-		bitWidth = selectBitWidthNoPatch(values)
+		bitWidth = selectBitWidthNoPatch(workValues)
 	} else {
-		bitWidth, excCount = selectBitWidth(values)
+		bitWidth, excCount = selectBitWidth(workValues)
 	}
 	payloadSize := utlPayloadBytes(bitWidth)
 	hasExceptions := excCount > 0
@@ -172,7 +197,7 @@ func packBlockScalar(flag Flag, values []uint32, dst []byte, scratch []uint32, t
 		if useFOR {
 			writeFORBase(dst, baseValue, forW, false)
 		}
-		packLanesUTLScalar(dst[pOff:pOff+payloadSize], values, bitWidth)
+		packLanesUTLScalar(dst[pOff:pOff+payloadSize], workValues, bitWidth)
 		return dst[:totalLen], nil
 	}
 
@@ -189,12 +214,18 @@ func packBlockScalar(flag Flag, values []uint32, dst []byte, scratch []uint32, t
 	}
 
 	// Pack lower bits into UTL payload.
-	packLanesUTLScalar(dst[pOff:pOff+payloadSize], values, bitWidth)
+	packLanesUTLScalar(dst[pOff:pOff+payloadSize], workValues, bitWidth)
 
 	// Collect exception high bits and write exception index + StreamVByte data.
-	highBits := scratch[:blockSize]
+	// When NoInPlace is active, highBits shifts to scratch[blockSize:2*blockSize].
+	var highBits []uint32
+	if noInPlace {
+		highBits = scratch[blockSize : 2*blockSize]
+	} else {
+		highBits = scratch[:blockSize]
+	}
 	excOff := pOff + payloadSize
-	collectAndWriteExceptions(values, bitWidth, dst[excOff:], excCount, highBits)
+	collectAndWriteExceptions(workValues, bitWidth, dst[excOff:], excCount, highBits)
 	svbOffset := excOff + excIdxSize
 	svbLen := encodeSVBIntoDst(dst[svbOffset:maxTotalLen], highBits[:excCount])
 
@@ -210,11 +241,9 @@ func packUint32Scalar(flag Flag, dst []byte, scratch []uint32, values []uint32) 
 		return nil, ErrInvalidBuffer
 	}
 
-	if flag&Append == 0 {
-		return packBlockScalar(flag, values, dst, scratch, headerTypeUint32Flag, false)
-	}
-
-	off := len(dst)
+	// Append and NoInPlace share a bit pattern: shifting the Append bit by
+	// one makes the destination offset branchless (`0` or `len(dst)`).
+	off := len(dst) * int((flag&Append)>>4)
 	block, err := packBlockScalar(flag&^Append, values, dst[off:off], scratch, headerTypeUint32Flag, false)
 	if err != nil {
 		return nil, err

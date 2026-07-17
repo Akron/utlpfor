@@ -76,13 +76,23 @@ func chooseBestFromHist(hist [9]int, maxStepIdx int) (bestWidth, bestExcCount, b
 // exceeding the threshold for step width stepBitWidths[si]. This is equivalent
 // to chooseBestFromHist but bypasses the histogram entirely.
 func chooseBestFromExcCounts(excCounts [9]int) (bestWidth, bestExcCount, bestCost int) {
-	maxStepIdx := 8
-	for si := range 9 {
-		if excCounts[si] == 0 {
-			maxStepIdx = si
-			break
-		}
+	// excCounts is monotonic, so the first zero threshold determines the
+	// highest step worth considering. Build a mask of zero-count positions and
+	// use TrailingZeros16 instead of an early-exit branch.
+	var zeroMask uint16
+	for si, c := range excCounts {
+		zeroMask |= uint16(1-((bits.Len64(uint64(c))+63)>>6)) << si
 	}
+	maxStepIdx := bits.TrailingZeros16(zeroMask | (1 << 8))
+	/*
+			maxStepIdx := 8
+		for si := range 9 {
+			if excCounts[si] == 0 {
+				maxStepIdx = si
+				break
+			}
+		}
+	*/
 	maxStep := stepWidth(maxStepIdx)
 	bestWidth = maxStep
 	bestCost = headerBytes + (maxStepIdx << 6)

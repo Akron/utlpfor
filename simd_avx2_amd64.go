@@ -181,10 +181,10 @@ func zigzagDecodeAVX2(values []uint32) {
 	// TODO-PERF: Unroll?
 	for i := 0; i <= len(values)-8; i += 8 {
 		v := archsimd.LoadUint32x8(values[i : i+8])
-		half := v.ShiftAllRight(1)          // n >>> 1 (logical right shift)
-		signBit := v.And(one)               // n & 1: extract sign from LSB
-		negSign := zero.Sub(signBit)         // 0 - signBit: yields 0x00000000 or 0xFFFFFFFF
-		result := half.Xor(negSign)          // conditional bit-flip restores original value
+		half := v.ShiftAllRight(1)   // n >>> 1 (logical right shift)
+		signBit := v.And(one)        // n & 1: extract sign from LSB
+		negSign := zero.Sub(signBit) // 0 - signBit: yields 0x00000000 or 0xFFFFFFFF
+		result := half.Xor(negSign)  // conditional bit-flip restores original value
 		result.Store(values[i : i+8])
 	}
 	// TODO-PERF: Use SSE for the tail initially
@@ -304,10 +304,8 @@ func packUint32AVX2(flag Flag, dst []byte, scratch []uint32, values []uint32) ([
 	if len(values) == 0 || len(values) > blockSize {
 		return nil, ErrInvalidBuffer
 	}
-	if flag&Append == 0 {
-		return packBlockAVX2(flag, values, dst, scratch, headerTypeUint32Flag, false)
-	}
-	off := len(dst)
+	// Strip Append (handled here); NoInPlace is already set by the caller.
+	off := len(dst) * int((flag&Append)>>4)
 	block, err := packBlockAVX2(flag&^Append, values, dst[off:off], scratch, headerTypeUint32Flag, false)
 	if err != nil {
 		return nil, err
@@ -607,17 +605,25 @@ func allFitIn32BitsAVX2(values []uint64) bool {
 	return acc>>32 == 0
 }
 
-
 // packBlockAVX2 packs uint32 values into a UTL block using AVX2-accelerated
 // kernels for bit-packing, delta encoding, FOR selection, and bitwidth selection.
 // Accepts configurable typeFlags and hasCombine for use by uint64 sub-block paths.
+// When NoInPlace is set, the input values slice is not modified.
 func packBlockAVX2(flag Flag, values []uint32, dst []byte, scratch []uint32, typeFlags uint32, hasCombine bool) ([]byte, error) {
 	if len(values) == 0 || len(values) > blockSize {
 		return nil, ErrInvalidBuffer
 	}
 
+	noInPlace := flag&NoInPlace != 0
+	if noInPlace && len(scratch) < ScratchLenNoInPlace {
+		scratch = make([]uint32, ScratchLenNoInPlace)
+	}
+
 	headerFlags := typeFlags
 	headerFlags |= uint32(flag&Special) << 14
+
+	workValues := values
+	workRedirected := false
 
 	var useFOR bool
 	var baseValue uint32
@@ -625,17 +631,27 @@ func packBlockAVX2(flag Flag, values []uint32, dst []byte, scratch []uint32, typ
 	if flag&NoFOR == 0 {
 		useFOR, baseValue, forW = selectBitWidthWithFORAVX2(values)
 		if useFOR {
-			forSubtractAVX2(values, values, baseValue)
+			if noInPlace {
+				workValues = scratch[:len(values)]
+				forSubtractAVX2(workValues, values, baseValue)
+				workRedirected = true
+			} else {
+				forSubtractAVX2(values, values, baseValue)
+			}
 			headerFlags |= uint32(forW) << forWidthShift
 		}
 	}
 
 	if flag&Delta != 0 {
+		if noInPlace && !workRedirected {
+			workValues = scratch[:len(values)]
+			copy(workValues, values)
+		}
 		var needZZ bool
-		if len(values) == blockSize {
-			needZZ = deltaEncodePerLaneAVX2(values)
+		if len(workValues) == blockSize {
+			needZZ = deltaEncodePerLaneAVX2(workValues)
 		} else {
-			needZZ = deltaEncodePerLaneScalar(values)
+			needZZ = deltaEncodePerLaneScalar(workValues)
 		}
 		if needZZ {
 			headerFlags |= headerZigZagFlag
@@ -645,19 +661,28 @@ func packBlockAVX2(flag Flag, values []uint32, dst []byte, scratch []uint32, typ
 
 	var bitWidth, excCount int
 	if flag&NoPatch != 0 {
-		bitWidth = selectBitWidthNoPatchAVX2(values)
+		bitWidth = selectBitWidthNoPatchAVX2(workValues)
 	} else {
-		bitWidth, excCount = selectBitWidthAVX2(values)
+		bitWidth, excCount = selectBitWidthAVX2(workValues)
 	}
 	payloadSize := utlPayloadBytes(bitWidth)
 	hasExceptions := excCount > 0
 	forBBytes := forBaseBytes(forW)
 
-	packInput := values
-	if len(values) < blockSize {
-		copy(scratch[:len(values)], values)
-		clear(scratch[len(values):blockSize])
-		packInput = scratch[:blockSize]
+	packInput := workValues
+	if len(workValues) < blockSize {
+		if noInPlace {
+			// workValues already lives in scratch[0:len(values)]; extend and zero-pad.
+			if !workRedirected && flag&Delta == 0 {
+				copy(scratch[:len(values)], values)
+			}
+			clear(scratch[len(values):blockSize])
+			packInput = scratch[:blockSize]
+		} else {
+			copy(scratch[:len(values)], values)
+			clear(scratch[len(values):blockSize])
+			packInput = scratch[:blockSize]
+		}
 	}
 
 	if !hasExceptions {
@@ -687,9 +712,14 @@ func packBlockAVX2(flag Flag, values []uint32, dst []byte, scratch []uint32, typ
 	packLanesUTLAVX2(dst[pOff:pOff+payloadSize], packInput, bitWidth)
 	archsimd.ClearAVXUpperBits()
 
-	highBits := scratch[:blockSize]
+	var highBits []uint32
+	if noInPlace {
+		highBits = scratch[blockSize : 2*blockSize]
+	} else {
+		highBits = scratch[:blockSize]
+	}
 	excOff := pOff + payloadSize
-	collectAndWriteExceptions(values, bitWidth, dst[excOff:], excCount, highBits)
+	collectAndWriteExceptions(workValues, bitWidth, dst[excOff:], excCount, highBits)
 	svbOffset := excOff + excIdxSize
 	svbLen := encodeSVBIntoDst(dst[svbOffset:maxTotalLen], highBits[:excCount])
 
@@ -707,10 +737,7 @@ func packUint64AVX2(flag Flag, values []uint64, dst []byte, scratch []uint32) ([
 		return nil, ErrInvalidBuffer
 	}
 
-	off := 0
-	if flag&Append != 0 {
-		off = len(dst)
-	}
+	off := len(dst) * int((flag&Append)>>4)
 	innerFlag := flag &^ Append
 
 	dst = ensureCapacity64(dst, off, innerFlag)

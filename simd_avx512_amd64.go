@@ -147,10 +147,8 @@ func packUint32AVX512(flag Flag, dst []byte, scratch []uint32, values []uint32) 
 	if len(values) == 0 || len(values) > blockSize {
 		return nil, ErrInvalidBuffer
 	}
-	if flag&Append == 0 {
-		return packBlockAVX512(flag, values, dst, scratch, headerTypeUint32Flag, false)
-	}
-	off := len(dst)
+	// Strip Append (handled here); NoInPlace is already set by the caller.
+	off := len(dst) * int((flag&Append)>>4)
 	block, err := packBlockAVX512(flag&^Append, values, dst[off:off], scratch, headerTypeUint32Flag, false)
 	if err != nil {
 		return nil, err
@@ -529,13 +527,22 @@ func combineUint64AVX512(dst []uint64, lower, upper []uint32, count int) {
 // packBlockAVX512 packs uint32 values into a UTL block using AVX-512-accelerated
 // kernels for bit-packing, delta encoding, FOR selection, and bitwidth selection.
 // Accepts configurable typeFlags and hasCombine for use by uint64 sub-block paths.
+// When NoInPlace is set, the input values slice is not modified.
 func packBlockAVX512(flag Flag, values []uint32, dst []byte, scratch []uint32, typeFlags uint32, hasCombine bool) ([]byte, error) {
 	if len(values) == 0 || len(values) > blockSize {
 		return nil, ErrInvalidBuffer
 	}
 
+	noInPlace := flag&NoInPlace != 0
+	if noInPlace && len(scratch) < ScratchLenNoInPlace {
+		scratch = make([]uint32, ScratchLenNoInPlace)
+	}
+
 	headerFlags := typeFlags
 	headerFlags |= uint32(flag&Special) << 14
+
+	workValues := values
+	workRedirected := false
 
 	var useFOR bool
 	var baseValue uint32
@@ -543,17 +550,27 @@ func packBlockAVX512(flag Flag, values []uint32, dst []byte, scratch []uint32, t
 	if flag&NoFOR == 0 {
 		useFOR, baseValue, forW = selectBitWidthWithFORAVX512(values)
 		if useFOR {
-			forSubtractAVX512(values, values, baseValue)
+			if noInPlace {
+				workValues = scratch[:len(values)]
+				forSubtractAVX512(workValues, values, baseValue)
+				workRedirected = true
+			} else {
+				forSubtractAVX512(values, values, baseValue)
+			}
 			headerFlags |= uint32(forW) << forWidthShift
 		}
 	}
 
 	if flag&Delta != 0 {
+		if noInPlace && !workRedirected {
+			workValues = scratch[:len(values)]
+			copy(workValues, values)
+		}
 		var needZZ bool
-		if len(values) == blockSize {
-			needZZ = deltaEncodePerLaneAVX2(values)
+		if len(workValues) == blockSize {
+			needZZ = deltaEncodePerLaneAVX2(workValues)
 		} else {
-			needZZ = deltaEncodePerLaneScalar(values)
+			needZZ = deltaEncodePerLaneScalar(workValues)
 		}
 		if needZZ {
 			headerFlags |= headerZigZagFlag
@@ -563,19 +580,27 @@ func packBlockAVX512(flag Flag, values []uint32, dst []byte, scratch []uint32, t
 
 	var bitWidth, excCount int
 	if flag&NoPatch != 0 {
-		bitWidth = selectBitWidthNoPatchAVX512(values)
+		bitWidth = selectBitWidthNoPatchAVX512(workValues)
 	} else {
-		bitWidth, excCount = selectBitWidthAVX512(values)
+		bitWidth, excCount = selectBitWidthAVX512(workValues)
 	}
 	payloadSize := utlPayloadBytes(bitWidth)
 	hasExceptions := excCount > 0
 	forBBytes := forBaseBytes(forW)
 
-	packInput := values
-	if len(values) < blockSize {
-		copy(scratch[:len(values)], values)
-		clear(scratch[len(values):blockSize])
-		packInput = scratch[:blockSize]
+	packInput := workValues
+	if len(workValues) < blockSize {
+		if noInPlace {
+			if !workRedirected && flag&Delta == 0 {
+				copy(scratch[:len(values)], values)
+			}
+			clear(scratch[len(values):blockSize])
+			packInput = scratch[:blockSize]
+		} else {
+			copy(scratch[:len(values)], values)
+			clear(scratch[len(values):blockSize])
+			packInput = scratch[:blockSize]
+		}
 	}
 
 	if !hasExceptions {
@@ -605,9 +630,14 @@ func packBlockAVX512(flag Flag, values []uint32, dst []byte, scratch []uint32, t
 	packLanesUTLAVX512(dst[pOff:pOff+payloadSize], packInput, bitWidth)
 	archsimd.ClearAVXUpperBits()
 
-	highBits := scratch[:blockSize]
+	var highBits []uint32
+	if noInPlace {
+		highBits = scratch[blockSize : 2*blockSize]
+	} else {
+		highBits = scratch[:blockSize]
+	}
 	excOff := pOff + payloadSize
-	collectAndWriteExceptions(values, bitWidth, dst[excOff:], excCount, highBits)
+	collectAndWriteExceptions(workValues, bitWidth, dst[excOff:], excCount, highBits)
 	svbOffset := excOff + excIdxSize
 	svbLen := encodeSVBIntoDst(dst[svbOffset:maxTotalLen], highBits[:excCount])
 
@@ -668,10 +698,7 @@ func packUint64AVX512(flag Flag, values []uint64, dst []byte, scratch []uint32) 
 		return nil, ErrInvalidBuffer
 	}
 
-	off := 0
-	if flag&Append != 0 {
-		off = len(dst)
-	}
+	off := len(dst) * int((flag&Append)>>4)
 	innerFlag := flag &^ Append
 
 	dst = ensureCapacity64(dst, off, innerFlag)

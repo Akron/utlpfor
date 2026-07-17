@@ -81,12 +81,23 @@ not safe for concurrent use; each goroutine should create its own.
 | `NoFOR` | Skip Frame-of-Reference analysis |
 | `NoPatch` | Skip exception analysis (no patching) |
 | `Special` | Set the SPECIAL header bit |
-| `Append` | Append packed block after existing dst content |
+| `Append` | Append packed block after existing dst content (implies `NoInPlace`) |
+| `NoInPlace` | Guarantee the input values slice is not modified |
 
 Flags can be combined with bitwise OR, e.g. `Delta | NoFOR`.
 
-The `Append` flag is a pack-time control flag only and is never stored in
-the on-disk block header.
+The `Append` and `NoInPlace` flags are pack-time control flags only and are
+never stored in the on-disk block header.
+
+When `Append` is set, the packed block is written after the existing content instead of overwriting from index 0.
+
+By default, `PackUint32` may modify the input values slice in-place during FOR subtraction and delta encoding. When `NoInPlace` is set (or implied
+by `Append`), the library uses a scratch work buffer instead, leaving
+the original values untouched.
+
+For zero-allocation operation with `NoInPlace`, provide a scratch buffer
+with capacity >= `ScratchLenNoInPlace` (256 elements). If scratch is
+smaller, the library allocates internally.
 
 ## Requirements
 

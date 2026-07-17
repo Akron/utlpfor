@@ -273,10 +273,8 @@ func packUint32SSE2(flag Flag, dst []byte, scratch []uint32, values []uint32) ([
 	if len(values) == 0 || len(values) > blockSize {
 		return nil, ErrInvalidBuffer
 	}
-	if flag&Append == 0 {
-		return packBlockSSE2(flag, values, dst, scratch, headerTypeUint32Flag, false)
-	}
-	off := len(dst)
+	// Strip Append (handled here); NoInPlace is already set by the caller.
+	off := len(dst) * int((flag&Append)>>4)
 	block, err := packBlockSSE2(flag&^Append, values, dst[off:off], scratch, headerTypeUint32Flag, false)
 	if err != nil {
 		return nil, err
@@ -504,17 +502,25 @@ func allFitIn32BitsSSE2(values []uint64) bool {
 	return acc>>32 == 0
 }
 
-
 // packBlockSSE2 packs uint32 values into a UTL block using SSE2-accelerated
 // kernels for bit-packing, delta encoding, FOR selection, and bitwidth selection.
 // Accepts configurable typeFlags and hasCombine for use by uint64 sub-block paths.
+// When NoInPlace is set, the input values slice is not modified.
 func packBlockSSE2(flag Flag, values []uint32, dst []byte, scratch []uint32, typeFlags uint32, hasCombine bool) ([]byte, error) {
 	if len(values) == 0 || len(values) > blockSize {
 		return nil, ErrInvalidBuffer
 	}
 
+	noInPlace := flag&NoInPlace != 0
+	if noInPlace && len(scratch) < ScratchLenNoInPlace {
+		scratch = make([]uint32, ScratchLenNoInPlace)
+	}
+
 	headerFlags := typeFlags
 	headerFlags |= uint32(flag&Special) << 14
+
+	workValues := values
+	workRedirected := false
 
 	var useFOR bool
 	var baseValue uint32
@@ -522,17 +528,27 @@ func packBlockSSE2(flag Flag, values []uint32, dst []byte, scratch []uint32, typ
 	if flag&NoFOR == 0 {
 		useFOR, baseValue, forW = selectBitWidthWithFORSSE2(values)
 		if useFOR {
-			forSubtractSSE2(values, values, baseValue)
+			if noInPlace {
+				workValues = scratch[:len(values)]
+				forSubtractSSE2(workValues, values, baseValue)
+				workRedirected = true
+			} else {
+				forSubtractSSE2(values, values, baseValue)
+			}
 			headerFlags |= uint32(forW) << forWidthShift
 		}
 	}
 
 	if flag&Delta != 0 {
+		if noInPlace && !workRedirected {
+			workValues = scratch[:len(values)]
+			copy(workValues, values)
+		}
 		var needZZ bool
-		if len(values) == blockSize {
-			needZZ = deltaEncodePerLaneSSE2(values)
+		if len(workValues) == blockSize {
+			needZZ = deltaEncodePerLaneSSE2(workValues)
 		} else {
-			needZZ = deltaEncodePerLaneScalar(values)
+			needZZ = deltaEncodePerLaneScalar(workValues)
 		}
 		if needZZ {
 			headerFlags |= headerZigZagFlag
@@ -542,19 +558,27 @@ func packBlockSSE2(flag Flag, values []uint32, dst []byte, scratch []uint32, typ
 
 	var bitWidth, excCount int
 	if flag&NoPatch != 0 {
-		bitWidth = selectBitWidthNoPatchSSE2(values)
+		bitWidth = selectBitWidthNoPatchSSE2(workValues)
 	} else {
-		bitWidth, excCount = selectBitWidthSSE2(values)
+		bitWidth, excCount = selectBitWidthSSE2(workValues)
 	}
 	payloadSize := utlPayloadBytes(bitWidth)
 	hasExceptions := excCount > 0
 	forBBytes := forBaseBytes(forW)
 
-	packInput := values
-	if len(values) < blockSize {
-		copy(scratch[:len(values)], values)
-		clear(scratch[len(values):blockSize])
-		packInput = scratch[:blockSize]
+	packInput := workValues
+	if len(workValues) < blockSize {
+		if noInPlace {
+			if !workRedirected && flag&Delta == 0 {
+				copy(scratch[:len(values)], values)
+			}
+			clear(scratch[len(values):blockSize])
+			packInput = scratch[:blockSize]
+		} else {
+			copy(scratch[:len(values)], values)
+			clear(scratch[len(values):blockSize])
+			packInput = scratch[:blockSize]
+		}
 	}
 
 	if !hasExceptions {
@@ -582,9 +606,14 @@ func packBlockSSE2(flag Flag, values []uint32, dst []byte, scratch []uint32, typ
 
 	packLanesUTLSSE2(dst[pOff:pOff+payloadSize], packInput, bitWidth)
 
-	highBits := scratch[:blockSize]
+	var highBits []uint32
+	if noInPlace {
+		highBits = scratch[blockSize : 2*blockSize]
+	} else {
+		highBits = scratch[:blockSize]
+	}
 	excOff := pOff + payloadSize
-	collectAndWriteExceptions(values, bitWidth, dst[excOff:], excCount, highBits)
+	collectAndWriteExceptions(workValues, bitWidth, dst[excOff:], excCount, highBits)
 	svbOffset := excOff + excIdxSize
 	svbLen := encodeSVBIntoDst(dst[svbOffset:maxTotalLen], highBits[:excCount])
 
@@ -602,10 +631,7 @@ func packUint64SSE2(flag Flag, values []uint64, dst []byte, scratch []uint32) ([
 		return nil, ErrInvalidBuffer
 	}
 
-	off := 0
-	if flag&Append != 0 {
-		off = len(dst)
-	}
+	off := len(dst) * int((flag&Append)>>4)
 	innerFlag := flag &^ Append
 
 	dst = ensureCapacity64(dst, off, innerFlag)

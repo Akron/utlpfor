@@ -4,6 +4,12 @@ package utlpfor
 // for zero-allocation Pack and Unpack operations.
 const ScratchLen = blockSize
 
+// ScratchLenNoInPlace is the minimum scratch buffer capacity (in uint32
+// elements) for zero-allocation Pack operations when NoInPlace or Append
+// is set. The first blockSize elements hold the values work buffer and the
+// second blockSize elements hold exception highBits.
+const ScratchLenNoInPlace = 2 * blockSize
+
 // ensureLen returns a byte slice with at least n bytes, reusing dst if possible.
 func ensureLen(dst []byte, n int) []byte {
 	if cap(dst) >= n {
@@ -34,16 +40,30 @@ func ensureAppend(dst []byte, off, n int) []byte {
 // When Append is set, the packed block is written after the existing content
 // of dst (starting at len(dst)) instead of overwriting from index 0.
 // The returned slice includes the preserved prefix followed by the new block.
-// The values slice may be modified in-place (FOR subtraction, delta encoding).
-// Callers that need the original values must copy them before calling PackUint32.
+//
+// When NoInPlace or Append is set, the values slice is guaranteed unmodified
+// after the call. The library uses scratch as a work buffer for FOR subtraction
+// and delta encoding. For zero-allocation operation with NoInPlace/Append,
+// provide scratch with capacity >= ScratchLenNoInPlace (256).
+//
+// Without NoInPlace or Append, the values slice may be modified in-place
+// (FOR subtraction, delta encoding). Callers that need the original values
+// must either set NoInPlace or copy them before calling PackUint32.
 //
 // To pre-allocate dst for zero-allocation packing, use MaxBlockLength32:
 //
 //	dst := make([]byte, 0, MaxBlockLength32(flag))
 //	dst, err = PackUint32(flag|Append, values, dst, scratch)
 func PackUint32(flag Flag, values []uint32, dst []byte, scratch []uint32) ([]byte, error) {
-	if len(scratch) < blockSize {
-		scratch = make([]uint32, blockSize)
+	// Append implies NoInPlace; this branchless form relies on the two bits
+	// being adjacent (Append = 1<<4, NoInPlace = 1<<5).
+	flag |= (flag & Append) << 1
+	if flag&NoInPlace != 0 {
+		if len(scratch) < ScratchLenNoInPlace {
+			scratch = make([]uint32, ScratchLenNoInPlace)
+		}
+	} else if len(scratch) < ScratchLen {
+		scratch = make([]uint32, ScratchLen)
 	}
 	switch simdLevel {
 	case simdLevelAVX512VBMI, simdLevelAVX512:

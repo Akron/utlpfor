@@ -53,6 +53,43 @@ func FuzzPackUnpackUint32RoundTrip(f *testing.F) {
 	})
 }
 
+func FuzzPackUnpackUint32NoInPlaceRoundTrip(f *testing.F) {
+	f.Add(encodeValuesSeed([]uint32{0, 1, 2, 3}), byte(0))
+	f.Add(encodeValuesSeed([]uint32{0xFFFFFFFF}), byte(0))
+	f.Add(encodeValuesSeed(make([]uint32, 128)), byte(0))
+	f.Add(encodeValuesSeed([]uint32{1000, 1001, 1002, 1003}), byte(Delta))
+
+	f.Fuzz(func(t *testing.T, data []byte, rawFlag byte) {
+		values := decodeValuesSeed(data)
+		if len(values) == 0 || len(values) > blockSize {
+			return
+		}
+
+		flag := Flag(rawFlag) & (Delta | NoFOR | NoPatch | Special)
+		flag |= NoInPlace
+
+		original := slices.Clone(values)
+		scratch := make([]uint32, ScratchLenNoInPlace)
+		packed, err := PackUint32(flag, values, nil, scratch)
+		require.NoError(t, err)
+
+		// Values must be unmodified
+		require.Equal(t, original, values, "NoInPlace must not modify values")
+
+		// Output must be identical to non-NoInPlace
+		cloned := slices.Clone(original)
+		baseFlag := flag &^ NoInPlace
+		expected, err := PackUint32(baseFlag, cloned, nil, scratch)
+		require.NoError(t, err)
+		require.Equal(t, expected, packed, "NoInPlace output must match non-NoInPlace output")
+
+		// Round-trip
+		unpacked, _, err := UnpackUint32(packed, nil, scratch)
+		require.NoError(t, err)
+		require.Equal(t, original, unpacked)
+	})
+}
+
 func FuzzPackDeltaUint32RoundTrip(f *testing.F) {
 	f.Add(encodeValuesSeed([]uint32{10, 20, 30, 40, 50}))
 	f.Add(encodeValuesSeed([]uint32{100, 50, 200, 10}))
@@ -69,6 +106,29 @@ func FuzzPackDeltaUint32RoundTrip(f *testing.F) {
 		require.NoError(t, err)
 
 		unpacked, _, err := UnpackUint32(packed, nil, make([]uint32, blockSize))
+		require.NoError(t, err)
+		require.Equal(t, original, unpacked)
+	})
+}
+
+func FuzzPackDeltaNoInPlaceUint32RoundTrip(f *testing.F) {
+	f.Add(encodeValuesSeed([]uint32{10, 20, 30, 40, 50}))
+	f.Add(encodeValuesSeed([]uint32{100, 50, 200, 10}))
+	f.Add(encodeValuesSeed([]uint32{1000, 1001, 1002, 1003}))
+
+	f.Fuzz(func(t *testing.T, data []byte) {
+		values := decodeValuesSeed(data)
+		if len(values) == 0 || len(values) > blockSize {
+			return
+		}
+
+		original := slices.Clone(values)
+		scratch := make([]uint32, ScratchLenNoInPlace)
+		packed, err := PackUint32(Delta|NoInPlace, values, nil, scratch)
+		require.NoError(t, err)
+		require.Equal(t, original, values, "NoInPlace must not modify values")
+
+		unpacked, _, err := UnpackUint32(packed, nil, scratch)
 		require.NoError(t, err)
 		require.Equal(t, original, unpacked)
 	})
@@ -163,7 +223,7 @@ func FuzzMaxBlockLength32Invariant(f *testing.F) {
 			return
 		}
 
-		flag := Flag(rawFlag) & (Delta | NoFOR | NoPatch | Special | Append)
+		flag := Flag(rawFlag) & (Delta | NoFOR | NoPatch | Special | Append | NoInPlace)
 		flag &^= Append
 
 		packed, err := PackUint32(flag, slices.Clone(values), nil, nil)

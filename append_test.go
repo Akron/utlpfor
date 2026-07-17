@@ -249,6 +249,58 @@ func TestAppend_ThreeConsecutiveBlocks(t *testing.T) {
 	}
 }
 
+func TestAppend_ValuesUnmodified(t *testing.T) {
+	// Append must guarantee that the original values slice is not modified.
+	scratch := make([]uint32, ScratchLen)
+
+	t.Run("Append_FOR_active", func(t *testing.T) {
+		// Values with min > 0 trigger FOR subtraction (in-place modification).
+		values := make([]uint32, 128)
+		for i := range values {
+			values[i] = uint32(1000 + i)
+		}
+		original := slices.Clone(values)
+
+		_, err := PackUint32(Append, values, nil, scratch)
+		require.NoError(t, err)
+		assert.Equal(t, original, values,
+			"Append must not modify the values slice (FOR subtraction)")
+	})
+
+	t.Run("Append_Delta", func(t *testing.T) {
+		// Delta encoding modifies values in-place.
+		values := make([]uint32, 128)
+		for i := range values {
+			values[i] = uint32(i * 10)
+		}
+		original := slices.Clone(values)
+
+		_, err := PackUint32(Delta|Append, values, nil, scratch)
+		require.NoError(t, err)
+		assert.Equal(t, original, values,
+			"Append|Delta must not modify the values slice")
+	})
+
+	t.Run("MultiBlock_SharedArray", func(t *testing.T) {
+		// Simulates the Krawfish forward writer pattern: a fixed-size buffer
+		// is packed multiple times without cloning.
+		var buf [128]uint32
+		for i := range buf {
+			buf[i] = uint32(500 + i*3)
+		}
+		original := buf
+
+		var dst []byte
+		var err error
+		for range 3 {
+			dst, err = PackUint32(Append, buf[:], dst, scratch)
+			require.NoError(t, err)
+		}
+		assert.Equal(t, original, buf,
+			"shared fixed-size array must be unchanged after multiple Append packs")
+	})
+}
+
 func TestAppend_FlagNotInHeader(t *testing.T) {
 	// Append is a control flag only and must not be persisted to header bits.
 	values := make([]uint32, 128)

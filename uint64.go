@@ -257,8 +257,13 @@ func unpackUint64Block(buf []byte, dst []uint64, scratch []uint32,
 // is allocated. scratch with capacity >= ScratchLen64 (384) enables
 // zero-allocation operation. Pass nil for scratch to use internal
 // allocations.
-// The values slice may be read but is not modified.
+// The values slice is never modified (the uint64 pack path reads values
+// into internal scratch buffers). NoInPlace and Append are accepted for
+// API consistency but have no additional effect on value preservation.
 func PackUint64(flag Flag, values []uint64, dst []byte, scratch []uint32) ([]byte, error) {
+	// Append implies NoInPlace; this branchless form relies on the two bits
+	// being adjacent (Append = 1<<4, NoInPlace = 1<<5).
+	flag |= (flag & Append) << 1
 	if len(scratch) < ScratchLen64 {
 		scratch = make([]uint32, ScratchLen64)
 	}
@@ -284,10 +289,8 @@ func packUint64Scalar(flag Flag, values []uint64, dst []byte, scratch []uint32) 
 		return nil, ErrInvalidBuffer
 	}
 
-	off := 0
-	if flag&Append != 0 {
-		off = len(dst)
-	}
+	// Strip Append (handled here); NoInPlace is already set by the caller.
+	off := len(dst) * int((flag&Append)>>4)
 	innerFlag := flag &^ Append
 
 	dst = ensureCapacity64(dst, off, innerFlag)
