@@ -302,3 +302,34 @@ func TestFindExceptionIndex_Bitmap(t *testing.T) {
 	assert.Equal(t, -1, findExceptionIndex(buf, excStart, excCount, 0))
 	assert.Equal(t, -1, findExceptionIndex(buf, excStart, excCount, 3))
 }
+
+func TestCollectExceptionsDirect_MoreThan16(t *testing.T) {
+	values := make([]uint32, blockSize)
+	for i := range values {
+		values[i] = uint32(i % 16)
+	}
+	excPositions := []int{}
+	for i := 0; i < 24; i++ {
+		pos := i * 5
+		if pos >= blockSize {
+			break
+		}
+		values[pos] = 0x1000 + uint32(i)
+		excPositions = append(excPositions, pos)
+	}
+
+	var positions [128]byte
+	var bitmap [16]byte
+	var highBits [128]uint32
+
+	n := collectExceptionsDirect(values, 4, positions[:], bitmap[:], highBits[:])
+	assert.Greater(t, n, excBitmapThreshold,
+		"should have more than %d exceptions to trigger bitmap path", excBitmapThreshold)
+
+	for _, pos := range excPositions {
+		byteIdx := pos / 8
+		bitIdx := uint(pos % 8)
+		assert.NotZero(t, bitmap[byteIdx]&(1<<bitIdx),
+			"bitmap must have bit set for exception at pos %d", pos)
+	}
+}

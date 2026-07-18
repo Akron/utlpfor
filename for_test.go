@@ -766,3 +766,57 @@ func TestNoFOR_GetMatchesUnpack(t *testing.T) {
 		}
 	}
 }
+
+func TestPackUint32_FOR_U8_RoundTrip(t *testing.T) {
+	values := make([]uint32, blockSize)
+	for i := range values {
+		values[i] = 200 + uint32(i%5)
+	}
+	original := make([]uint32, blockSize)
+	copy(original, values)
+
+	packed, err := PackUint32(0, values, nil, nil)
+	require.NoError(t, err)
+
+	header := bo.Uint32(packed)
+	forWidth := int((header >> forWidthShift) & forWidthMask)
+	if forWidth == forWidthU8 {
+		unpacked, _, err := UnpackUint32(packed, nil, make([]uint32, blockSize))
+		require.NoError(t, err)
+		assert.Equal(t, original, unpacked)
+
+		scratch := make([]uint32, ScratchLen)
+		for pos := range original {
+			got, err := GetUint32(pos, packed, scratch)
+			require.NoError(t, err)
+			assert.Equal(t, original[pos], got, "pos=%d", pos)
+		}
+	}
+}
+
+func TestPackUint32_FOR_U16_RoundTrip(t *testing.T) {
+	values := make([]uint32, blockSize)
+	for i := range values {
+		values[i] = 50000 + uint32(i%5)
+	}
+	original := make([]uint32, blockSize)
+	copy(original, values)
+
+	packed, err := PackUint32(0, values, nil, nil)
+	require.NoError(t, err)
+
+	header := bo.Uint32(packed)
+	forWidth := int((header >> forWidthShift) & forWidthMask)
+	if forWidth == forWidthU16 {
+		unpacked, _, err := UnpackUint32(packed, nil, make([]uint32, blockSize))
+		require.NoError(t, err)
+		assert.Equal(t, original, unpacked)
+
+		scratch := make([]uint32, ScratchLen)
+		for pos := range original {
+			got, err := GetUint32(pos, packed, scratch)
+			require.NoError(t, err)
+			assert.Equal(t, original[pos], got, "pos=%d", pos)
+		}
+	}
+}

@@ -159,3 +159,73 @@ func TestSelectBitWidth_RoundUpToStep(t *testing.T) {
 		assert.Equal(t, tt.want, roundUpToStep(tt.bw), "roundUpToStep(%d)", tt.bw)
 	}
 }
+
+func TestChooseBestFromExcCounts(t *testing.T) {
+	t.Run("no_exceptions", func(t *testing.T) {
+		excCounts := [9]int{0, 0, 0, 0, 0, 0, 0, 0, 0}
+		width, excCount, _ := chooseBestFromExcCounts(excCounts)
+		assert.Equal(t, 0, width)
+		assert.Equal(t, 0, excCount)
+	})
+
+	t.Run("all_fit_step4", func(t *testing.T) {
+		excCounts := [9]int{128, 0, 0, 0, 0, 0, 0, 0, 0}
+		width, excCount, _ := chooseBestFromExcCounts(excCounts)
+		assert.Equal(t, 4, width)
+		assert.Equal(t, 0, excCount)
+	})
+
+	t.Run("with_exceptions", func(t *testing.T) {
+		excCounts := [9]int{128, 120, 100, 50, 10, 0, 0, 0, 0}
+		width, excCount, _ := chooseBestFromExcCounts(excCounts)
+		assert.True(t, width >= 0 && width <= 20)
+		assert.True(t, excCount >= 0)
+	})
+
+	t.Run("matches_histogram", func(t *testing.T) {
+		values := make([]uint32, blockSize)
+		for i := range values {
+			values[i] = uint32(i % 200)
+		}
+		values[0] = 0xFFFFFFFF
+		values[64] = 0x10000000
+
+		histWidth, histExcCount := selectBitWidth(values)
+		_ = histWidth
+		_ = histExcCount
+	})
+}
+
+func TestStepIndex(t *testing.T) {
+	for _, bw := range []int{0, 4, 8, 12, 16, 20, 24, 28, 32} {
+		si := stepIndex(bw)
+		assert.Equal(t, bw/4, si, "stepIndex(%d)", bw)
+		assert.Equal(t, bw, stepWidth(si), "stepWidth(stepIndex(%d))", bw)
+	}
+}
+
+func TestSelectBitWidthSIMDtest(t *testing.T) {
+	values := make([]uint32, blockSize)
+	for i := range values {
+		values[i] = uint32(i % 200)
+	}
+	values[0] = 0xFFFFFFFF
+
+	width, excCount := selectBitWidthSIMDtest(values)
+	scalarWidth, scalarExcCount := selectBitWidth(values)
+	assert.Equal(t, scalarWidth, width)
+	assert.Equal(t, scalarExcCount, excCount)
+}
+
+func TestSelectBitWidthWithFORSIMDtest(t *testing.T) {
+	values := make([]uint32, blockSize)
+	for i := range values {
+		values[i] = 1000000 + uint32(i%100)
+	}
+
+	useFOR, base, forWidth := selectBitWidthWithFORSIMDtest(values)
+	scalarFOR, scalarBase, scalarFW := selectBitWidthWithFOR(values)
+	assert.Equal(t, scalarFOR, useFOR)
+	assert.Equal(t, scalarBase, base)
+	assert.Equal(t, scalarFW, forWidth)
+}

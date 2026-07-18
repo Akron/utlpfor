@@ -516,3 +516,25 @@ func TestPackUint32_ZeroAllocs_DstAndScratchReuse(t *testing.T) {
 		assert.Equal(t, original, unpacked)
 	}
 }
+
+func TestPackUint32_PartialBlock_WithExceptions(t *testing.T) {
+	for _, count := range []int{15, 50, 100, 127} {
+		values := make([]uint32, count)
+		for i := range values {
+			values[i] = uint32(i % 16)
+		}
+		values[0] = 0x10000000
+		if count > 10 {
+			values[10] = 0x20000000
+		}
+		original := make([]uint32, count)
+		copy(original, values)
+
+		packed, err := PackUint32(0, values, nil, nil)
+		require.NoError(t, err)
+
+		unpacked, _, err := UnpackUint32(packed, nil, make([]uint32, blockSize))
+		require.NoError(t, err)
+		assert.Equal(t, original, unpacked)
+	}
+}

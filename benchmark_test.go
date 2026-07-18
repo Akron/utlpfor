@@ -853,4 +853,3 @@ func BenchmarkAppendWithExceptions_TightCap(b *testing.B) {
 		dst, _ = PackUint32(Append, vals, dst, scratch)
 	}
 }
-}

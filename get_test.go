@@ -322,6 +322,28 @@ func TestGetUint32_Optimized_AllConfigs(t *testing.T) {
 	}
 }
 
+func TestGetUint32_DeltaHighBitWidth_DeepPosition(t *testing.T) {
+	values := make([]uint32, blockSize)
+	for i := range values {
+		values[i] = uint32(i) * 1000000
+	}
+	original := make([]uint32, blockSize)
+	copy(original, values)
+
+	packed, err := PackUint32(Delta, values, nil, nil)
+	require.NoError(t, err)
+
+	unpacked, _, err := UnpackUint32(packed, nil, make([]uint32, blockSize))
+	require.NoError(t, err)
+
+	scratch := make([]uint32, ScratchLen)
+	for _, pos := range []int{0, 15, 48, 64, 96, 112, 127} {
+		got, err := GetUint32(pos, packed, scratch)
+		require.NoError(t, err, "pos=%d", pos)
+		assert.Equal(t, unpacked[pos], got, "pos=%d", pos)
+	}
+}
+
 func BenchmarkGetUint32_Approaches(b *testing.B) {
 	configs := []struct {
 		name  string

@@ -1683,3 +1683,106 @@ func TestGetUint64_Fit32_WithDelta(t *testing.T) {
 		assert.Equal(t, want, got, "pos=%d", i)
 	}
 }
+
+func TestGetUint64_DeltaDeepPosition_TriggersFullUnpack(t *testing.T) {
+	values := make([]uint64, blockSize)
+	base := uint64(0x200000000)
+	for i := range values {
+		values[i] = base + uint64(i)*1000000
+	}
+	scratch := make([]uint32, ScratchLen64)
+	packed, err := PackUint64(Delta, values, nil, scratch)
+	require.NoError(t, err)
+
+	unpacked := make([]uint64, blockSize)
+	ref, _, err := UnpackUint64(packed, unpacked, scratch)
+	require.NoError(t, err)
+
+	for _, pos := range []int{0, 15, 48, 64, 96, 112, 127} {
+		got, err := GetUint64(pos, packed, scratch)
+		require.NoError(t, err, "pos=%d", pos)
+		assert.Equal(t, ref[pos], got, "pos=%d", pos)
+	}
+}
+
+func TestGetUint64_TwoBlock_WithExceptions(t *testing.T) {
+	values := make([]uint64, blockSize)
+	for i := range values {
+		values[i] = uint64(i)
+	}
+	for i := range blockSize / 2 {
+		values[i] = 0xFFFFFFFF00000000 + uint64(i)
+	}
+	values[10] = 0xFFFF00000000 + 0xFFFF0000
+	values[50] = 0xAAAA00000000 + 0xBBBB0000
+
+	scratch := make([]uint32, ScratchLen64)
+	packed, err := PackUint64(0, values, nil, scratch)
+	require.NoError(t, err)
+
+	dst := make([]uint64, blockSize)
+	unpacked, _, err := UnpackUint64(packed, dst, scratch)
+	require.NoError(t, err)
+
+	for pos, want := range unpacked {
+		got, err := GetUint64(pos, packed, scratch)
+		require.NoError(t, err, "pos=%d", pos)
+		assert.Equal(t, want, got, "pos=%d", pos)
+	}
+}
+
+func TestUnpackUint64_ShortBuffer(t *testing.T) {
+	scratch := make([]uint32, ScratchLen64)
+	dst := make([]uint64, blockSize)
+
+	_, _, err := UnpackUint64(nil, dst, scratch)
+	assert.Error(t, err)
+
+	_, _, err = UnpackUint64([]byte{0x01}, dst, scratch)
+	assert.Error(t, err)
+
+	_, _, err = UnpackUint64([]byte{0x01, 0x02, 0x03}, dst, scratch)
+	assert.Error(t, err)
+}
+
+func TestUnpackUint64_Uint32TypeReturnsError(t *testing.T) {
+	values := make([]uint32, blockSize)
+	for i := range values {
+		values[i] = uint32(i)
+	}
+	packed, err := PackUint32(0, values, nil, nil)
+	require.NoError(t, err)
+
+	scratch := make([]uint32, ScratchLen64)
+	dst := make([]uint64, blockSize)
+	_, _, err = UnpackUint64(packed, dst, scratch)
+	assert.ErrorIs(t, err, ErrUnsupportedType)
+}
+
+func TestGetUint64_ShortBuffer(t *testing.T) {
+	scratch := make([]uint32, ScratchLen64)
+	_, err := GetUint64(0, []byte{0x01}, scratch)
+	assert.Error(t, err)
+}
+
+func TestGetUint64_FOR64_SingleBlock_DeepDeltaPosition(t *testing.T) {
+	values := make([]uint64, blockSize)
+	base := uint64(0x100000000)
+	for i := range values {
+		values[i] = base + uint64(i)*500000
+	}
+
+	scratch := make([]uint32, ScratchLen64)
+	packed, err := PackUint64(Delta, values, nil, scratch)
+	require.NoError(t, err)
+
+	dst := make([]uint64, blockSize)
+	ref, _, err := UnpackUint64(packed, dst, scratch)
+	require.NoError(t, err)
+
+	for pos := range ref {
+		got, err := GetUint64(pos, packed, scratch)
+		require.NoError(t, err, "pos=%d", pos)
+		assert.Equal(t, ref[pos], got, "pos=%d", pos)
+	}
+}

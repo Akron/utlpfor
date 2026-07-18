@@ -123,3 +123,54 @@ func TestBlockLength_ZeroAllocs(t *testing.T) {
 	})
 	assert.Equal(t, float64(0), allocs)
 }
+
+func TestBlockLength_InvalidReservedFlags(t *testing.T) {
+	t.Run("reserved_bit18_uint32", func(t *testing.T) {
+		h := encodeHeader(128, 8, 0, headerTypeUint32Flag|headerReservedBitsMask)
+		buf := make([]byte, 1024)
+		bo.PutUint32(buf, h)
+		_, err := BlockLength(buf)
+		assert.ErrorIs(t, err, ErrInvalidFlags)
+	})
+
+	t.Run("combine_flag_uint32", func(t *testing.T) {
+		h := encodeHeader(128, 8, 0, headerTypeUint32Flag|headerCombineFlag)
+		buf := make([]byte, 1024)
+		bo.PutUint32(buf, h)
+		_, err := BlockLength(buf)
+		assert.ErrorIs(t, err, ErrInvalidFlags)
+	})
+
+	t.Run("block256_flag_uint32", func(t *testing.T) {
+		h := encodeHeader(128, 8, 0, headerTypeUint32Flag|headerBlock256Flag)
+		buf := make([]byte, 1024)
+		bo.PutUint32(buf, h)
+		_, err := BlockLength(buf)
+		assert.ErrorIs(t, err, ErrInvalidFlags)
+	})
+
+	t.Run("reserved_bit18_uint64", func(t *testing.T) {
+		h := encodeHeader(128, 8, 0, headerTypeUint64Flag|headerReservedBitsMask)
+		buf := make([]byte, 1024)
+		bo.PutUint32(buf, h)
+		_, err := BlockLength(buf)
+		assert.ErrorIs(t, err, ErrInvalidFlags)
+	})
+
+	t.Run("block256_flag_uint64", func(t *testing.T) {
+		h := encodeHeader(128, 8, 0, headerTypeUint64Flag|headerBlock256Flag)
+		buf := make([]byte, 1024)
+		bo.PutUint32(buf, h)
+		_, err := BlockLength(buf)
+		assert.ErrorIs(t, err, ErrInvalidFlags)
+	})
+}
+
+func TestBlockLength_InvalidBitWidth(t *testing.T) {
+	h := encodeHeader(128, 0, 0, headerTypeUint32Flag)
+	h |= uint32(9) << headerWidthShift // 9*4=36 > 32
+	buf := make([]byte, 1024)
+	bo.PutUint32(buf, h)
+	_, err := BlockLength(buf)
+	assert.Error(t, err)
+}

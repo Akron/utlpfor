@@ -375,3 +375,12 @@ func TestBlock2Len_PositionInMetadata(t *testing.T) {
 	directRead := bo.Uint16(buf[expectedOffset:])
 	assert.Equal(t, uint16(999), directRead)
 }
+
+func TestHeader_Uint64Block_ReturnsError(t *testing.T) {
+	h := encodeHeader(128, 8, 0, headerTypeUint64Flag)
+	buf := make([]byte, headerBytes)
+	bo.PutUint32(buf, h)
+
+	_, _, _, _, _, _, _, err := Header(buf)
+	assert.ErrorIs(t, err, ErrUnsupportedType)
+}
