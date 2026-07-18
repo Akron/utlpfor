@@ -309,7 +309,7 @@ func TestCollectExceptionsDirect_MoreThan16(t *testing.T) {
 		values[i] = uint32(i % 16)
 	}
 	excPositions := []int{}
-	for i := 0; i < 24; i++ {
+	for i := range 24 {
 		pos := i * 5
 		if pos >= blockSize {
 			break
