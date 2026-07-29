@@ -20,10 +20,6 @@ a variable-byte encoding scheme optimized for SIMD (specifically SSE2).
 *Delta-Encoding* allows to only store the difference between values.
 *Zigzag-Encoding* is used to encode negative values after Delta-Encoding.
 
-## Status
-
-Work in progress. The library is functional but not yet final.
-
 ## API
 
 ```go
