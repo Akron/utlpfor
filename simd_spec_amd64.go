@@ -1862,6 +1862,7 @@ func packAVX512BW32(dst *byte, values *uint32) {
 
 // buildExcCountsSSE2 computes cumulative exception counts using SSE2
 // threshold comparisons in a single pass over the data.
+// Pointer-based loads avoid the per-iteration slice bounds check.
 func buildExcCountsSSE2(values []uint32) (exc [9]int) {
 	t0 := archsimd.BroadcastUint32x4(0x0)
 	t1 := archsimd.BroadcastUint32x4(0xF)
@@ -1872,19 +1873,24 @@ func buildExcCountsSSE2(values []uint32) (exc [9]int) {
 	t6 := archsimd.BroadcastUint32x4(0xFFFFFF)
 	t7 := archsimd.BroadcastUint32x4(0xFFFFFFF)
 
-	i := 0
-	for ; i+4 <= len(values); i += 4 {
-		v := archsimd.LoadUint32x4(values[i:])
-		exc[0] += bits.OnesCount8(v.Greater(t0).ToBits())
-		exc[1] += bits.OnesCount8(v.Greater(t1).ToBits())
-		exc[2] += bits.OnesCount8(v.Greater(t2).ToBits())
-		exc[3] += bits.OnesCount8(v.Greater(t3).ToBits())
-		exc[4] += bits.OnesCount8(v.Greater(t4).ToBits())
-		exc[5] += bits.OnesCount8(v.Greater(t5).ToBits())
-		exc[6] += bits.OnesCount8(v.Greater(t6).ToBits())
-		exc[7] += bits.OnesCount8(v.Greater(t7).ToBits())
+	n := len(values)
+	if n >= 4 {
+		p := unsafe.Pointer(&values[0])
+		end := uintptr(n) * 4
+		for off := uintptr(0); off+16 <= end; off += 16 {
+			v := archsimd.LoadUint32x4Array((*[4]uint32)(unsafe.Add(p, off)))
+			exc[0] += bits.OnesCount8(v.Greater(t0).ToBits())
+			exc[1] += bits.OnesCount8(v.Greater(t1).ToBits())
+			exc[2] += bits.OnesCount8(v.Greater(t2).ToBits())
+			exc[3] += bits.OnesCount8(v.Greater(t3).ToBits())
+			exc[4] += bits.OnesCount8(v.Greater(t4).ToBits())
+			exc[5] += bits.OnesCount8(v.Greater(t5).ToBits())
+			exc[6] += bits.OnesCount8(v.Greater(t6).ToBits())
+			exc[7] += bits.OnesCount8(v.Greater(t7).ToBits())
+		}
 	}
-	for ; i < len(values); i++ {
+	// Scalar tail for n < 4 or leftover values.
+	for i := (n / 4) * 4; i < n; i++ {
 		v := values[i]
 		exc[0] += gtCountU32(v, 0x0)
 		exc[1] += gtCountU32(v, 0xF)
@@ -1900,6 +1906,7 @@ func buildExcCountsSSE2(values []uint32) (exc [9]int) {
 
 // buildExcCountsAVX2 computes cumulative exception counts using AVX2
 // threshold comparisons in a single pass over the data.
+// Pointer-based loads avoid the per-iteration slice bounds check.
 func buildExcCountsAVX2(values []uint32) (exc [9]int) {
 	t0 := archsimd.BroadcastUint32x8(0x0)
 	t1 := archsimd.BroadcastUint32x8(0xF)
@@ -1910,19 +1917,24 @@ func buildExcCountsAVX2(values []uint32) (exc [9]int) {
 	t6 := archsimd.BroadcastUint32x8(0xFFFFFF)
 	t7 := archsimd.BroadcastUint32x8(0xFFFFFFF)
 
-	i := 0
-	for ; i+8 <= len(values); i += 8 {
-		v := archsimd.LoadUint32x8(values[i:])
-		exc[0] += bits.OnesCount8(v.Greater(t0).ToBits())
-		exc[1] += bits.OnesCount8(v.Greater(t1).ToBits())
-		exc[2] += bits.OnesCount8(v.Greater(t2).ToBits())
-		exc[3] += bits.OnesCount8(v.Greater(t3).ToBits())
-		exc[4] += bits.OnesCount8(v.Greater(t4).ToBits())
-		exc[5] += bits.OnesCount8(v.Greater(t5).ToBits())
-		exc[6] += bits.OnesCount8(v.Greater(t6).ToBits())
-		exc[7] += bits.OnesCount8(v.Greater(t7).ToBits())
+	n := len(values)
+	if n >= 8 {
+		p := unsafe.Pointer(&values[0])
+		end := uintptr(n) * 4
+		for off := uintptr(0); off+32 <= end; off += 32 {
+			v := archsimd.LoadUint32x8Array((*[8]uint32)(unsafe.Add(p, off)))
+			exc[0] += bits.OnesCount8(v.Greater(t0).ToBits())
+			exc[1] += bits.OnesCount8(v.Greater(t1).ToBits())
+			exc[2] += bits.OnesCount8(v.Greater(t2).ToBits())
+			exc[3] += bits.OnesCount8(v.Greater(t3).ToBits())
+			exc[4] += bits.OnesCount8(v.Greater(t4).ToBits())
+			exc[5] += bits.OnesCount8(v.Greater(t5).ToBits())
+			exc[6] += bits.OnesCount8(v.Greater(t6).ToBits())
+			exc[7] += bits.OnesCount8(v.Greater(t7).ToBits())
+		}
 	}
-	for ; i < len(values); i++ {
+	// Scalar tail for n < 8 or leftover values.
+	for i := (n / 8) * 8; i < n; i++ {
 		v := values[i]
 		exc[0] += gtCountU32(v, 0x0)
 		exc[1] += gtCountU32(v, 0xF)
@@ -1938,6 +1950,7 @@ func buildExcCountsAVX2(values []uint32) (exc [9]int) {
 
 // buildExcCountsAVX512 computes cumulative exception counts using AVX512
 // threshold comparisons in a single pass over the data.
+// Pointer-based loads avoid the per-iteration slice bounds check.
 func buildExcCountsAVX512(values []uint32) (exc [9]int) {
 	t0 := archsimd.BroadcastUint32x16(0x0)
 	t1 := archsimd.BroadcastUint32x16(0xF)
@@ -1948,19 +1961,24 @@ func buildExcCountsAVX512(values []uint32) (exc [9]int) {
 	t6 := archsimd.BroadcastUint32x16(0xFFFFFF)
 	t7 := archsimd.BroadcastUint32x16(0xFFFFFFF)
 
-	i := 0
-	for ; i+16 <= len(values); i += 16 {
-		v := archsimd.LoadUint32x16(values[i:])
-		exc[0] += bits.OnesCount16(v.Greater(t0).ToBits())
-		exc[1] += bits.OnesCount16(v.Greater(t1).ToBits())
-		exc[2] += bits.OnesCount16(v.Greater(t2).ToBits())
-		exc[3] += bits.OnesCount16(v.Greater(t3).ToBits())
-		exc[4] += bits.OnesCount16(v.Greater(t4).ToBits())
-		exc[5] += bits.OnesCount16(v.Greater(t5).ToBits())
-		exc[6] += bits.OnesCount16(v.Greater(t6).ToBits())
-		exc[7] += bits.OnesCount16(v.Greater(t7).ToBits())
+	n := len(values)
+	if n >= 16 {
+		p := unsafe.Pointer(&values[0])
+		end := uintptr(n) * 4
+		for off := uintptr(0); off+64 <= end; off += 64 {
+			v := archsimd.LoadUint32x16Array((*[16]uint32)(unsafe.Add(p, off)))
+			exc[0] += bits.OnesCount16(v.Greater(t0).ToBits())
+			exc[1] += bits.OnesCount16(v.Greater(t1).ToBits())
+			exc[2] += bits.OnesCount16(v.Greater(t2).ToBits())
+			exc[3] += bits.OnesCount16(v.Greater(t3).ToBits())
+			exc[4] += bits.OnesCount16(v.Greater(t4).ToBits())
+			exc[5] += bits.OnesCount16(v.Greater(t5).ToBits())
+			exc[6] += bits.OnesCount16(v.Greater(t6).ToBits())
+			exc[7] += bits.OnesCount16(v.Greater(t7).ToBits())
+		}
 	}
-	for ; i < len(values); i++ {
+	// Scalar tail for n < 16 or leftover values.
+	for i := (n / 16) * 16; i < n; i++ {
 		v := values[i]
 		exc[0] += gtCountU32(v, 0x0)
 		exc[1] += gtCountU32(v, 0xF)

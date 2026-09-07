@@ -152,13 +152,18 @@ func packLanesUTLSSE2Generic(dst []byte, values []uint32, bitWidth int) {
 // zigzagEncodeSSE2 applies zigzag encoding using SSE2 (Uint32x4).
 // Formula: (n << 1) ^ (n >> 31) with arithmetic right shift.
 func zigzagEncodeSSE2(buf []uint32, n int) {
-	for i := 0; i <= n-4; i += 4 {
-		v := archsimd.LoadUint32x4(buf[i : i+4])
-		shifted := v.ShiftAllLeft(1)
-		sign := v.AsInt32x4().ShiftAllRight(31).AsUint32x4()
-		result := shifted.Xor(sign)
-		result.Store(buf[i : i+4])
+	// Pointer-based loads/stores: eliminates per-iteration bounds checks.
+	if n >= 4 {
+		p := unsafe.Pointer(&buf[0])
+		end := uintptr(n) * 4
+		for off := uintptr(0); off+16 <= end; off += 16 {
+			v := archsimd.LoadUint32x4Array((*[4]uint32)(unsafe.Add(p, off)))
+			shifted := v.ShiftAllLeft(1)
+			sign := v.AsInt32x4().ShiftAllRight(31).AsUint32x4()
+			shifted.Xor(sign).StoreArray((*[4]uint32)(unsafe.Add(p, off)))
+		}
 	}
+	// Scalar tail for n < 4 or leftover values.
 	for i := (n / 4) * 4; i < n; i++ {
 		buf[i] = zigzagEncode32(int32(buf[i]))
 	}
@@ -167,17 +172,24 @@ func zigzagEncodeSSE2(buf []uint32, n int) {
 // zigzagDecodeSSE2 applies zigzag decoding in-place using SSE2 (Uint32x4).
 // Formula: (n >>> 1) ^ -(n & 1).
 func zigzagDecodeSSE2(values []uint32) {
+	// Broadcast constants hoisted out of the loop; pointer loads avoid
+	// per-iteration bounds checks.
 	one := archsimd.BroadcastUint32x4(1)
 	zero := archsimd.BroadcastUint32x4(0)
-	for i := 0; i <= len(values)-4; i += 4 {
-		v := archsimd.LoadUint32x4(values[i : i+4])
-		half := v.ShiftAllRight(1)   // n >>> 1 (logical right shift)
-		signBit := v.And(one)        // n & 1: extract sign from LSB
-		negSign := zero.Sub(signBit) // 0 - signBit: yields 0x00000000 or 0xFFFFFFFF
-		result := half.Xor(negSign)  // conditional bit-flip restores original value
-		result.Store(values[i : i+4])
+	n := len(values)
+	if n >= 4 {
+		p := unsafe.Pointer(&values[0])
+		end := uintptr(n) * 4
+		for off := uintptr(0); off+16 <= end; off += 16 {
+			v := archsimd.LoadUint32x4Array((*[4]uint32)(unsafe.Add(p, off)))
+			half := v.ShiftAllRight(1)   // n >>> 1 (logical right shift)
+			signBit := v.And(one)        // n & 1: extract sign from LSB
+			negSign := zero.Sub(signBit) // 0 - signBit: yields 0x00000000 or 0xFFFFFFFF
+			half.Xor(negSign).StoreArray((*[4]uint32)(unsafe.Add(p, off)))
+		}
 	}
-	for i := (len(values) / 4) * 4; i < len(values); i++ {
+	// Scalar tail for n < 4 or leftover values.
+	for i := (n / 4) * 4; i < n; i++ {
 		values[i] = uint32(zigzagDecode32(values[i]))
 	}
 }
@@ -373,10 +385,15 @@ func findMinMaxSSE2(values []uint32) (uint32, uint32) {
 // selectBitWidthNoPatchSSE2 computes the minimum step bitwidth using SSE2
 // OR-reduction. No exception analysis is performed.
 func selectBitWidthNoPatchSSE2(values []uint32) int {
+	// Pointer-based loads: eliminates the per-iteration slice bounds check.
 	orVec := archsimd.BroadcastUint32x4(0)
-	i := 0
-	for ; i+4 <= len(values); i += 4 {
-		orVec = orVec.Or(archsimd.LoadUint32x4(values[i:]))
+	n := len(values)
+	if n >= 4 {
+		p := unsafe.Pointer(&values[0])
+		end := uintptr(n) * 4
+		for off := uintptr(0); off+16 <= end; off += 16 {
+			orVec = orVec.Or(archsimd.LoadUint32x4Array((*[4]uint32)(unsafe.Add(p, off))))
+		}
 	}
 	var lanes [4]uint32
 	orVec.StoreArray(&lanes)
@@ -384,8 +401,8 @@ func selectBitWidthNoPatchSSE2(values []uint32) int {
 	for _, v := range lanes {
 		orAll |= v
 	}
-	// Use scalar for the tail
-	for ; i < len(values); i++ {
+	// Scalar tail for n < 4 or leftover values after the last full vector.
+	for i := (n / 4) * 4; i < n; i++ {
 		orAll |= values[i]
 	}
 	return roundUpToStep(bits.Len32(orAll))
@@ -393,28 +410,40 @@ func selectBitWidthNoPatchSSE2(values []uint32) int {
 
 // forSubtractSSE2 subtracts baseValue from each element using SSE2.
 func forSubtractSSE2(dst, src []uint32, baseValue uint32) {
+	// Broadcast once outside the loop; pointer loads avoid bounds checks.
 	baseVec := archsimd.BroadcastUint32x4(baseValue)
-	i := 0
-	for ; i+4 <= len(src); i += 4 {
-		v := archsimd.LoadUint32x4(src[i:])
-		v = v.Sub(baseVec)
-		v.Store(dst[i:])
+	n := len(src)
+	if n >= 4 {
+		sp := unsafe.Pointer(&src[0])
+		dp := unsafe.Pointer(&dst[0])
+		end := uintptr(n) * 4
+		for off := uintptr(0); off+16 <= end; off += 16 {
+			archsimd.LoadUint32x4Array((*[4]uint32)(unsafe.Add(sp, off))).
+				Sub(baseVec).
+				StoreArray((*[4]uint32)(unsafe.Add(dp, off)))
+		}
 	}
-	for ; i < len(src); i++ {
+	// Scalar tail for n < 4 or leftover values.
+	for i := (n / 4) * 4; i < n; i++ {
 		dst[i] = src[i] - baseValue
 	}
 }
 
 // forAddSSE2 adds baseValue to each of the first count elements using SSE2.
 func forAddSSE2(output []uint32, count int, baseValue uint32) {
+	// Broadcast once outside the loop; pointer loads avoid bounds checks.
 	baseVec := archsimd.BroadcastUint32x4(baseValue)
-	i := 0
-	for ; i+4 <= count; i += 4 {
-		v := archsimd.LoadUint32x4(output[i:])
-		v = v.Add(baseVec)
-		v.Store(output[i:])
+	if count >= 4 {
+		p := unsafe.Pointer(&output[0])
+		end := uintptr(count) * 4
+		for off := uintptr(0); off+16 <= end; off += 16 {
+			archsimd.LoadUint32x4Array((*[4]uint32)(unsafe.Add(p, off))).
+				Add(baseVec).
+				StoreArray((*[4]uint32)(unsafe.Add(p, off)))
+		}
 	}
-	for ; i < count; i++ {
+	// Scalar tail for count < 4 or leftover elements.
+	for i := (count / 4) * 4; i < count; i++ {
 		output[i] += baseValue
 	}
 }
@@ -434,16 +463,19 @@ func analyzeUint64SSE2(values []uint64) (min64, max64, acc uint64) {
 		return analyzeUint64(values)
 	}
 
-	accVec := archsimd.LoadUint64x2(values[:2])
+	// Pointer loads: bounds checks in the 2-value loop dominate this pass.
+	p := unsafe.Pointer(&values[0])
+	accVec := archsimd.LoadUint64x2Array((*[2]uint64)(p))
 	a, b := values[0], values[1]
 	if a > b {
 		a, b = b, a
 	}
 	min64, max64 = a, b
 
-	for i := 2; i+2 <= n; i += 2 {
-		accVec = accVec.Or(archsimd.LoadUint64x2(values[i : i+2]))
-		a, b = values[i], values[i+1]
+	end := uintptr(n) * 8
+	for off := uintptr(16); off+16 <= end; off += 16 {
+		accVec = accVec.Or(archsimd.LoadUint64x2Array((*[2]uint64)(unsafe.Add(p, off))))
+		a, b = *(*uint64)(unsafe.Add(p, off)), *(*uint64)(unsafe.Add(p, off+8))
 		if a > b {
 			a, b = b, a
 		}
@@ -477,15 +509,21 @@ func analyzeUint64SSE2(values []uint64) (min64, max64, acc uint64) {
 // iteration using Uint64x2.
 func allFitIn32BitsSSE2(values []uint64) bool {
 	n := len(values)
+	// Empty input trivially fits in 32 bits (vacuous OR-accumulator).
 	if n < 2 {
+		if n == 0 {
+			return true
+		}
 		return values[0]>>32 == 0
 	}
 
-	accVec := archsimd.LoadUint64x2(values[:2])
+	// Pointer loads avoid per-iteration bounds checks in the OR loop.
+	p := unsafe.Pointer(&values[0])
+	accVec := archsimd.LoadUint64x2Array((*[2]uint64)(p))
 
-	for i := 2; i+2 <= n; i += 2 {
-		chunk := archsimd.LoadUint64x2(values[i : i+2])
-		accVec = accVec.Or(chunk)
+	end := uintptr(n) * 8
+	for off := uintptr(16); off+16 <= end; off += 16 {
+		accVec = accVec.Or(archsimd.LoadUint64x2Array((*[2]uint64)(unsafe.Add(p, off))))
 	}
 
 	var lanes [2]uint64
@@ -782,48 +820,77 @@ func unpackBlockSSE2(dst []uint32, scratch []uint32, buf []byte, forUint64 bool)
 // combineUint64SSE2 merges lower and upper uint32 halves into uint64 values
 // using SSE2 InterleaveLo/InterleaveHi (4 values per iteration).
 func combineUint64SSE2(dst []uint64, lower, upper []uint32, count int) {
-	i := 0
-	for ; i+4 <= count; i += 4 {
-		lo := archsimd.LoadUint32x4(lower[i : i+4])
-		hi := archsimd.LoadUint32x4(upper[i : i+4])
-		lo.InterleaveLo(hi).AsUint64x2().StoreArray((*[2]uint64)(unsafe.Pointer(&dst[i])))
-		lo.InterleaveHi(hi).AsUint64x2().StoreArray((*[2]uint64)(unsafe.Pointer(&dst[i+2])))
+	// Pointer loads/stores eliminate per-iteration bounds checks; the
+	// count check skips pointer setup for empty slices (corrupt input).
+	if count >= 4 {
+		dp := unsafe.Pointer(&dst[0])
+		lp := unsafe.Pointer(&lower[0])
+		up := unsafe.Pointer(&upper[0])
+		// off iterates in output bytes (8 bytes/uint64 × 4 values = 32 per step).
+		// Input arrays are uint32, so their byte offset is off/2
+		// (4 bytes/uint32 × 4 values = 16 per step).
+		end := uintptr(count) * 8
+		for off := uintptr(0); off+32 <= end; off += 32 {
+			lo := archsimd.LoadUint32x4Array((*[4]uint32)(unsafe.Add(lp, off/2)))
+			hi := archsimd.LoadUint32x4Array((*[4]uint32)(unsafe.Add(up, off/2)))
+			lo.InterleaveLo(hi).AsUint64x2().StoreArray((*[2]uint64)(unsafe.Add(dp, off)))
+			lo.InterleaveHi(hi).AsUint64x2().StoreArray((*[2]uint64)(unsafe.Add(dp, off+16)))
+		}
 	}
-	for ; i < count; i++ {
+	for i := (count / 4) * 4; i < count; i++ {
 		dst[i] = uint64(upper[i])<<32 | uint64(lower[i])
 	}
 }
 
 // forAdd64SSE2 adds a uint64 base to each uint32 value and stores as uint64.
 // Uses InterleaveLo/Hi with zero vector for zero-extension (4 values per iteration).
+// SSE2 lacks VPMOVZXDQ, so zero-extension is emulated by interleaving with
+// a zero vector: InterleaveLo(vals, zero) produces [v0, 0, v1, 0] as uint64x2.
 func forAdd64SSE2(dst []uint64, values []uint32, base uint64, count int) {
+	// Broadcasts hoisted; pointer loads avoid bounds checks; the count
+	// check skips pointer setup for empty slices (corrupt input).
 	baseVec := archsimd.BroadcastUint64x2(base)
 	zero := archsimd.BroadcastUint32x4(0)
-	i := 0
-	for ; i+4 <= count; i += 4 {
-		vals := archsimd.LoadUint32x4(values[i : i+4])
-		vals.InterleaveLo(zero).AsUint64x2().Add(baseVec).StoreArray((*[2]uint64)(unsafe.Pointer(&dst[i])))
-		vals.InterleaveHi(zero).AsUint64x2().Add(baseVec).StoreArray((*[2]uint64)(unsafe.Pointer(&dst[i+2])))
+	if count >= 4 {
+		dp := unsafe.Pointer(&dst[0])
+		vp := unsafe.Pointer(&values[0])
+		// off iterates in output bytes (uint64); input is uint32, so off/2.
+		end := uintptr(count) * 8
+		for off := uintptr(0); off+32 <= end; off += 32 {
+			vals := archsimd.LoadUint32x4Array((*[4]uint32)(unsafe.Add(vp, off/2)))
+			vals.InterleaveLo(zero).AsUint64x2().Add(baseVec).StoreArray((*[2]uint64)(unsafe.Add(dp, off)))
+			vals.InterleaveHi(zero).AsUint64x2().Add(baseVec).StoreArray((*[2]uint64)(unsafe.Add(dp, off+16)))
+		}
 	}
-	for ; i < count; i++ {
+	for i := (count / 4) * 4; i < count; i++ {
 		dst[i] = uint64(values[i]) + base
 	}
 }
 
 // forSubtract64SSE2 subtracts base from each uint64 value and stores as uint32.
-// Uses Uint64x2 Sub (2 values per iteration).
+// Uses Uint64x2 Sub (2 values per iteration). SSE2 lacks a direct 64->32
+// truncation instruction (VPMOVQD is AVX-512), so the results are extracted
+// via a temporary array and stored as scalar uint32.
 func forSubtract64SSE2(dst []uint32, values []uint64, base uint64) {
+	// Broadcast hoisted; pointer loads avoid bounds checks.
+	// The n >= 2 guard skips pointer setup for empty/single-element slices
+	// (defense-in-depth; callers currently guarantee count > 0).
 	baseVec := archsimd.BroadcastUint64x2(base)
 	n := len(values)
-	i := 0
-	for ; i+2 <= n; i += 2 {
-		diff := archsimd.LoadUint64x2(values[i : i+2]).Sub(baseVec)
-		var tmp [2]uint64
-		diff.StoreArray(&tmp)
-		dst[i] = uint32(tmp[0])
-		dst[i+1] = uint32(tmp[1])
+	if n >= 2 {
+		vp := unsafe.Pointer(&values[0])
+		// off iterates in input bytes (uint64); off/8 converts to element index
+		// for the uint32 destination (each uint64 yields one truncated uint32).
+		end := uintptr(n) * 8
+		for off := uintptr(0); off+16 <= end; off += 16 {
+			diff := archsimd.LoadUint64x2Array((*[2]uint64)(unsafe.Add(vp, off))).Sub(baseVec)
+			var tmp [2]uint64
+			diff.StoreArray(&tmp)
+			dst[off/8] = uint32(tmp[0])
+			dst[(off/8)+1] = uint32(tmp[1])
+		}
 	}
-	for ; i < n; i++ {
+	for i := (n / 2) * 2; i < n; i++ {
 		dst[i] = uint32(values[i] - base)
 	}
 }

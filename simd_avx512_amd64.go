@@ -5,8 +5,29 @@ package utlpfor
 import (
 	"math/bits"
 	"simd/archsimd"
+	"sync"
 	"unsafe"
 )
+
+// excThresholdsAVX512 lazily holds the 8 step thresholds broadcast once.
+// Package-level archsimd values cannot be initialized at package
+// init time: the compiler emits AVX-512 instructions directly, which raises
+// SIGILL on machines without AVX-512 even when the values are never used
+// (this CPU is AVX2-only). sync.OnceValue defers the broadcasts until the
+// first call of selectBitWidthWithFORAVX512, which only runs when the
+// runtime SIMD level is AVX-512.
+var excThresholdsAVX512 = sync.OnceValue(func() [8]archsimd.Uint32x16 {
+	return [8]archsimd.Uint32x16{
+		archsimd.BroadcastUint32x16(0),
+		archsimd.BroadcastUint32x16(0xF),
+		archsimd.BroadcastUint32x16(0xFF),
+		archsimd.BroadcastUint32x16(0xFFF),
+		archsimd.BroadcastUint32x16(0xFFFF),
+		archsimd.BroadcastUint32x16(0xFFFFF),
+		archsimd.BroadcastUint32x16(0xFFFFFF),
+		archsimd.BroadcastUint32x16(0xFFFFFFF),
+	}
+})
 
 // unpackLanesUTLAVX512 unpacks UTL payload using AVX-512 (Uint32x16).
 // Dispatches to per-bitwidth specialized native archsimd functions.
@@ -192,15 +213,18 @@ func selectBitWidthWithFORAVX512(values []uint32) (useFOR bool, baseValue uint32
 	var minVal, maxVal uint32
 
 	if n >= 16 {
+		// Threshold broadcasts are lazily initialized once,
+		// removing 8 VPBROADCASTDs from every call.
+		thresholds := excThresholdsAVX512()
 		p := unsafe.Pointer(&values[0])
-		t0 := archsimd.BroadcastUint32x16(0)
-		t1 := archsimd.BroadcastUint32x16(0xF)
-		t2 := archsimd.BroadcastUint32x16(0xFF)
-		t3 := archsimd.BroadcastUint32x16(0xFFF)
-		t4 := archsimd.BroadcastUint32x16(0xFFFF)
-		t5 := archsimd.BroadcastUint32x16(0xFFFFF)
-		t6 := archsimd.BroadcastUint32x16(0xFFFFFF)
-		t7 := archsimd.BroadcastUint32x16(0xFFFFFFF)
+		t0 := thresholds[0]
+		t1 := thresholds[1]
+		t2 := thresholds[2]
+		t3 := thresholds[3]
+		t4 := thresholds[4]
+		t5 := thresholds[5]
+		t6 := thresholds[6]
+		t7 := thresholds[7]
 		minVec := archsimd.LoadUint32x16Array((*[16]uint32)(p))
 		maxVec := minVec
 
@@ -279,10 +303,15 @@ func selectBitWidthWithFORAVX512(values []uint32) (useFOR bool, baseValue uint32
 // selectBitWidthNoPatchAVX512 computes the minimum step bitwidth using AVX-512
 // OR-reduction. No exception analysis is performed.
 func selectBitWidthNoPatchAVX512(values []uint32) int {
+	// Pointer-based loads: eliminates the per-iteration slice bounds check.
 	orVec := archsimd.BroadcastUint32x16(0)
-	i := 0
-	for ; i+16 <= len(values); i += 16 {
-		orVec = orVec.Or(archsimd.LoadUint32x16(values[i:]))
+	n := len(values)
+	if n >= 16 {
+		p := unsafe.Pointer(&values[0])
+		end := uintptr(n) * 4
+		for off := uintptr(0); off+64 <= end; off += 64 {
+			orVec = orVec.Or(archsimd.LoadUint32x16Array((*[16]uint32)(unsafe.Add(p, off))))
+		}
 	}
 	var lanes [16]uint32
 	orVec.StoreArray(&lanes)
@@ -290,9 +319,9 @@ func selectBitWidthNoPatchAVX512(values []uint32) int {
 	for _, v := range lanes {
 		orAll |= v
 	}
-
 	// TODO-PERF: Fallback to AVX2 for the tail
-	for ; i < len(values); i++ {
+	// Scalar tail for n < 16 or leftover values after the last full vector.
+	for i := (n / 16) * 16; i < n; i++ {
 		orAll |= values[i]
 	}
 	return roundUpToStep(bits.Len32(orAll))
@@ -354,28 +383,40 @@ func findMinMaxAVX512(values []uint32) (uint32, uint32) {
 
 // forSubtractAVX512 subtracts baseValue from each element using AVX-512.
 func forSubtractAVX512(dst, src []uint32, baseValue uint32) {
+	// Broadcast once outside the loop; pointer loads avoid bounds checks.
 	baseVec := archsimd.BroadcastUint32x16(baseValue)
-	i := 0
-	for ; i+16 <= len(src); i += 16 {
-		v := archsimd.LoadUint32x16(src[i:])
-		v = v.Sub(baseVec)
-		v.Store(dst[i:])
+	n := len(src)
+	if n >= 16 {
+		sp := unsafe.Pointer(&src[0])
+		dp := unsafe.Pointer(&dst[0])
+		end := uintptr(n) * 4
+		for off := uintptr(0); off+64 <= end; off += 64 {
+			archsimd.LoadUint32x16Array((*[16]uint32)(unsafe.Add(sp, off))).
+				Sub(baseVec).
+				StoreArray((*[16]uint32)(unsafe.Add(dp, off)))
+		}
 	}
-	for ; i < len(src); i++ {
+	// Scalar tail for n < 16 or leftover values.
+	for i := (n / 16) * 16; i < n; i++ {
 		dst[i] = src[i] - baseValue
 	}
 }
 
 // forAddAVX512 adds baseValue to each of the first count elements using AVX-512.
 func forAddAVX512(output []uint32, count int, baseValue uint32) {
+	// Broadcast once outside the loop; pointer loads avoid bounds checks.
 	baseVec := archsimd.BroadcastUint32x16(baseValue)
-	i := 0
-	for ; i+16 <= count; i += 16 {
-		v := archsimd.LoadUint32x16(output[i:])
-		v = v.Add(baseVec)
-		v.Store(output[i:])
+	if count >= 16 {
+		p := unsafe.Pointer(&output[0])
+		end := uintptr(count) * 4
+		for off := uintptr(0); off+64 <= end; off += 64 {
+			archsimd.LoadUint32x16Array((*[16]uint32)(unsafe.Add(p, off))).
+				Add(baseVec).
+				StoreArray((*[16]uint32)(unsafe.Add(p, off)))
+		}
 	}
-	for ; i < count; i++ {
+	// Scalar tail for count < 16 or leftover elements.
+	for i := (count / 16) * 16; i < count; i++ {
 		output[i] += baseValue
 	}
 }
@@ -383,13 +424,21 @@ func forAddAVX512(output []uint32, count int, baseValue uint32) {
 // splitUint64AVX512 splits uint64 values into lower and upper uint32 halves
 // using AVX-512 TruncToUint32 (8 values per iteration).
 func splitUint64AVX512(lower, upper []uint32, values []uint64, count int) {
-	i := 0
-	for ; i+8 <= count; i += 8 {
-		v := archsimd.LoadUint64x8(values[i : i+8])
-		v.TruncToUint32().Store(lower[i : i+8])
-		v.ShiftAllRight(32).TruncToUint32().Store(upper[i : i+8])
+	// Pointer loads/stores eliminate per-iteration bounds checks; the
+	// count check skips pointer setup for empty slices (corrupt input).
+	if count >= 8 {
+		lp := unsafe.Pointer(&lower[0])
+		up := unsafe.Pointer(&upper[0])
+		vp := unsafe.Pointer(&values[0])
+		// off iterates in input bytes (uint64); output is uint32, so off/2.
+		end := uintptr(count) * 8
+		for off := uintptr(0); off+64 <= end; off += 64 {
+			v := archsimd.LoadUint64x8Array((*[8]uint64)(unsafe.Add(vp, off)))
+			v.TruncToUint32().StoreArray((*[8]uint32)(unsafe.Add(lp, off/2)))
+			v.ShiftAllRight(32).TruncToUint32().StoreArray((*[8]uint32)(unsafe.Add(up, off/2)))
+		}
 	}
-	for ; i < count; i++ {
+	for i := (count / 8) * 8; i < count; i++ {
 		lower[i] = uint32(values[i])
 		upper[i] = uint32(values[i] >> 32)
 	}
@@ -400,14 +449,17 @@ func splitUint64AVX512(lower, upper []uint32, values []uint64, count int) {
 func allFitIn32BitsAVX512(values []uint64) bool {
 	n := len(values)
 	if n < 8 {
+		// Delegate to AVX2, whose small-input path is total (n == 0 safe).
 		return allFitIn32BitsAVX2(values)
 	}
 
-	accVec := archsimd.LoadUint64x8(values[:8])
+	// Pointer loads avoid per-iteration bounds checks in the OR loop.
+	p := unsafe.Pointer(&values[0])
+	accVec := archsimd.LoadUint64x8Array((*[8]uint64)(p))
 
-	for i := 8; i+8 <= n; i += 8 {
-		chunk := archsimd.LoadUint64x8(values[i : i+8])
-		accVec = accVec.Or(chunk)
+	end := uintptr(n) * 8
+	for off := uintptr(64); off+64 <= end; off += 64 {
+		accVec = accVec.Or(archsimd.LoadUint64x8Array((*[8]uint64)(unsafe.Add(p, off))))
 	}
 
 	reduced4 := accVec.GetLo().Or(accVec.GetHi())
@@ -436,11 +488,14 @@ func findMinMax64AVX512(values []uint64) (uint64, uint64) {
 		return min64, max64
 	}
 
-	minVec := archsimd.LoadUint64x8(values[:8])
+	// Pointer loads avoid per-iteration bounds checks.
+	p := unsafe.Pointer(&values[0])
+	minVec := archsimd.LoadUint64x8Array((*[8]uint64)(p))
 	maxVec := minVec
 
-	for i := 8; i+8 <= n; i += 8 {
-		chunk := archsimd.LoadUint64x8(values[i : i+8])
+	end := uintptr(n) * 8
+	for off := uintptr(64); off+64 <= end; off += 64 {
+		chunk := archsimd.LoadUint64x8Array((*[8]uint64)(unsafe.Add(p, off)))
 		minVec = minVec.Min(chunk)
 		maxVec = maxVec.Max(chunk)
 	}
@@ -467,11 +522,19 @@ func findMinMax64AVX512(values []uint64) (uint64, uint64) {
 // narrowToUint32AVX512 copies uint64 values to uint32 by truncation using
 // AVX-512 TruncToUint32 (VPMOVQD, 8 values per iteration).
 func narrowToUint32AVX512(dst []uint32, values []uint64, count int) {
-	i := 0
-	for ; i+8 <= count; i += 8 {
-		archsimd.LoadUint64x8(values[i : i+8]).TruncToUint32().Store(dst[i : i+8])
+	// Pointer loads/stores eliminate per-iteration bounds checks; the
+	// count check skips pointer setup for empty slices (corrupt input).
+	if count >= 8 {
+		dp := unsafe.Pointer(&dst[0])
+		vp := unsafe.Pointer(&values[0])
+		// off iterates in input bytes (uint64); output is uint32, so off/2.
+		end := uintptr(count) * 8
+		for off := uintptr(0); off+64 <= end; off += 64 {
+			archsimd.LoadUint64x8Array((*[8]uint64)(unsafe.Add(vp, off))).
+				TruncToUint32().StoreArray((*[8]uint32)(unsafe.Add(dp, off/2)))
+		}
 	}
-	for ; i < count; i++ {
+	for i := (count / 8) * 8; i < count; i++ {
 		dst[i] = uint32(values[i])
 	}
 }
@@ -479,14 +542,20 @@ func narrowToUint32AVX512(dst []uint32, values []uint64, count int) {
 // forSubtract64AVX512 subtracts base from each uint64 value and stores as uint32.
 // Uses AVX-512 Sub + TruncToUint32 (8 values per iteration).
 func forSubtract64AVX512(dst []uint32, values []uint64, base uint64) {
+	// Broadcast hoisted; pointer loads avoid bounds checks.
 	baseVec := archsimd.BroadcastUint64x8(base)
 	n := len(values)
-	i := 0
-	for ; i+8 <= n; i += 8 {
-		v := archsimd.LoadUint64x8(values[i : i+8])
-		v.Sub(baseVec).TruncToUint32().Store(dst[i : i+8])
+	if n >= 8 {
+		dp := unsafe.Pointer(&dst[0])
+		vp := unsafe.Pointer(&values[0])
+		end := uintptr(n) * 8
+		for off := uintptr(0); off+64 <= end; off += 64 {
+			archsimd.LoadUint64x8Array((*[8]uint64)(unsafe.Add(vp, off))).
+				Sub(baseVec).
+				TruncToUint32().StoreArray((*[8]uint32)(unsafe.Add(dp, off/2)))
+		}
 	}
-	for ; i < n; i++ {
+	for i := (n / 8) * 8; i < n; i++ {
 		dst[i] = uint32(values[i] - base)
 	}
 }
@@ -494,14 +563,21 @@ func forSubtract64AVX512(dst []uint32, values []uint64, base uint64) {
 // forAdd64AVX512 adds a uint64 base to each uint32 value and stores as uint64.
 // Uses AVX-512 Uint32x8.ExtendToUint64 + Add (8 values per iteration).
 func forAdd64AVX512(dst []uint64, values []uint32, base uint64, count int) {
+	// Broadcast hoisted; pointer loads avoid bounds checks; the count
+	// check skips pointer setup for empty slices (corrupt input).
 	baseVec := archsimd.BroadcastUint64x8(base)
-	i := 0
-	for ; i+8 <= count; i += 8 {
-		lo := archsimd.LoadUint32x8(values[i : i+8])
-		wide := lo.ExtendToUint64().Add(baseVec)
-		wide.Store(dst[i : i+8])
+	if count >= 8 {
+		dp := unsafe.Pointer(&dst[0])
+		vp := unsafe.Pointer(&values[0])
+		// off iterates in output bytes (uint64); input is uint32, so off/2.
+		end := uintptr(count) * 8
+		for off := uintptr(0); off+64 <= end; off += 64 {
+			wide := archsimd.LoadUint32x8Array((*[8]uint32)(unsafe.Add(vp, off/2))).
+				ExtendToUint64().Add(baseVec)
+			wide.StoreArray((*[8]uint64)(unsafe.Add(dp, off)))
+		}
 	}
-	for ; i < count; i++ {
+	for i := (count / 8) * 8; i < count; i++ {
 		dst[i] = uint64(values[i]) + base
 	}
 }
@@ -509,14 +585,21 @@ func forAdd64AVX512(dst []uint64, values []uint32, base uint64, count int) {
 // combineUint64AVX512 merges lower and upper uint32 halves into uint64 values.
 // Uses AVX-512 ExtendToUint64 (8 values at a time), shifts uppers left by 32, ORs.
 func combineUint64AVX512(dst []uint64, lower, upper []uint32, count int) {
-	i := 0
-	for ; i+8 <= count; i += 8 {
-		loVec := archsimd.LoadUint32x8(lower[i : i+8]).ExtendToUint64()
-		hiVec := archsimd.LoadUint32x8(upper[i : i+8]).ExtendToUint64()
-		result := loVec.Or(hiVec.ShiftAllLeft(32))
-		result.Store(dst[i : i+8])
+	// Pointer loads/stores eliminate per-iteration bounds checks; the
+	// count check skips pointer setup for empty slices (corrupt input).
+	if count >= 8 {
+		dp := unsafe.Pointer(&dst[0])
+		lp := unsafe.Pointer(&lower[0])
+		up := unsafe.Pointer(&upper[0])
+		// off iterates in output bytes (uint64); inputs are uint32, so off/2.
+		end := uintptr(count) * 8
+		for off := uintptr(0); off+64 <= end; off += 64 {
+			loVec := archsimd.LoadUint32x8Array((*[8]uint32)(unsafe.Add(lp, off/2))).ExtendToUint64()
+			hiVec := archsimd.LoadUint32x8Array((*[8]uint32)(unsafe.Add(up, off/2))).ExtendToUint64()
+			loVec.Or(hiVec.ShiftAllLeft(32)).StoreArray((*[8]uint64)(unsafe.Add(dp, off)))
+		}
 	}
-	for ; i < count; i++ {
+	for i := (count / 8) * 8; i < count; i++ {
 		dst[i] = uint64(upper[i])<<32 | uint64(lower[i])
 	}
 }

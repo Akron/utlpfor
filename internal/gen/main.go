@@ -673,11 +673,15 @@ var excThresholds = [8]uint32{0, 0xF, 0xFF, 0xFFF, 0xFFFF, 0xFFFFF, 0xFFFFFF, 0x
 // SIMD level. simdSuffix is "SSE2"/"AVX2"/"AVX512", vecType is the
 // archsimd type name, step is the number of uint32 lanes per vector,
 // and popCountFn is "OnesCount8" or "OnesCount16".
+// The loop body uses pointer-based loads: the pattern
+// LoadXxxArray((*[N]uint32)(unsafe.Add(p, off))) removes the per-iteration
+// slice bounds check.
 func generateBuildExcCounts(b *strings.Builder, simdSuffix, vecType string, step int, popCountFn string) {
 	w := func(format string, args ...any) { fmt.Fprintf(b, format, args...) }
 
 	w("// buildExcCounts%s computes cumulative exception counts using %s\n", simdSuffix, simdSuffix)
 	w("// threshold comparisons in a single pass over the data.\n")
+	w("// Pointer-based loads avoid the per-iteration slice bounds check.\n")
 	w("func buildExcCounts%s(values []uint32) (exc [9]int) {\n", simdSuffix)
 
 	for i, t := range excThresholds {
@@ -685,15 +689,20 @@ func generateBuildExcCounts(b *strings.Builder, simdSuffix, vecType string, step
 	}
 	w("\n")
 
-	w("\ti := 0\n")
-	w("\tfor ; i+%d <= len(values); i += %d {\n", step, step)
-	w("\t\tv := archsimd.Load%s(values[i:])\n", vecType)
+	w("\tn := len(values)\n")
+	w("\tif n >= %d {\n", step)
+	w("\t\tp := unsafe.Pointer(&values[0])\n")
+	w("\t\tend := uintptr(n) * 4\n")
+	w("\t\tfor off := uintptr(0); off+%d <= end; off += %d {\n", step*4, step*4)
+	w("\t\t\tv := archsimd.Load%sArray((*[%d]uint32)(unsafe.Add(p, off)))\n", vecType, step)
 	for i := range 8 {
-		w("\t\texc[%d] += bits.%s(v.Greater(t%d).ToBits())\n", i, popCountFn, i)
+		w("\t\t\texc[%d] += bits.%s(v.Greater(t%d).ToBits())\n", i, popCountFn, i)
 	}
+	w("\t\t}\n")
 	w("\t}\n")
 
-	w("\tfor ; i < len(values); i++ {\n")
+	w("\t// Scalar tail for n < %d or leftover values.\n", step)
+	w("\tfor i := (n / %d) * %d; i < n; i++ {\n", step, step)
 	w("\t\tv := values[i]\n")
 	for i, t := range excThresholds {
 		w("\t\texc[%d] += gtCountU32(v, 0x%X)\n", i, t)
