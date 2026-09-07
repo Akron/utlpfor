@@ -79,9 +79,13 @@ func packLanesUTLSSE2(dst []byte, values []uint32, bitWidth int) {
 	if bitWidth == 0 {
 		return
 	}
-	if bitWidth != 32 {
-		clear(dst)
-	}
+	/*
+		if bitwidth != 32 {
+			// Specialized kernels overwrite the whole payload from registers, so no
+			// clear is needed; the generic fallback clears dst itself.
+			clear(dst)
+		}
+	*/
 	switch bitWidth {
 	case 4:
 		packSSE2BW4(&dst[0], &values[0])

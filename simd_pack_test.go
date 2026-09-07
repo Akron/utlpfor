@@ -3,6 +3,7 @@
 package utlpfor
 
 import (
+	"bytes"
 	"fmt"
 	"math/rand"
 	"simd/archsimd"
@@ -959,5 +960,145 @@ func TestPackUnpack_SIMDEdgeBitWidths(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, values, unpacked)
 		})
+	}
+}
+
+// BenchmarkLaneDispatchSwitchPack measures the raw per-block dispatch overhead inside
+// packLanesUTL* (the 8-way switch) and unpackLanesUTL*, isolated from the
+// kernel work by using bitwidth 0 (pack: immediate return; unpack: clears
+// count elements, which is the unavoidable cost baseline).
+func BenchmarkLaneDispatchSwitchPack(b *testing.B) {
+	values := make([]uint32, blockSize)
+	dst := make([]byte, utlPayloadBytes(32))
+	for i := range values {
+		values[i] = uint32(i)
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		packLanesUTLAVX2(dst, values, 0)
+	}
+}
+
+func BenchmarkLaneDispatchSwitchUnpack(b *testing.B) {
+	dst := make([]uint32, blockSize)
+	payload := make([]byte, utlPayloadBytes(32))
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		unpackLanesUTLAVX2(dst, payload, 0, 0)
+	}
+}
+
+// BenchmarkMemclrRemovedByStep42 measures the per-call cost of the clear(dst)
+// that was removed from the dispatchers (payload is 64 bytes per step-4
+// group, i.e. bw 4..28 all clear the same 256-byte payload region as bw16;
+// bw32 never cleared). This is the upper bound of the per-block win.
+func BenchmarkMemclrRemovedByStep42(b *testing.B) {
+	dst := make([]byte, utlPayloadBytes(16))
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		clear(dst)
+	}
+}
+
+// poisonByte is the fill pattern used to pre-poison destination buffers
+// before packing; a correct kernel must fully overwrite it.
+const poisonByte = 0xAA
+
+// packLanesForLevel routes a direct lane-kernel call to the dispatcher of
+// the given SIMD level (test helper mirroring PackUint32 dispatch).
+func packLanesForLevel(t *testing.T, level int, dst []byte, values []uint32, bitWidth int) {
+	t.Helper()
+	switch level {
+	case simdLevelScalar:
+		packLanesUTLScalar(dst, values, bitWidth)
+	case simdLevelSSE2:
+		packLanesUTLSSE2(dst, values, bitWidth)
+	case simdLevelAVX2:
+		packLanesUTLAVX2(dst, values, bitWidth)
+	case simdLevelAVX512, simdLevelAVX512VBMI:
+		packLanesUTLAVX512(dst, values, bitWidth)
+	default:
+		t.Fatalf("unknown SIMD level %d", level)
+	}
+}
+
+// cpuSupportsLevel reports whether the physical CPU can execute the
+// kernels of the given level (independent of UTL_SIMD_LEVEL forcing).
+func cpuSupportsLevel(level int) bool {
+	return detectSIMDLevel() >= level
+}
+
+// TestPackLanesUTL_PoisonedDst verifies that every pack lane kernel fully
+// overwrites the payload region: filling dst with a poison pattern before
+// the call must not change the packed output (guards the removal of the
+// redundant clear(dst) in the dispatchers).
+func TestPackLanesUTL_PoisonedDst(t *testing.T) {
+	levels := []struct {
+		level int
+		name  string
+	}{
+		{simdLevelScalar, "scalar"},
+		{simdLevelSSE2, "sse2"},
+		{simdLevelAVX2, "avx2"},
+		{simdLevelAVX512, "avx512"},
+	}
+	values := make([]uint32, blockSize)
+	for i := range values {
+		values[i] = uint32(i*2654435761) ^ uint32(i<<7)
+	}
+	for _, lv := range levels {
+		if lv.level > simdLevelScalar && !cpuSupportsLevel(lv.level) {
+			t.Logf("CPU lacks %s support; skipping level", lv.name)
+			continue
+		}
+		t.Run(lv.name, func(t *testing.T) {
+			for bw := 4; bw <= 32; bw++ {
+				clean := make([]byte, utlPayloadBytes(bw))
+				poisoned := make([]byte, utlPayloadBytes(bw))
+				for i := range poisoned {
+					poisoned[i] = poisonByte
+				}
+				packLanesForLevel(t, lv.level, clean, values, bw)
+				packLanesForLevel(t, lv.level, poisoned, values, bw)
+				assert.True(t, bytes.Equal(clean, poisoned),
+					"bw=%d: kernel must fully overwrite dst", bw)
+			}
+		})
+	}
+}
+
+// TestPackLanesUTL_PoisonedDst_WithExceptions drives the full pack pipeline
+// with poison left in dst beyond the header: ensureLen reuses dst capacity,
+// so the payload and exception regions must be overwritten, not OR-ed into
+// stale bytes. Guards the clear(dst) removal end-to-end.
+func TestPackLanesUTL_PoisonedDst_WithExceptions(t *testing.T) {
+	template := make([]uint32, blockSize)
+	for i := range template {
+		template[i] = uint32(i * 7)
+	}
+	template[3] = 0xFFFFFFFF
+	template[70] = 0x80000001
+
+	flags := []Flag{0, Delta, Delta | NoInPlace}
+	for _, flag := range flags {
+		scratchLen := ScratchLen
+		if flag&NoInPlace != 0 {
+			scratchLen = ScratchLenNoInPlace
+		}
+		ref, err := PackUint32(flag, slices.Clone(template), nil, make([]uint32, scratchLen))
+		require.NoError(t, err)
+
+		poisoned := make([]byte, MaxBlockLength32(flag))
+		for i := range poisoned {
+			poisoned[i] = poisonByte
+		}
+		got, err := PackUint32(flag, slices.Clone(template), poisoned[:0], make([]uint32, scratchLen))
+		require.NoError(t, err)
+		require.Equal(t, len(ref), len(got), "flag=%v", flag)
+		assert.True(t, bytes.Equal(ref, got),
+			"flag=%v: stale poison bytes leaked through pack pipeline", flag)
 	}
 }

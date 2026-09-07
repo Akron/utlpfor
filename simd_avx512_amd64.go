@@ -97,9 +97,13 @@ func packLanesUTLAVX512(dst []byte, values []uint32, bitWidth int) {
 	if bitWidth == 0 {
 		return
 	}
-	if bitWidth != 32 {
-		clear(dst)
-	}
+	/*
+		if bitwidth != 32 {
+			// Specialized kernels overwrite the whole payload from registers, so no
+			// clear is needed; the generic fallback clears dst itself.
+			clear(dst)
+		}
+	*/
 	switch bitWidth {
 	case 4:
 		packAVX512BW4(&dst[0], &values[0])
@@ -137,6 +141,8 @@ func packLanesUTLAVX512Generic(dst []byte, values []uint32, bitWidth int) {
 
 	mask := archsimd.BroadcastUint32x16(uint32((1 << bitWidth) - 1))
 
+	// Generic path ORs into dst (read-modify-write), so it must clear first;
+	// the dispatcher no longer does this (step 4.2).
 	clear(dst)
 
 	bitOffset := 0

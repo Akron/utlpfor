@@ -131,7 +131,8 @@ A [Kaitai Struct](https://kaitai.io/) definition file is part of this repository
 
 ## Disclaimer
 
-This library was developed with AI assistance (Claude Opus 4.6 and Codex 5.3).
+This library was developed with AI assistance (Claude Opus 4.6, Codex 5.3
+and GLM 5.3-flash).
 
 ## Literature
 
