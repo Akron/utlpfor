@@ -226,6 +226,11 @@ func unpackUint64Block(buf []byte, dst []uint64, scratch []uint32,
 	count := len(lowerVals)
 
 	_, _, _, _, fw, hasExceptions, _, _, _, _ := decodeHeader(header)
+	metaOff := payloadOffset(forBaseBytes(fw), hasExceptions, true)
+	// readBlock2Len reads the 2 bytes ending at metaOff.
+	if len(buf) < metaOff {
+		return nil, 0, ErrInvalidBuffer
+	}
 	block2Len := int(readBlock2Len(buf, forBaseBytes(fw), hasExceptions))
 	block2Start := block1Consumed
 	if block2Start+block2Len > len(buf) {
@@ -376,6 +381,9 @@ func getUint64Scalar(pos int, buf []byte, scratch []uint32) (uint64, error) {
 			if excCount > 0 {
 				baseOff += svbLenBytes
 			}
+			if len(buf) < baseOff+for64BaseSize {
+				return 0, ErrInvalidBuffer
+			}
 			for64Base = bo.Uint64(buf[baseOff:])
 		}
 		return uint64(lower) + for64Base, nil
@@ -387,8 +395,13 @@ func getUint64Scalar(pos int, buf []byte, scratch []uint32) (uint64, error) {
 	}
 
 	forBBytes := forBaseBytes(forWidth)
+	metaOff := payloadOffset(forBBytes, hasExceptions, true)
+	// readBlock2Len reads the 2 bytes ending at metaOff.
+	if len(buf) < metaOff {
+		return 0, ErrInvalidBuffer
+	}
 	block2Len := int(readBlock2Len(buf, forBBytes, hasExceptions))
-	block1Len := payloadOffset(forBBytes, hasExceptions, true) + bitWidth<<4
+	block1Len := metaOff + bitWidth<<4
 	if hasExceptions {
 		if len(buf) < headerBytes+svbLenBytes {
 			return 0, ErrInvalidBuffer

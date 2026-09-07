@@ -16,20 +16,66 @@ func excIndexSize(excCount int) int {
 
 // readSVBLen reads the StreamVByte data length from the block buffer.
 // svbLen is always at offset 4 (immediately after the header), regardless of FOR.
+// Returns ErrInvalidBuffer when the buffer is too short to hold the field.
 func readSVBLen(buf []byte) (int, error) {
+	if len(buf) < headerBytes+svbLenBytes {
+		return 0, ErrInvalidBuffer
+	}
 	return int(bo.Uint16(buf[headerBytes:])), nil
 }
 
 // decodeExceptionHighBitsInto decodes all SVB exception high bits into dst.
 // excStart is the byte offset where the exception index begins (after payload).
+// The control bytes are validated to describe at most svbLen data bytes, so
+// the decoders never read past the declared SVB region on corrupt input.
 // Returns the offset past the SVB data and any error.
 func decodeExceptionHighBitsInto(dst []uint32, buf []byte, excStart, excCount int) (int, error) {
+	// readSVBLen and the svbStart+svbLen bound check are technically redundant
+	// for all current callers (the unpack prologues already validate the full
+	// exception region). They are kept as defense-in-depth: if a future caller
+	// omits buffer validation, this function still won't panic. The cost is a
+	// single always-predicted branch per block.
 	svbLen, err := readSVBLen(buf)
 	if err != nil {
 		return 0, err
 	}
 	svbStart := excStart + excIndexSize(excCount)
 	if svbStart+svbLen > len(buf) {
+		return 0, ErrInvalidBuffer
+	}
+	// Validate that the control bytes don't describe more data bytes than
+	// svbLen holds; otherwise the StreamVByte decoder would read past the
+	// declared region and panic on a corrupt block.
+	//
+	// This per-control-byte scan is necessary - simpler bounds won't work:
+	//   * Upper-bound check (ctrlCount + 4*excCount <= svbLen) is too strict:
+	//     it rejects valid blocks whose exception high-bits encode in 1-2 bytes,
+	//     because the actual needed bytes are far below the 4-bytes-per-value
+	//     maximum.
+	//   * Lower-bound check (ctrlCount + excCount <= svbLen) is too weak:
+	//     it misses corrupt control bytes that individually claim more data
+	//     bytes than the region holds.
+	//
+	// Only slots that decoders actually read are counted: all slots of
+	// complete groups, plus slots 0..k-1 of the trailing partial group (the
+	// encoder zero-pads the unused slots, so they claim no data bytes).
+	// Cost: at most ceil(excCount/4) = 32 byte reads for a full block.
+	ctrlCount := svbControlByteCount(excCount)
+	if ctrlCount > svbLen {
+		return 0, ErrInvalidBuffer
+	}
+	ctrlBytes := buf[svbStart : svbStart+ctrlCount]
+	needed := ctrlCount
+	for g := range excCount / 4 {
+		needed += int(svbControlBlockSizeLUT[ctrlBytes[g]])
+	}
+	if k := excCount % 4; k > 0 {
+		ctrl := ctrlBytes[excCount/4]
+		for s := range k {
+			needed += int((ctrl>>(s*2))&0x03) + 1
+		}
+	}
+	if needed > svbLen {
 		return 0, ErrInvalidBuffer
 	}
 	// High bits are serialized immediately after exception index bytes.
@@ -142,8 +188,17 @@ func collectAndWriteExceptions(values []uint32, bitWidth int,
 // applyExceptions patches decoded values with exception high bits.
 // excStart is the byte offset where the exception index begins (after payload).
 // scratch is used as a decode buffer (must have capacity >= excCount).
+// All index regions are validated before use; corrupt blocks yield
+// ErrInvalidBuffer instead of out-of-range reads.
 // Returns the total number of bytes consumed and any error.
 func applyExceptions(dst []uint32, buf []byte, excStart, count, bitWidth, excCount int, scratch []uint32) (int, error) {
+	if excCount > count {
+		// NOT defense-in-depth: the unpack prologues do not validate
+		// excCount vs count. A corrupt header with excCount > count
+		// would panic on scratch[:excCount] below (scratch has capacity
+		// blockSize = 128, excCount can be up to 255 from the header).
+		return 0, ErrInvalidBuffer
+	}
 	decodeBuf := scratch[:excCount]
 
 	consumed, err := decodeExceptionHighBitsInto(decodeBuf, buf, excStart, excCount)
@@ -155,9 +210,15 @@ func applyExceptions(dst []uint32, buf []byte, excStart, count, bitWidth, excCou
 	if excCount <= excBitmapThreshold {
 		excPos := buf[excStart : excStart+excCount]
 		if count == blockSize {
-			// Fast path: packed positions are guaranteed in-range for full blocks.
+			// Fast path for full blocks (count == 128): valid positions are 0-127.
+			// The &0x7F mask serves two purposes:
+			//   1. Bounds check elimination (BCE): the compiler proves
+			//      excPos[i]&0x7F < 128 == len(dst) at compile time, removing
+			//      the runtime bounds check from this hot loop.
+			//   2. Defense-in-depth: a corrupt position byte > 127 cannot index
+			//      past dst without an explicit branch.
 			for i := range excCount {
-				dst[excPos[i]] |= decodeBuf[i] << shift
+				dst[excPos[i]&0x7F] |= decodeBuf[i] << shift
 			}
 		} else {
 			for i := range excCount {
@@ -180,6 +241,8 @@ func applyExceptions(dst []uint32, buf []byte, excStart, count, bitWidth, excCou
 
 // applyBitmapExceptions patches decoded values using a 128-bit exception bitmap.
 // It iterates only set bits, avoiding a full scan over all positions.
+// decodeBuf must cover every set bit of the masked bitmap; the caller
+// guarantees count > excBitmapThreshold, which bounds the set-bit count.
 func applyBitmapExceptions(dst []uint32, decodeBuf []uint32, bitmap []byte, count int) {
 	excIdx := 0
 
@@ -196,6 +259,14 @@ func applyBitmapExceptions(dst []uint32, decodeBuf []uint32, bitmap []byte, coun
 		}
 	}
 
+	// Pre-check: the number of set bitmap bits must not exceed decodeBuf.
+	// For valid blocks they are equal; for corrupt bitmaps this prevents
+	// overrunning decodeBuf. Two OnesCount64 calls (single instruction
+	// each on amd64) replace N per-iteration branch checks.
+	if bits.OnesCount64(word0)+bits.OnesCount64(word1) > len(decodeBuf) {
+		return
+	}
+
 	for word0 != 0 {
 		// w &= w-1 drops one set bit, so cost scales with exceptions, not 128 slots.
 		bitPos := bits.TrailingZeros64(word0)
@@ -206,8 +277,7 @@ func applyBitmapExceptions(dst []uint32, decodeBuf []uint32, bitmap []byte, coun
 
 	for word1 != 0 {
 		bitPos := bits.TrailingZeros64(word1)
-		pos := 64 + bitPos
-		dst[pos] |= decodeBuf[excIdx]
+		dst[64+bitPos] |= decodeBuf[excIdx]
 		excIdx++
 		word1 &= word1 - 1
 	}
@@ -216,22 +286,36 @@ func applyBitmapExceptions(dst []uint32, decodeBuf []uint32, bitmap []byte, coun
 // findExceptionIndex finds the index of a position in the exception list.
 // For sorted positions (excCount <= 16): linear scan with early exit.
 // For bitmap (excCount > 16): bit test + popcount.
+// excIdx is the pre-sliced exception index region (positions or bitmap);
+// reads are clamped to len(excIdx), so corrupt counts degrade to "not
+// found" instead of panicking.
 // Returns -1 if the position is not an exception.
-func findExceptionIndex(buf []byte, excStart, excCount, pos int) int {
+func findExceptionIndex(excIdx []byte, excCount, pos int) int {
 	if excCount <= excBitmapThreshold {
-		for i := range excCount {
-			if buf[excStart+i] == byte(pos) {
+		// min: defense-in-depth — current caller (getValueDirect) validates
+		// the region, so len(excIdx) >= excCount; the clamp prevents a panic
+		// if a future caller passes an under-sized slice.
+		n := min(excCount, len(excIdx))
+		for i := range n {
+			if excIdx[i] == byte(pos) {
 				return i
 			}
-			if buf[excStart+i] > byte(pos) {
+			if excIdx[i] > byte(pos) {
 				return -1
 			}
 		}
 		return -1
 	}
-	bitmap := buf[excStart : excStart+16]
+	// min: defense-in-depth - see comment on the position-list path above.
+	bitmap := excIdx[:min(16, len(excIdx))]
+	if len(bitmap) == 0 {
+		return -1
+	}
 	byteIdx := pos / 8
 	bitIdx := pos % 8
+	if byteIdx >= len(bitmap) {
+		return -1
+	}
 	if bitmap[byteIdx]&(1<<bitIdx) == 0 {
 		return -1
 	}

@@ -31,7 +31,9 @@ FUZZ_TARGETS = FuzzPackUnpackUint32RoundTrip \
                FuzzBlockLengthNeverPanics \
                FuzzCorruptDeltaOverflow \
                FuzzDeltaWithExceptions \
-               FuzzCompressionRatio
+               FuzzCompressionRatio \
+               FuzzGetUint32CorruptBlock \
+               FuzzCorruptBlockAPIs
 
 FUZZ_SIMD_TARGETS = FuzzSIMDScalarConsistency
 

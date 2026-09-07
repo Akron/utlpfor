@@ -278,29 +278,27 @@ func TestFindExceptionIndex_SortedPositions(t *testing.T) {
 	buf[0] = 5
 	buf[1] = 10
 	buf[2] = 42
-	excStart := 0
 	excCount := 3
 
-	assert.Equal(t, 0, findExceptionIndex(buf, excStart, excCount, 5))
-	assert.Equal(t, 1, findExceptionIndex(buf, excStart, excCount, 10))
-	assert.Equal(t, 2, findExceptionIndex(buf, excStart, excCount, 42))
-	assert.Equal(t, -1, findExceptionIndex(buf, excStart, excCount, 0))
-	assert.Equal(t, -1, findExceptionIndex(buf, excStart, excCount, 7))
-	assert.Equal(t, -1, findExceptionIndex(buf, excStart, excCount, 127))
+	assert.Equal(t, 0, findExceptionIndex(buf, excCount, 5))
+	assert.Equal(t, 1, findExceptionIndex(buf, excCount, 10))
+	assert.Equal(t, 2, findExceptionIndex(buf, excCount, 42))
+	assert.Equal(t, -1, findExceptionIndex(buf, excCount, 0))
+	assert.Equal(t, -1, findExceptionIndex(buf, excCount, 7))
+	assert.Equal(t, -1, findExceptionIndex(buf, excCount, 127))
 }
 
 func TestFindExceptionIndex_Bitmap(t *testing.T) {
 	buf := make([]byte, 20)
 	buf[0] = 0b00100010 // positions 1, 5
 	buf[1] = 0b00000001 // position 8
-	excStart := 0
 	excCount := 20
 
-	assert.Equal(t, 0, findExceptionIndex(buf, excStart, excCount, 1))
-	assert.Equal(t, 1, findExceptionIndex(buf, excStart, excCount, 5))
-	assert.Equal(t, 2, findExceptionIndex(buf, excStart, excCount, 8))
-	assert.Equal(t, -1, findExceptionIndex(buf, excStart, excCount, 0))
-	assert.Equal(t, -1, findExceptionIndex(buf, excStart, excCount, 3))
+	assert.Equal(t, 0, findExceptionIndex(buf, excCount, 1))
+	assert.Equal(t, 1, findExceptionIndex(buf, excCount, 5))
+	assert.Equal(t, 2, findExceptionIndex(buf, excCount, 8))
+	assert.Equal(t, -1, findExceptionIndex(buf, excCount, 0))
+	assert.Equal(t, -1, findExceptionIndex(buf, excCount, 3))
 }
 
 func TestCollectExceptionsDirect_MoreThan16(t *testing.T) {

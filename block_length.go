@@ -56,6 +56,10 @@ func BlockLength(src []byte) (int, error) {
 		return block1Len, nil
 	}
 
+	// readBlock2Len reads the 2 bytes ending at pOff.
+	if len(src) < pOff {
+		return 0, ErrInvalidBuffer
+	}
 	b2Len := int(readBlock2Len(src, forBBytes, hasExceptions))
 	return block1Len + b2Len, nil
 }

@@ -297,12 +297,11 @@ func unpackUint32Scalar(dst []uint32, scratch []uint32, buf []byte, forUint64 bo
 	if hasExceptions {
 		pOff += svbLenBytes
 	}
-	var forBase uint32
+	forBaseOff := pOff
 	if hasFOR {
 		if u64Single {
 			pOff += for64BaseSize
 		} else {
-			forBase = readFORBase(buf, pOff, forWidth)
 			pOff += forBaseBytes(forWidth)
 		}
 	}
@@ -311,8 +310,30 @@ func unpackUint32Scalar(dst []uint32, scratch []uint32, buf []byte, forUint64 bo
 	}
 
 	payloadBytes := utlPayloadBytes(bitWidth)
-	if len(buf) < pOff+payloadBytes {
+	excIdxSize := 0
+	if hasExceptions {
+		excIdxSize = excIndexSize(excCount)
+	}
+	// Single length check covers the FOR base region, the payload, and the
+	// exception index; the reslice proves all later slices in range.
+	blockEnd := pOff + payloadBytes + excIdxSize
+	if len(buf) < blockEnd {
 		return nil, 0, ErrInvalidBuffer
+	}
+	if hasExceptions {
+		// Extend the proven region by the SVB data length read at the
+		// fixed offset (guaranteed present, blockEnd >= 6).
+		svbLen := int(bo.Uint16(buf[headerBytes:]))
+		if blockEnd+svbLen > len(buf) {
+			return nil, 0, ErrInvalidBuffer
+		}
+		blockEnd += svbLen
+	}
+	buf = buf[:blockEnd]
+
+	var forBase uint32
+	if hasFOR && !u64Single {
+		forBase = readFORBase(buf, forBaseOff, forWidth)
 	}
 
 	if cap(dst) < blockSize {
