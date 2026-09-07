@@ -2,14 +2,12 @@ github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/kaitai-io/kaitai_struct_go_runtime v0.11.0 h1:R8HKGTIstXNu4QOwV6sg69sbIh9VPJSISi/vUEba4f8=
 github.com/kaitai-io/kaitai_struct_go_runtime v0.11.0/go.mod h1:dlqdTnlCChOxVQwsUTmGwqOVc3dc/yA//R1F/QS6yh4=
-github.com/mhr3/streamvbyte v0.3.1 h1:02tyfuS8KY8GVwMEzPjaS1P3VlRI/uG6rZIqH0W/tco=
-github.com/mhr3/streamvbyte v0.3.1/go.mod h1:I1FQZ1gp9mN1vq9GPd/WNwmjH0ThTLT+iMejQt/cXCk=
+github.com/mhr3/streamvbyte v0.4.0 h1:CbpjF4DTdjUkdEn76luEebJPC5EdPtwxTNP2eVrwF+c=
+github.com/mhr3/streamvbyte v0.4.0/go.mod h1:I1FQZ1gp9mN1vq9GPd/WNwmjH0ThTLT+iMejQt/cXCk=
 github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZbAQM=
 github.com/pmezard/go-difflib v1.0.0/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=
 github.com/stretchr/testify v1.11.1 h1:7s2iGBzp5EwR7/aIZr8ao5+dra3wiQyKjjFuvgVKu7U=
 github.com/stretchr/testify v1.11.1/go.mod h1:wZwfW3scLgRK+23gO65QZefKpKQRnfz6sD981Nm4B6U=
-golang.org/x/sys v0.46.0 h1:noSf2Fq6F8DBgS+LysIkx7rIExoNHJsxOAtPp4rthXw=
-golang.org/x/sys v0.46.0/go.mod h1:4GL1E5IUh+htKOUEOaiffhrAeqysfVGipDYzABqnCmw=
 golang.org/x/sys v0.47.0 h1:o7XGOvZQCADBQQ4Y7VNq2dRWQR7JmOUW8Kxx4ZsNgWs=
 golang.org/x/sys v0.47.0/go.mod h1:4GL1E5IUh+htKOUEOaiffhrAeqysfVGipDYzABqnCmw=
 golang.org/x/text v0.38.0 h1:sXmwo9DwP3OK9EZ7PqAdaooSGozfl/3a6/xJcbzPRhE=

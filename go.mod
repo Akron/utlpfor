@@ -5,7 +5,7 @@ go 1.26.1
 require (
 	// test-only: not transitive dependencies when this module is imported
 	github.com/kaitai-io/kaitai_struct_go_runtime v0.11.0
-	github.com/mhr3/streamvbyte v0.3.1
+	github.com/mhr3/streamvbyte v0.4.0
 	github.com/stretchr/testify v1.11.1
 )
 
