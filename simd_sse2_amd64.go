@@ -246,37 +246,70 @@ func deltaDecodePerLaneSSE2(values []uint32, useZigZag bool) {
 	}
 }
 
-// deltaDecodePerLaneWithOverflowSSE2 performs prefix sum with overflow check
-// using SSE2 (Uint32x4). Returns position of first overflow (0 = none).
+// deltaDecodePerLaneWithOverflowSSE2 performs per-lane prefix sum (delta
+// decode) using SSE2 XMM registers (Uint32x4) and detects unsigned overflow.
+//
+// Returns the flat index (row*16 + lane) of the first addition that wrapped
+// past 2^32, or 0 if no overflow. Same v-major scan order as the scalar
+// reference and the AVX2 variant (see deltaDecodePerLaneWithOverflowAVX2
+// for the mask-collect design rationale).
+//
+// SSE2 processes 4 lanes per vector, so each row requires 4 vectors (two
+// groups of two). The per-row mask is a uint16 assembled from four 4-bit
+// ToBits results - NOT a uint8, because 16 lanes need 16 mask bits (a
+// uint8 would silently lose overflows in lanes 8-15).
 func deltaDecodePerLaneWithOverflowSSE2(values []uint32, useZigZag bool) int {
 	if useZigZag {
 		deltaDecodePerLaneSSE2(values, true)
 		return 0
 	}
 
-	var overflowPos int
+	// masks[v] holds the overflow mask of row v: bit 0-3 from vector 0
+	// (lanes 0-3), bits 4-7 from vector 1 (lanes 4-7), bits 8-11 from
+	// group-1 vector 0 (lanes 8-11), bits 12-15 from group-1 vector 1
+	// (lanes 12-15). Row 0 has no previous element, so v starts at 1 and
+	// masks has 7 entries. uint16 is required: 16 lanes need 16 mask bits
+	// (a uint8 would silently drop the lane 8-15 bits).
+	var masks [utlValuesPerLane - 1]uint16
 
 	for v := 1; v < utlValuesPerLane; v++ {
 		curBase := v * utlLaneCount
 		prevBase := (v - 1) * utlLaneCount
 
-		for group := range 4 {
-			off := group * 4
-			prev := archsimd.LoadUint32x4(values[prevBase+off : prevBase+off+4])
-			cur := archsimd.LoadUint32x4(values[curBase+off : curBase+off+4])
-			sum := prev.Add(cur)
+		m := uint16(0)
+		for group := range 2 {
+			off := group * 8
+			prev0 := archsimd.LoadUint32x4(values[prevBase+off : prevBase+off+4])
+			cur0 := archsimd.LoadUint32x4(values[curBase+off : curBase+off+4])
+			sum0 := prev0.Add(cur0)
+			// Sum < prev means the unsigned addition wrapped (overflow).
+			// Each group covers 8 lanes: bits group*8+0..3 from vector 0,
+			// bits group*8+4..7 from vector 1.
+			m |= uint16(sum0.Less(prev0).ToBits()) << (group * 8)
 
-			overflow := sum.Less(prev)
-			if overflowPos == 0 && overflow.ToBits() != 0 {
-				lane := bits.TrailingZeros8(overflow.ToBits())
-				overflowPos = curBase + off + lane
-			}
+			prev1 := archsimd.LoadUint32x4(values[prevBase+off+4 : prevBase+off+8])
+			cur1 := archsimd.LoadUint32x4(values[curBase+off+4 : curBase+off+8])
+			sum1 := prev1.Add(cur1)
+			m |= uint16(sum1.Less(prev1).ToBits()) << (group*8 + 4)
 
-			sum.Store(values[curBase+off : curBase+off+4])
+			sum0.Store(values[curBase+off : curBase+off+4])
+			sum1.Store(values[curBase+off+4 : curBase+off+8])
+		}
+		// Collect the mask; at most once per row (see AVX2 comment).
+		if m != 0 {
+			masks[v-1] = m
 		}
 	}
 
-	return overflowPos
+	// Resolve the first overflow in v-major order after the loop: the
+	// smallest row v with any overflow bit wins; within the row, the lowest
+	// set bit (lowest lane) wins. lane-order index = v*16 + lane.
+	for v, m := range masks {
+		if m != 0 {
+			return (v+1)*utlLaneCount + bits.TrailingZeros16(m)
+		}
+	}
+	return 0
 }
 
 // packUint32SSE2 is the SSE2 packing pipeline. Delegates to packBlockSSE2
@@ -696,122 +729,61 @@ func packUint64SSE2(flag Flag, values []uint64, dst []byte, scratch []uint32) ([
 // Accepts forUint64 to handle uint64 sub-block context (type validation,
 // FOR64 single-block handling, combine flag recognition).
 func unpackBlockSSE2(dst []uint32, scratch []uint32, buf []byte, forUint64 bool) ([]uint32, int, error) {
-	if len(buf) < headerBytes {
-		return nil, 0, ErrInvalidBuffer
+	// Shared prologue written through a pointer: no fat struct return on
+	// the hot path, and the flag byte replaces six bool fields.
+	var h unpackHeaderOut
+	buf, err := decodeUnpackHeader(buf, forUint64, &h)
+	if err != nil {
+		return nil, 0, err
+	}
+	// Empty block: header consumed, no values.
+	if h.empty() {
+		return dst[:0], headerBytes, nil
 	}
 
-	header := bo.Uint32(buf)
-	count, bitWidth, intType, excCount, forWidth, hasExceptions, hasDelta, hasZigZag, _, hasCombine := decodeHeader(header)
-	hasFOR := forWidth > 0
+	dst = growUnpackDst(dst)
 
-	if forUint64 {
-		if err := validateIntType64(intType); err != nil {
-			return nil, 0, err
-		}
-	} else {
-		if err := validateIntType(intType); err != nil {
-			return nil, 0, err
-		}
-		hasCombine = false
-	}
+	unpackLanesUTLSSE2(dst, h.payloadAt(buf), blockSize, h.bitWidth)
+	dst = dst[:h.count]
 
-	if uint(count-1) >= blockSize || uint(bitWidth) > 32 {
-		if count == 0 {
-			return dst[:0], headerBytes, nil
-		}
-		if count > blockSize {
-			return nil, 0, ErrInvalidBlockLength
-		}
-		return nil, 0, ErrInvalidBuffer
-	}
+	consumed := h.consumed
 
-	u64Single := forUint64 && isFor64SingleBlock(intType, forWidth, hasCombine)
-
-	pOff := headerBytes
-	if hasExceptions {
-		pOff += svbLenBytes
-	}
-	forBaseOff := pOff
-	if hasFOR {
-		if u64Single {
-			pOff += for64BaseSize
-		} else {
-			pOff += forBaseBytes(forWidth)
-		}
-	}
-	if hasCombine {
-		pOff += block2LenBytes
-	}
-
-	payloadBytes := utlPayloadBytes(bitWidth)
-	excIdxSize := 0
-	if hasExceptions {
-		excIdxSize = excIndexSize(excCount)
-	}
-	// Single length check covers the FOR base region, the payload, and the
-	// exception index; the reslice proves all later slices in range.
-	blockEnd := pOff + payloadBytes + excIdxSize
-	if len(buf) < blockEnd {
-		return nil, 0, ErrInvalidBuffer
-	}
-	if hasExceptions {
-		// Extend the proven region by the SVB data length read at the
-		// fixed offset (guaranteed present, blockEnd >= 6).
-		svbLen := int(bo.Uint16(buf[headerBytes:]))
-		if blockEnd+svbLen > len(buf) {
-			return nil, 0, ErrInvalidBuffer
-		}
-		blockEnd += svbLen
-	}
-	buf = buf[:blockEnd]
-
-	var forBase uint32
-	if hasFOR && !u64Single {
-		forBase = readFORBase(buf, forBaseOff, forWidth)
-	}
-
-	if cap(dst) < blockSize {
-		dst = make([]uint32, blockSize)
-	}
-	dst = dst[:blockSize]
-
-	payload := buf[pOff : pOff+payloadBytes]
-	unpackLanesUTLSSE2(dst, payload, blockSize, bitWidth)
-	dst = dst[:count]
-
-	consumed := pOff + payloadBytes
-
-	if hasExceptions {
-		excStart := pOff + payloadBytes
+	if h.hasExceptions() {
+		// The exception region starts right after the payload, which is
+		// exactly the consumed offset (h.consumed = pOff + payloadBytes).
 		var err error
-		consumed, err = applyExceptions(dst, buf, excStart, count, bitWidth, excCount, scratch)
+		consumed, err = applyExceptions(dst, buf, h.consumed, h.count, h.bitWidth, h.excCount, scratch)
 		if err != nil {
 			return nil, 0, err
 		}
 	}
 
-	if hasDelta {
-		if hasZigZag {
-			if count == blockSize {
+	if h.hasDelta() {
+		if h.hasZigZag() {
+			// Zigzag mode cannot overflow: SIMD kernel for full blocks.
+			if h.count == blockSize {
 				deltaDecodePerLaneSSE2(dst, true)
 			} else {
 				deltaDecodePerLaneScalar(dst, true)
 			}
 		} else {
+			// Explicit dispatch (no func values): full blocks run the SSE2
+			// overflow kernel, partial blocks the scalar reference.
 			var overflowPos int
-			if count == blockSize {
+			if h.count == blockSize {
 				overflowPos = deltaDecodePerLaneWithOverflowSSE2(dst, false)
 			} else {
 				overflowPos = deltaDecodePerLaneWithOverflowScalar(dst, false)
 			}
+			// Wrap a detected overflow into the documented error type.
 			if overflowPos > 0 {
 				return nil, 0, &ErrOverflow{Position: overflowPos}
 			}
 		}
 	}
 
-	if hasFOR && !u64Single {
-		forAddSSE2(dst, count, forBase)
+	if h.hasFOR() && !h.u64Single() {
+		forAddSSE2(dst, h.count, h.forBase)
 	}
 
 	return dst, consumed, nil

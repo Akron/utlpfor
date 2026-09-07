@@ -86,6 +86,25 @@ var ErrNotImplemented = errors.New("UTLpfor: not implemented")
 var ErrUnsupportedType = errors.New("UTLpfor: unsupported integer type")
 
 // ErrOverflow is returned when delta decoding overflows uint32.
+//
+// Position is the flat index (0-based) in the decoded output slice where
+// the first prefix-sum addition wrapped past 2^32.  In a 128-value block
+// the values are arranged in 16 lanes x 8 rows (the UTL / FastLanes
+// layout).  Position = row*16 + lane, so you can recover the logical
+// coordinates with:
+//
+//	row  = Position / 16   // 0..7
+//	lane = Position % 16   // 0..15
+//
+// When multiple lanes overflow in the same row, the lowest lane number is
+// reported.  When overflows exist in different rows, the lowest row number
+// wins.  This is called "v-major order" in the code (rows iterate first,
+// like row-major in a matrix; "v" is the loop variable for the row index
+// in the FastLanes paper).
+//
+// The exact position is pinned by the overflow bit-exactness tests
+// in simd_delta_overflow_test.go, which assert scalar == SIMD results
+// for every (row, lane) pair.
 type ErrOverflow struct {
 	Position int
 }

@@ -71,8 +71,15 @@ func deltaDecodePerLaneScalar(values []uint32, useZigZag bool) {
 	}
 }
 
-// deltaDecodePerLaneWithOverflowScalar performs in-place prefix sum with overflow detection.
-// Returns the lane-order index of the first overflow, or 0 if no overflow.
+// deltaDecodePerLaneWithOverflowScalar performs in-place prefix sum with
+// overflow detection. Returns the flat index of the first value whose
+// prefix-sum addition wrapped past 2^32, or 0 if no overflow occurred.
+//
+// Scan order is v-major (rows in the outer loop, lanes in the inner loop):
+// the smallest row wins; ties within the same row are broken by the lowest
+// lane number. This matches the SIMD mask-collect kernels (AVX2/SSE2),
+// which accumulate one per-row mask and resolve the first set bit after the
+// loop. See ErrOverflow for the user-facing semantics.
 func deltaDecodePerLaneWithOverflowScalar(values []uint32, useZigZag bool) int {
 	if useZigZag {
 		deltaDecodePerLaneScalar(values, true)
@@ -82,17 +89,22 @@ func deltaDecodePerLaneWithOverflowScalar(values []uint32, useZigZag bool) int {
 	count := len(values)
 	var overflowPos int
 
-	for lane := range utlLaneCount {
-		if lane >= count {
-			break
-		}
-		for v := 1; v < utlValuesPerLane; v++ {
+	// v-major scan: the outer loop walks rows (v) so the first overflow
+	// found is the one in the lowest row, matching the SIMD mask-collect
+	// kernels. A lane-major scan (lanes outer) would instead report the
+	// lowest lane, missing earlier overflows in higher lanes. When an
+	// overflow is found, the rest of the row is still decoded (recording
+	// nothing), so the full block matches the SIMD kernels' output.
+	for v := 1; v < utlValuesPerLane; v++ {
+		for lane := range utlLaneCount {
 			cur := lane + v*utlLaneCount
 			prev := lane + (v-1)*utlLaneCount
 			if cur >= count {
 				break
 			}
 			next := values[prev] + values[cur]
+			// Unsigned overflow: if a + b wrapped, the result is less than
+			// either operand. Record the first occurrence only.
 			if overflowPos == 0 && next < values[prev] {
 				overflowPos = cur
 			}

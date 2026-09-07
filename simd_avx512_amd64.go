@@ -813,118 +813,58 @@ func packUint64AVX512(flag Flag, values []uint64, dst []byte, scratch []uint32) 
 // Accepts forUint64 to handle uint64 sub-block context (type validation,
 // FOR64 single-block handling, combine flag recognition).
 func unpackBlockAVX512(dst []uint32, scratch []uint32, buf []byte, forUint64 bool) ([]uint32, int, error) {
-	if len(buf) < headerBytes {
-		return nil, 0, ErrInvalidBuffer
+	// Shared prologue written through a pointer: no fat struct return on
+	// the hot path, and the flag byte replaces six bool fields.
+	var h unpackHeaderOut
+	buf, err := decodeUnpackHeader(buf, forUint64, &h)
+	if err != nil {
+		return nil, 0, err
+	}
+	// Empty block: header consumed, no values.
+	if h.empty() {
+		return dst[:0], headerBytes, nil
 	}
 
-	header := bo.Uint32(buf)
-	count, bitWidth, intType, excCount, forWidth, hasExceptions, hasDelta, hasZigZag, _, hasCombine := decodeHeader(header)
-	hasFOR := forWidth > 0
+	dst = growUnpackDst(dst)
 
-	if forUint64 {
-		if err := validateIntType64(intType); err != nil {
-			return nil, 0, err
-		}
-	} else {
-		if err := validateIntType(intType); err != nil {
-			return nil, 0, err
-		}
-		hasCombine = false
-	}
+	unpackLanesUTLAVX512(dst, h.payloadAt(buf), blockSize, h.bitWidth)
 
-	if uint(count-1) >= blockSize || uint(bitWidth) > 32 {
-		if count == 0 {
-			return dst[:0], headerBytes, nil
-		}
-		if count > blockSize {
-			return nil, 0, ErrInvalidBlockLength
-		}
-		return nil, 0, ErrInvalidBuffer
-	}
+	dst = dst[:h.count]
 
-	u64Single := forUint64 && isFor64SingleBlock(intType, forWidth, hasCombine)
+	consumed := h.consumed
 
-	pOff := headerBytes
-	if hasExceptions {
-		pOff += svbLenBytes
-	}
-	forBaseOff := pOff
-	if hasFOR {
-		if u64Single {
-			pOff += for64BaseSize
-		} else {
-			pOff += forBaseBytes(forWidth)
-		}
-	}
-	if hasCombine {
-		pOff += block2LenBytes
-	}
-
-	payloadBytes := utlPayloadBytes(bitWidth)
-	excIdxSize := 0
-	if hasExceptions {
-		excIdxSize = excIndexSize(excCount)
-	}
-	// Single length check covers the FOR base region, the payload, and the
-	// exception index; the reslice proves all later slices in range.
-	blockEnd := pOff + payloadBytes + excIdxSize
-	if len(buf) < blockEnd {
-		return nil, 0, ErrInvalidBuffer
-	}
-	if hasExceptions {
-		// Extend the proven region by the SVB data length read at the
-		// fixed offset (guaranteed present, blockEnd >= 6).
-		svbLen := int(bo.Uint16(buf[headerBytes:]))
-		if blockEnd+svbLen > len(buf) {
-			return nil, 0, ErrInvalidBuffer
-		}
-		blockEnd += svbLen
-	}
-	buf = buf[:blockEnd]
-
-	var forBase uint32
-	if hasFOR && !u64Single {
-		forBase = readFORBase(buf, forBaseOff, forWidth)
-	}
-
-	if cap(dst) < blockSize {
-		dst = make([]uint32, blockSize)
-	}
-	dst = dst[:blockSize]
-
-	payload := buf[pOff : pOff+payloadBytes]
-	unpackLanesUTLAVX512(dst, payload, blockSize, bitWidth)
-
-	dst = dst[:count]
-
-	consumed := pOff + payloadBytes
-
-	if hasExceptions {
+	if h.hasExceptions() {
 		archsimd.ClearAVXUpperBits()
-		excStart := pOff + payloadBytes
+		// The exception region starts right after the payload, which is
+		// exactly the consumed offset (h.consumed = pOff + payloadBytes).
 		var err error
-		consumed, err = applyExceptions(dst, buf, excStart, count, bitWidth, excCount, scratch)
+		consumed, err = applyExceptions(dst, buf, h.consumed, h.count, h.bitWidth, h.excCount, scratch)
 		if err != nil {
 			return nil, 0, err
 		}
 	}
 
-	if hasDelta {
-		if hasZigZag {
-			if count == blockSize {
+	if h.hasDelta() {
+		if h.hasZigZag() {
+			// Zigzag mode cannot overflow; AVX-512 reuses the AVX2 YMM-wide
+			// delta kernels.
+			if h.count == blockSize {
 				deltaDecodePerLaneAVX2(dst, true)
 			} else {
 				archsimd.ClearAVXUpperBits()
 				deltaDecodePerLaneScalar(dst, true)
 			}
 		} else {
+			// Explicit dispatch (no func values): full blocks run the AVX2
+			// overflow kernel, partial blocks the scalar reference.
 			var overflowPos int
-			if count == blockSize {
+			if h.count == blockSize {
 				overflowPos = deltaDecodePerLaneWithOverflowAVX2(dst, false)
 			} else {
 				archsimd.ClearAVXUpperBits()
 				overflowPos = deltaDecodePerLaneWithOverflowScalar(dst, false)
 			}
+			// Wrap a detected overflow into the documented error type.
 			if overflowPos > 0 {
 				archsimd.ClearAVXUpperBits()
 				return nil, 0, &ErrOverflow{Position: overflowPos}
@@ -932,8 +872,8 @@ func unpackBlockAVX512(dst []uint32, scratch []uint32, buf []byte, forUint64 boo
 		}
 	}
 
-	if hasFOR && !u64Single {
-		forAddAVX512(dst, count, forBase)
+	if h.hasFOR() && !h.u64Single() {
+		forAddAVX512(dst, h.count, h.forBase)
 	}
 
 	archsimd.ClearAVXUpperBits()

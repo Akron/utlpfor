@@ -1,7 +1,7 @@
 .PHONY: test test-simd test-force-scalar test-force-sse2 test-force-avx2 test-force-avx512 \
        bench bench-simd bench-save-scalar bench-save-simd bench-compare \
        compare-with-fastpfor bench-matrix bench-matrix-table bench-matrix-compare \
-       bench-quick bench-quick-save \
+       bench-quick bench-quick-save bench-ab \
        bench-threshold threshold-analyze bench-threshold-full \
        fuzz fuzz-simd fuzz-regression fuzz-regression-simd \
        generate-native generate \
@@ -185,6 +185,40 @@ bench-matrix-compare:
 		exit 1; \
 	fi
 	benchstat $(OLD) $(NEW)
+
+# Interleaved A/B benchmarks - Usage:
+#   make bench-ab                                        # HEAD vs worktree
+#   make bench-ab ROUNDS=10 BENCH='BenchmarkUnpackDelta' # subset, more rounds
+#   benchstat benchmarks/ab-old.txt benchmarks/ab-new.txt
+AB_ROUNDS ?= 6
+AB_BENCH ?= 'BenchmarkUnpackDelta|BenchmarkUnpackUint32$$|BenchmarkUnpackSequential|BenchmarkPackDeltaMonotonic|BenchmarkPackSequential'
+
+bench-ab:
+	@command -v benchstat >/dev/null 2>&1 || { echo "Install benchstat: $(GO) install golang.org/x/perf/cmd/benchstat@latest"; exit 1; }
+	@mkdir -p benchmarks
+	@git worktree add --detach benchmarks/.ab-head HEAD >/dev/null 2>&1 || true
+	@(cd benchmarks/.ab-head && GOEXPERIMENT=simd $(GO) test -c -o $(CURDIR)/utlpfor-ab-old.test .)
+	@GOEXPERIMENT=simd $(GO) test -c -o utlpfor-ab-new.test .
+	@rm -f benchmarks/ab-old.txt benchmarks/ab-new.txt
+	@i=1; while [ $$i -le $(AB_ROUNDS) ]; do \
+		if [ $$((i % 2)) -eq 1 ]; then ORDER="utlpfor-ab-old.test utlpfor-ab-new.test"; \
+		else ORDER="utlpfor-ab-new.test utlpfor-ab-old.test"; fi; \
+		for bin in $$ORDER; do \
+			case "$$bin" in \
+				*old*) OUT=benchmarks/ab-old.txt ;; \
+				*new*) OUT=benchmarks/ab-new.txt ;; \
+			esac; \
+			echo "=== ab round $$i/$(AB_ROUNDS) $$bin ===" >&2; \
+			GOEXPERIMENT=simd taskset -c 2 ./$$bin \
+				-test.bench=$(AB_BENCH) -test.benchmem -test.count=1 -test.run='^$$' \
+				-test.timeout=900s >> $$OUT 2>&1; \
+		done; \
+		i=$$((i + 1)); \
+	done
+	@rm -f utlpfor-ab-old.test utlpfor-ab-new.test
+	@git worktree remove --force benchmarks/.ab-head >/dev/null 2>&1 || true
+	@echo "Saved benchmarks/ab-old.txt / benchmarks/ab-new.txt"
+	@echo "Compare with: benchstat benchmarks/ab-old.txt benchmarks/ab-new.txt"
 
 # --- Code Generation ---
 
