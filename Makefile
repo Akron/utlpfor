@@ -1,5 +1,5 @@
 .PHONY: test test-simd test-force-scalar test-force-sse2 test-force-avx2 test-force-avx512 \
-       bench bench-simd bench-save-scalar bench-save-simd bench-compare \
+       bench bench-simd bench-simd-v2 bench-save-scalar bench-save-simd bench-compare \
        compare-with-fastpfor bench-matrix bench-matrix-table bench-matrix-compare \
        bench-quick bench-quick-save bench-ab \
        bench-threshold threshold-analyze bench-threshold-full \
@@ -11,6 +11,8 @@
 # Override to easily revert:
 #   make GO=go test
 GO ?= gotip
+
+# GOAMD64=v2 is recommended for consumers on modern x86-64 if they want the fastest popcount-heavy path
 
 FUZZTIME ?= 30s
 BENCHCOUNT ?= 10
@@ -66,6 +68,9 @@ bench:
 
 bench-simd:
 	GOEXPERIMENT=simd $(TASKSET_MICRO) $(GO) test -bench=. -benchmem -count=$(BENCHCOUNT) -run='^$$' ./...
+
+bench-simd-v2:
+	GOAMD64=v2 GOEXPERIMENT=simd $(TASKSET_MICRO) $(GO) test -bench=. -benchmem -count=$(BENCHCOUNT) -run='^$$' ./...
 
 bench-save-scalar:
 	@mkdir -p benchmarks

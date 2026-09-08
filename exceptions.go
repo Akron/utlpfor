@@ -319,11 +319,7 @@ func findExceptionIndex(excIdx []byte, excCount, pos int) int {
 	if bitmap[byteIdx]&(1<<bitIdx) == 0 {
 		return -1
 	}
-	count := 0
-	// Rank = popcount(bits before pos); this maps bitmap position to SVB index.
-	for b := range byteIdx {
-		count += bits.OnesCount8(bitmap[b])
-	}
-	count += bits.OnesCount8(bitmap[byteIdx] & ((1 << bitIdx) - 1))
-	return count
+	// Rank = popcount(bits before pos); this maps bitmap position to SVB
+	// index. 2 POPCNTs replace the former byte-wise OnesCount8 loop.
+	return bitmapRank128(bitmap, byteIdx, uint(bitIdx))
 }

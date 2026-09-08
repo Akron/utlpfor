@@ -1,6 +1,9 @@
 package utlpfor
 
-import "math/bits"
+import (
+	"math/bits"
+	"unsafe"
+)
 
 // deltaFullUnpackThreshold returns the posInLane value above which
 // GetUint32 uses full UnpackUint32 instead of the single-lane walk
@@ -29,6 +32,9 @@ func deltaFullUnpackThreshold(bitWidth int) int {
 }
 
 // extractPackedValueUTL extracts a single packed value from a UTL payload.
+// Reads past the payload end yield zero bits (documented degraded read for
+// corrupt blocks); the byteOffset guards keep that contract while dropping
+// the slice bounds checks on the hot path via pointer loads.
 func extractPackedValueUTL(pos int, payload []byte, bitWidth int) uint32 {
 	lane := pos % utlLaneCount
 	posInLane := pos / utlLaneCount
@@ -40,12 +46,17 @@ func extractPackedValueUTL(pos int, payload []byte, bitWidth int) uint32 {
 
 	var acc uint64
 	if byteOffset+4 <= len(payload) {
-		acc = uint64(bo.Uint32(payload[byteOffset:]))
+		// Pointer load: the guard above already bounds the read,
+		// so the bounds-checked slice load adds only overhead here.
+		p := unsafe.Pointer(&payload[0])
+		acc = uint64(*(*uint32)(unsafe.Add(p, byteOffset)))
 	}
 	if bitWidth > 32-bitOffset {
 		nextByteOffset := byteOffset + utlSuperWordBytes
-		if nextByteOffset+4 <= len(payload) {
-			acc |= uint64(bo.Uint32(payload[nextByteOffset:])) << 32
+		if nextByteOffset+4 <= len(payload) { // second word only for wide lanes
+			// Pointer load, same reasoning as above.
+			p := unsafe.Pointer(&payload[0])
+			acc |= uint64(*(*uint32)(unsafe.Add(p, nextByteOffset))) << 32
 		}
 	}
 
@@ -318,11 +329,8 @@ func applyLaneExceptions(laneValues []uint32, excRegion []byte,
 			if bitmap[byteIdx]&(1<<bitIdx) == 0 {
 				continue
 			}
-			rank := 0
-			for b := range byteIdx {
-				rank += bits.OnesCount8(bitmap[b])
-			}
-			rank += bits.OnesCount8(bitmap[byteIdx] & ((1 << bitIdx) - 1))
+			// OnesCount64 rank: 2 POPCNTs replace the byte-wise popcount loop.
+			rank := bitmapRank128(bitmap, byteIdx, bitIdx)
 			highBits := svbDecodeOneInternal(svbData, excCount, rank)
 			laneValues[v] |= highBits << shift
 		}
@@ -342,4 +350,36 @@ func getUint32FullUnpack(pos int, src []byte, scratch []uint32) (uint32, error) 
 		return 0, err
 	}
 	return unpacked[pos], nil
+}
+
+// bitmapRank128 returns the rank of the bitmap bit at byteIdx/bitIdx:
+// the number of set bits strictly before it. Two 64-bit POPCNTs replace
+// the former byte-wise OnesCount8 loops in findExceptionIndex and
+// applyLaneExceptions. bitIdx must be < 8; the bitmap is always 16 bytes
+// for valid blocks and callers pass pre-sliced 16-byte regions, so the
+// guarded 64-bit loads below are in-bounds by construction.
+//
+// Compiler note: bits.OnesCount64 compiles to a bare POPCNTQ only with
+// GOAMD64>=2; at default v1 the compiler emits a runtime x86HasPOPCNT
+// branch (never-taken CALL fallback). The two-POPCNT path still beats
+// the byte-wise loop at v1 (2 predicted branches vs 8+ bounds-checked
+// byte loads).
+func bitmapRank128(bitmap []byte, byteIdx int, bitIdx uint) int {
+	// Defense-in-depth: corrupt short regions degrade to rank 0 instead
+	// of reading past the slice (current callers always pass 16 bytes).
+	if len(bitmap) < 16 {
+		return 0
+	}
+	// Pointer loads: one MOVQ per word instead of 16 bounds-checked
+	// byte loads (the byte-assembly idiom does not fold in the compiler).
+	p := unsafe.Pointer(&bitmap[0])
+	w0 := *(*uint64)(unsafe.Add(p, 0))
+	w1 := *(*uint64)(unsafe.Add(p, 8))
+	if byteIdx < 8 {
+		// Target in word 0: count set bits below the target bit; word 1 is above.
+		return bits.OnesCount64(w0 & ((uint64(1) << (uint(8*byteIdx) + bitIdx)) - 1))
+	}
+	// Target in word 1: full word 0 counts, word 1 counts below the target bit.
+	return bits.OnesCount64(w0) +
+		bits.OnesCount64(w1&((uint64(1)<<(uint(8*(byteIdx-8))+bitIdx))-1))
 }
