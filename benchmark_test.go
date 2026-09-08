@@ -853,3 +853,39 @@ func BenchmarkAppendWithExceptions_TightCap(b *testing.B) {
 		dst, _ = PackUint32(Append, vals, dst, scratch)
 	}
 }
+
+func BenchmarkAppendGrowth(b *testing.B) {
+	// Regression canary for the Append dst growth policy:
+	// N sequential Append calls into a
+	// fresh buffer. The fixed-quantum policy reallocated (and copied the
+	// whole prefix) on nearly every call, so both ns/op and allocs/op grew
+	// quadratically with nBlocks. Geometric growth keeps allocs/op at
+	// O(log nBlocks) and total copy work at O(nBlocks).
+	// bench-ab comparisons must keep allocs/op flat when nBlocks doubles;
+	// a jump indicates a regression to fixed-quantum growth.
+	for _, nBlocks := range []int{1, 64, 1024} {
+		b.Run(fmt.Sprintf("blocks=%d", nBlocks), func(b *testing.B) {
+			scratch := make([]uint32, ScratchLenNoInPlace)
+			vals := make([]uint32, blockSize)
+			for i := range vals {
+				vals[i] = uint32(i % 1024) // bw10, no exceptions
+			}
+
+			b.ReportAllocs()
+			b.SetBytes(int64(nBlocks * blockSize * 4))
+			b.ResetTimer()
+			for range b.N {
+				// Fresh buffer per iteration: measures the full
+				// streaming cost including growth reallocations.
+				var dst []byte
+				var err error
+				for range nBlocks {
+					dst, err = PackUint32(Append, vals, dst, scratch)
+					if err != nil {
+						b.Fatal(err)
+					}
+				}
+			}
+		})
+	}
+}

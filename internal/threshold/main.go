@@ -87,6 +87,10 @@ func parseFile(path string) []result {
 		nsOp, _ := strconv.ParseFloat(m[4], 64)
 		rawResults = append(rawResults, result{config, posLo, posHi, nsOp})
 	}
+	if err := scanner.Err(); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: %s: %v\n", path, err)
+		return nil
+	}
 
 	type key struct {
 		config string

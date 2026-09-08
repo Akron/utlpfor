@@ -538,3 +538,87 @@ func TestPackUint32_PartialBlock_WithExceptions(t *testing.T) {
 		assert.Equal(t, original, unpacked)
 	}
 }
+
+func TestEnsureCapacity_GeometricGrowth(t *testing.T) {
+	// Regression test for the fixed-quantum Append growth policy:
+	// ensureCapacity32 used to grow dst by
+	// exactly maxBlockLen32 on every realloc. Because one Append consumes
+	// blockLen bytes, cap(dst)-off fell back below the quantum after
+	// virtually every call, so a sequential Append stream paid ~1 realloc
+	// plus a full-prefix copy per call (O(n^2) memcpy, ~1 alloc per Append).
+	// Geometric (doubling) growth amortizes to O(log n) reallocs.
+	const nBlocks = 300
+
+	block := make([]uint32, blockSize)
+	for i := range block {
+		block[i] = uint32(i % 1024) // bw10, no exceptions
+	}
+	scratch := make([]uint32, ScratchLenNoInPlace)
+
+	t.Run("sequential_appends_reallocs_log_n", func(t *testing.T) {
+		var dst []byte
+		allocs := testing.AllocsPerRun(5, func() {
+			dst = nil
+			var err error
+			for range nBlocks {
+				dst, err = PackUint32(Append, block, dst, scratch)
+				require.NoError(t, err)
+			}
+		})
+		// Old policy: one realloc per Append (~300 allocs). Doubling policy:
+		// O(log2(n/quantum)) reallocs (~7). Pinned at <= 12 so future policy
+		// tweaks keep slack without re-enabling quadratic behavior.
+		assert.LessOrEqual(t, allocs, float64(12),
+			"sequential Append into a fresh buffer must realloc O(log n) times, not once per call")
+	})
+
+	t.Run("contract_capacity_and_prefix", func(t *testing.T) {
+		var dst []byte
+		var err error
+		prefixSnapshot := []byte{}
+		for i := range nBlocks {
+			off := len(dst)
+			capBefore := cap(dst)
+			dst, err = PackUint32(Append, block, dst, scratch)
+			require.NoError(t, err)
+
+			if cap(dst) == capBefore {
+				// Fast path: capacity already covered a full block at entry.
+				assert.GreaterOrEqual(t, capBefore-off, maxBlockLen32, "call %d", i)
+			} else {
+				// Realloc path: contract guarantees room for one full block
+				// at the entry offset, and the prefix must be preserved.
+				assert.GreaterOrEqual(t, cap(dst), off+maxBlockLen32, "call %d", i)
+				assert.Equal(t, prefixSnapshot, dst[:off], "realloc must preserve prefix (call %d)", i)
+			}
+			prefixSnapshot = dst[:len(dst)]
+
+			if i%50 == 0 {
+				unpacked, _, uErr := UnpackUint32(dst[off:], nil, scratch)
+				require.NoError(t, uErr, "call %d", i)
+				assert.Equal(t, block, unpacked, "call %d", i)
+			}
+		}
+
+		// The accumulated stream must decode as consecutive blocks.
+		offset := 0
+		for i := range nBlocks {
+			unpacked, consumed, err := UnpackUint32(dst[offset:], nil, scratch)
+			require.NoError(t, err, "block %d", i)
+			assert.Equal(t, block, unpacked, "block %d", i)
+			offset += consumed
+		}
+		assert.Equal(t, len(dst), offset)
+	})
+
+	t.Run("preallocated_exact_never_reallocs", func(t *testing.T) {
+		// Case (a) contract: a caller following the README hint
+		// (dst pre-allocated with MaxBlockLength32) stays zero-alloc.
+		dst := make([]byte, 0, MaxBlockLength32(0))
+		allocs := testing.AllocsPerRun(100, func() {
+			dst = dst[:0]
+			_, _ = PackUint32(Append, block, dst, scratch)
+		})
+		assert.Equal(t, float64(0), allocs)
+	})
+}

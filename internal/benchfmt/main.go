@@ -206,6 +206,9 @@ func main() {
 			}
 			allRows[sk].vals[level] = append(allRows[sk].vals[level], ns)
 		}
+		if err := scanner.Err(); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: %s: %v (skipping)\n", path, err)
+		}
 		f.Close()
 	}
 

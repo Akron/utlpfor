@@ -21,13 +21,24 @@ const for64BaseSize = 8
 // preserving dst[:off]. Called once at the packUint64 entry points
 // so all inner pack paths can unconditionally trust the capacity.
 // On the hot path (pre-allocated dst), this is a single comparison that
-// the branch predictor always predicts correctly.
+// the branch predictor always predicts correctly; the grow path is kept
+// out of line so the inlined fast path stays minimal.
+// Growth is geometric (doubling, floored at the needed block length) so
+// that sequential Append calls into one buffer amortize to O(log n)
+// reallocations and O(n) total copy work, mirroring the semantics of
+// Go's builtin append. See ensureCapacity32.
 func ensureCapacity64(dst []byte, off int, flag Flag) []byte {
 	needed := MaxBlockLength64(flag)
 	if cap(dst)-off >= needed {
 		return dst
 	}
-	grown := make([]byte, off, off+needed)
+	return growCapacity64(dst, off, needed)
+}
+
+// growCapacity64 is the cold reallocation path of ensureCapacity64.
+func growCapacity64(dst []byte, off int, needed int) []byte {
+	newCap := max(cap(dst)*2, off+needed)
+	grown := make([]byte, off, newCap)
 	copy(grown, dst[:off])
 	return grown
 }

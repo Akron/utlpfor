@@ -1,5 +1,7 @@
 # UTL-PFOR
 
+[![GoDoc](https://pkg.go.dev/badge/github.com/Akron/utlpfor?utm_source=godoc)](https://godoc.org/github.com/Akron/utlpfor) [![Go Report Card](https://goreportcard.com/badge/Akron/utlpfor)](https://goreportcard.com/report/github.com/Akron/utlpfor) 
+
 UTL-PFOR is an integer compression library for Go using native SIMD support.
 
 It is the successor to [fastpfor-go](https://github.com/Akron/fastpfor-go),
@@ -86,6 +88,8 @@ The `Append` and `NoInPlace` flags are pack-time control flags only and are
 never stored in the on-disk block header.
 
 When `Append` is set, the packed block is written after the existing content instead of overwriting from index 0.
+The destination buffer grows geometrically (doubling), so building a stream of N blocks amortizes to O(log N) reallocations and O(n) total copy work.
+Callers who know the total size up front can still pre-allocate exactly.
 
 By default, `PackUint32` may modify the input values slice in-place during FOR subtraction and delta encoding. When `NoInPlace` is set (or implied
 by `Append`), the library uses a scratch work buffer instead, leaving

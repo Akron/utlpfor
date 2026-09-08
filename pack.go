@@ -27,12 +27,25 @@ var maxBlockLen32 = MaxBlockLength32(0)
 // preserving dst[:off]. Called once in the Append path so all inner
 // pack paths can unconditionally trust the capacity.
 // On the hot path (pre-allocated dst), this is a single comparison that
-// the branch predictor always predicts correctly.
+// the branch predictor always predicts correctly; the grow path is kept
+// out of line so the inlined fast path stays minimal.
+// Growth is geometric (doubling, floored at maxBlockLen32) so that
+// sequential Append calls into one buffer amortize to O(log n)
+// reallocations and O(n) total copy work, mirroring the semantics of
+// Go's builtin append. The fixed-quantum policy this replaces reallocated
+// (and copied the whole prefix) on nearly every Append call, which made
+// stream building O(n^2) in the accumulated payload size.
 func ensureCapacity32(dst []byte, off int) []byte {
 	if cap(dst)-off >= maxBlockLen32 {
 		return dst
 	}
-	grown := make([]byte, off, off+maxBlockLen32)
+	return growCapacity32(dst, off)
+}
+
+// growCapacity32 is the cold reallocation path of ensureCapacity32.
+func growCapacity32(dst []byte, off int) []byte {
+	newCap := max(cap(dst)*2, off+maxBlockLen32)
+	grown := make([]byte, off, newCap)
 	copy(grown, dst[:off])
 	return grown
 }

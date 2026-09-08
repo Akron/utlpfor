@@ -548,6 +548,80 @@ func TestEnsureCapacity64(t *testing.T) {
 	})
 }
 
+func TestEnsureCapacity64_GeometricGrowth(t *testing.T) {
+	// uint64 twin of TestEnsureCapacity_GeometricGrowth: sequential Append
+	// into a fresh buffer must reallocate O(log n) times, not once per call.
+	const nBlocks = 300
+
+	values := make([]uint64, blockSize)
+	for i := range values {
+		// Above 32 bits forces the two-block encoding (worst case for growth).
+		values[i] = 0x100000000 + uint64(i*17)
+	}
+	scratch := make([]uint32, ScratchLen64)
+
+	t.Run("sequential_appends_reallocs_log_n", func(t *testing.T) {
+		var dst []byte
+		allocs := testing.AllocsPerRun(5, func() {
+			dst = nil
+			var err error
+			for range nBlocks {
+				dst, err = PackUint64(Append, values, dst, scratch)
+				require.NoError(t, err)
+			}
+		})
+		assert.LessOrEqual(t, allocs, float64(12),
+			"sequential uint64 Append must realloc O(log n) times, not once per call")
+	})
+
+	t.Run("contract_capacity_and_prefix", func(t *testing.T) {
+		var dst []byte
+		var err error
+		prefixSnapshot := []byte{}
+		for i := range nBlocks {
+			off := len(dst)
+			capBefore := cap(dst)
+			dst, err = PackUint64(Append, values, dst, scratch)
+			require.NoError(t, err)
+
+			if cap(dst) == capBefore {
+				assert.GreaterOrEqual(t, capBefore-off, MaxBlockLength64(0), "call %d", i)
+			} else {
+				assert.GreaterOrEqual(t, cap(dst), off+MaxBlockLength64(0), "call %d", i)
+				assert.Equal(t, prefixSnapshot, dst[:off], "realloc must preserve prefix (call %d)", i)
+			}
+			prefixSnapshot = dst[:len(dst)]
+
+			if i%50 == 0 {
+				out := make([]uint64, blockSize)
+				unpacked, _, uErr := UnpackUint64(dst[off:], out, scratch)
+				require.NoError(t, uErr, "call %d", i)
+				assert.Equal(t, values, unpacked, "call %d", i)
+			}
+		}
+
+		// The accumulated stream must decode as consecutive blocks.
+		offset := 0
+		for i := range nBlocks {
+			out := make([]uint64, blockSize)
+			unpacked, consumed, err := UnpackUint64(dst[offset:], out, scratch)
+			require.NoError(t, err, "block %d", i)
+			assert.Equal(t, values, unpacked, "block %d", i)
+			offset += consumed
+		}
+		assert.Equal(t, len(dst), offset)
+	})
+
+	t.Run("preallocated_exact_never_reallocs", func(t *testing.T) {
+		dst := make([]byte, 0, MaxBlockLength64(0))
+		allocs := testing.AllocsPerRun(100, func() {
+			dst = dst[:0]
+			_, _ = PackUint64(Append, values, dst, scratch)
+		})
+		assert.Equal(t, float64(0), allocs)
+	})
+}
+
 func TestPackUnpackUint64_BoundaryValue_0xFFFFFFFF(t *testing.T) {
 	values := []uint64{0xFFFFFFFF}
 	packUnpackUint64RoundTrip(t, 0, values)
