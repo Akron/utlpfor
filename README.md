@@ -1,8 +1,8 @@
-# UTL-PFOR
+# UTL-PFOR: SIMD Integer Compression for Go
 
-[![GoDoc](https://pkg.go.dev/badge/github.com/Akron/utlpfor?utm_source=godoc)](https://godoc.org/github.com/Akron/utlpfor) [![Go Report Card](https://goreportcard.com/badge/Akron/utlpfor)](https://goreportcard.com/report/github.com/Akron/utlpfor) 
+[![GoDoc](https://pkg.go.dev/badge/github.com/Akron/utlpfor?utm_source=godoc)](https://godoc.org/github.com/Akron/utlpfor)
 
-UTL-PFOR is an integer compression library for Go using native SIMD support.
+UTL-PFOR is a lossless integer compression and bitpacking library for Go with native SIMD support.
 
 It is the successor to [fastpfor-go](https://github.com/Akron/fastpfor-go),
 which uses PFOR [1] based on the [FastPFOR](https://github.com/fast-pack/FastPFOR) [2]
@@ -14,9 +14,9 @@ UTL-PFOR replaces the SSE2-only lane layout for bitpacking with the
 This single wire format works across SSE2, AVX2, and AVX-512 without
 data transposition.
 
-In addition to the `fastpfor` compression scheme, UTL-PFOR uses real *Frame-of-Reference* (the `for` in `pfor`) encoding,
-storing a minimum value per block and compressing only the residuals, if beneficial.
-Outliers, that would harm bitpacking, are stored as exceptions, that are patched on decompression (the `p` in `pfor`).
+In addition to the `fastpfor` compression scheme, UTL-PFOR uses *Frame-of-Reference* (FOR) encoding,
+storing a minimum value per block and compressing only the residuals when that is beneficial.
+Outliers that would hurt bitpacking are stored as exceptions and patched on decompression (the `p` in `pfor`).
 Exceptions are encoded using [StreamVByte](https://github.com/mhr3/streamvbyte) [3],
 a variable-byte encoding scheme optimized for SIMD (specifically SSE2).
 *Delta-Encoding* allows to only store the difference between values.
