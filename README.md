@@ -105,7 +105,11 @@ This library uses Go's native SIMD support (`simd/archsimd`) introduced
 in Go 1.26 (via `GOEXPERIMENT=simd`).
 
 Runtime dispatch selects the best path at startup:
-AVX-512 > AVX2 > SSE2 > scalar fallback.
+AVX-512 > AVX2 > AVX (128-bit) > scalar fallback.
+
+`simd/archsimd` emits VEX-encoded instructions only, so the 128-bit level
+needs AVX (Sandy Bridge/Bulldozer or newer; AVX2 is not required). CPUs
+without AVX (SSE-only) silently use the scalar code.
 
 - **Go 1.26+** with `GOEXPERIMENT=simd` for SIMD acceleration
 - Scalar fallback works without the experiment flag on any architecture

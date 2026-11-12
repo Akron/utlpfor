@@ -25,6 +25,9 @@ jobs:
       - name: Test with SIMD
         run: GOEXPERIMENT=simd gotip test -race -count=1 ./...
 
+      - name: Test simulated AVX-only and SSE-only CPUs, check 128-bit ISA
+        run: make test-cpu-levels
+
   test-scalar:
     name: Test (Scalar)
     runs-on: ubuntu-latest

@@ -40,9 +40,9 @@ func unpackLanesUTLSSE2(dst []uint32, payload []byte, count, bitWidth int) {
 // unpackLanesUTLSSE2Generic is the generic loop-based SSE2 unpacker.
 // Used as fallback for non-step bitwidths.
 func unpackLanesUTLSSE2Generic(dst []uint32, payload []byte, count, bitWidth int) {
-	mask := archsimd.BroadcastUint32x4(uint32((1 << bitWidth) - 1))
+	mask := broadcastUint32x4(uint32((1 << bitWidth) - 1))
 	if bitWidth == 32 {
-		mask = archsimd.BroadcastUint32x4(0xFFFFFFFF)
+		mask = broadcastUint32x4(0xFFFFFFFF)
 	}
 
 	bitOffset := 0
@@ -123,7 +123,7 @@ func packLanesUTLSSE2Generic(dst []byte, values []uint32, bitWidth int) {
 		return
 	}
 
-	mask := archsimd.BroadcastUint32x4(uint32((1 << bitWidth) - 1))
+	mask := broadcastUint32x4(uint32((1 << bitWidth) - 1))
 
 	clear(dst)
 
@@ -178,8 +178,8 @@ func zigzagEncodeSSE2(buf []uint32, n int) {
 func zigzagDecodeSSE2(values []uint32) {
 	// Broadcast constants hoisted out of the loop; pointer loads avoid
 	// per-iteration bounds checks.
-	one := archsimd.BroadcastUint32x4(1)
-	zero := archsimd.BroadcastUint32x4(0)
+	one := broadcastUint32x4(1)
+	zero := broadcastUint32x4(0)
 	n := len(values)
 	if n >= 4 {
 		p := unsafe.Pointer(&values[0])
@@ -423,7 +423,7 @@ func findMinMaxSSE2(values []uint32) (uint32, uint32) {
 // OR-reduction. No exception analysis is performed.
 func selectBitWidthNoPatchSSE2(values []uint32) int {
 	// Pointer-based loads: eliminates the per-iteration slice bounds check.
-	orVec := archsimd.BroadcastUint32x4(0)
+	orVec := broadcastUint32x4(0)
 	n := len(values)
 	if n >= 4 {
 		p := unsafe.Pointer(&values[0])
@@ -448,7 +448,7 @@ func selectBitWidthNoPatchSSE2(values []uint32) int {
 // forSubtractSSE2 subtracts baseValue from each element using SSE2.
 func forSubtractSSE2(dst, src []uint32, baseValue uint32) {
 	// Broadcast once outside the loop; pointer loads avoid bounds checks.
-	baseVec := archsimd.BroadcastUint32x4(baseValue)
+	baseVec := broadcastUint32x4(baseValue)
 	n := len(src)
 	if n >= 4 {
 		sp := unsafe.Pointer(&src[0])
@@ -469,7 +469,7 @@ func forSubtractSSE2(dst, src []uint32, baseValue uint32) {
 // forAddSSE2 adds baseValue to each of the first count elements using SSE2.
 func forAddSSE2(output []uint32, count int, baseValue uint32) {
 	// Broadcast once outside the loop; pointer loads avoid bounds checks.
-	baseVec := archsimd.BroadcastUint32x4(baseValue)
+	baseVec := broadcastUint32x4(baseValue)
 	if count >= 4 {
 		p := unsafe.Pointer(&output[0])
 		end := uintptr(count) * 4
@@ -825,8 +825,8 @@ func combineUint64SSE2(dst []uint64, lower, upper []uint32, count int) {
 func forAdd64SSE2(dst []uint64, values []uint32, base uint64, count int) {
 	// Broadcasts hoisted; pointer loads avoid bounds checks; the count
 	// check skips pointer setup for empty slices (corrupt input).
-	baseVec := archsimd.BroadcastUint64x2(base)
-	zero := archsimd.BroadcastUint32x4(0)
+	baseVec := broadcastUint64x2(base)
+	zero := broadcastUint32x4(0)
 	if count >= 4 {
 		dp := unsafe.Pointer(&dst[0])
 		vp := unsafe.Pointer(&values[0])
@@ -851,7 +851,7 @@ func forSubtract64SSE2(dst []uint32, values []uint64, base uint64) {
 	// Broadcast hoisted; pointer loads avoid bounds checks.
 	// The n >= 2 guard skips pointer setup for empty/single-element slices
 	// (defense-in-depth; callers currently guarantee count > 0).
-	baseVec := archsimd.BroadcastUint64x2(base)
+	baseVec := broadcastUint64x2(base)
 	n := len(values)
 	if n >= 2 {
 		vp := unsafe.Pointer(&values[0])

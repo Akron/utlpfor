@@ -363,7 +363,7 @@ func generateUnpackSSE2(b *strings.Builder, bw int) {
 		return
 	}
 
-	w("\tmask := archsimd.BroadcastUint32x4(0x%X)\n", mask)
+	w("\tmask := broadcastUint32x4(0x%X)\n", mask)
 
 	groups := groupByWord(layout)
 
@@ -427,7 +427,7 @@ func generatePackSSE2(b *strings.Builder, bw int) {
 		return
 	}
 
-	w("\tmask := archsimd.BroadcastUint32x4(0x%X)\n", mask)
+	w("\tmask := broadcastUint32x4(0x%X)\n", mask)
 
 	groups := groupByWord(layout)
 
@@ -684,8 +684,15 @@ func generateBuildExcCounts(b *strings.Builder, simdSuffix, vecType string, step
 	w("// Pointer-based loads avoid the per-iteration slice bounds check.\n")
 	w("func buildExcCounts%s(values []uint32) (exc [9]int) {\n", simdSuffix)
 
+	// archsimd.BroadcastUint32x4 is VPBROADCASTD (AVX2); the 128-bit level must
+	// run on AVX-only CPUs, so it uses the load-based helper (see
+	// simd_broadcast_amd64.go).
+	broadcast := "archsimd.Broadcast" + vecType
+	if vecType == "Uint32x4" {
+		broadcast = "broadcastUint32x4"
+	}
 	for i, t := range excThresholds {
-		w("\tt%d := archsimd.Broadcast%s(0x%X)\n", i, vecType, t)
+		w("\tt%d := %s(0x%X)\n", i, broadcast, t)
 	}
 	w("\n")
 

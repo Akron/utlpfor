@@ -2,6 +2,7 @@ package utlpfor
 
 import (
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -14,7 +15,7 @@ func TestMain(m *testing.M) {
 		switch env {
 		case "scalar":
 			simdLevel = simdLevelScalar
-		case "sse2":
+		case "avx", "sse2": // "avx" is an alias of "sse2"
 			if detected < simdLevelSSE2 {
 				os.Exit(0)
 			}
@@ -39,7 +40,7 @@ func simdLevelName(level int) string {
 	case simdLevelScalar:
 		return "Scalar"
 	case simdLevelSSE2:
-		return "SSE2"
+		return "SSE2 (128-bit kernels, needs AVX)"
 	case simdLevelAVX2:
 		return "AVX2"
 	case simdLevelAVX512:
@@ -169,11 +170,15 @@ func TestSelectSimdLevel_AVX2(t *testing.T) {
 	assert.Equal(t, simdLevelAVX2, selectSimdLevel(false, false, true, true))
 }
 
-func TestSelectSimdLevel_SSE2(t *testing.T) {
+func TestSelectSimdLevel_AVX(t *testing.T) {
+	// AVX without AVX2 (Sandy Bridge, Ivy Bridge, Bulldozer ...): the 128-bit
+	// kernels, which must not need AVX2.
 	assert.Equal(t, simdLevelSSE2, selectSimdLevel(false, false, false, true))
 }
 
 func TestSelectSimdLevel_Scalar(t *testing.T) {
+	// SSE-only CPU (no AVX, e.g. Nehalem or a qemu64 guest): archsimd cannot
+	// run there, so the scalar level is selected - silently.
 	assert.Equal(t, simdLevelScalar, selectSimdLevel(false, false, false, false))
 }
 
@@ -213,4 +218,91 @@ func BenchmarkScalarDirect(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		dst, _ = packUint32Scalar(0, dst[:0], scratch, values)
 	}
+}
+
+// TestDispatch_HonoursGODEBUGCPU checks the real dispatch against a simulated
+// CPU (make test-cpu-avx-only / test-cpu-sse-only):
+//
+//	GODEBUG=cpu.avx2=off            -> at most the 128-bit (AVX) level
+//	GODEBUG=cpu.avx=off             -> scalar (SSE-only CPU), no crash
+func TestDispatch_HonoursGODEBUGCPU(t *testing.T) {
+	if os.Getenv("UTL_SIMD_LEVEL") != "" {
+		t.Skip("level is forced by UTL_SIMD_LEVEL")
+	}
+	godebug := "," + os.Getenv("GODEBUG") + ","
+	switch {
+	case strings.Contains(godebug, ",cpu.avx=off,"):
+		assert.Equal(t, simdLevelScalar, simdLevel,
+			"a CPU without AVX must run the scalar code")
+	case strings.Contains(godebug, ",cpu.avx2=off,"):
+		assert.LessOrEqual(t, simdLevel, simdLevelSSE2,
+			"a CPU without AVX2 must not use the AVX2 kernels")
+	default:
+		t.Skip("no simulated CPU in GODEBUG")
+	}
+}
+
+// TestDispatch_ExpectedLevel is the proof for a run on a real machine (see
+// "make build-remote-test"). With UTL_EXPECT_SIMD_LEVEL set it FAILS unless the
+// level selected by the real CPU detection (and not forced by UTL_SIMD_LEVEL)
+// is the expected one:
+//
+//	UTL_EXPECT_SIMD_LEVEL=scalar   CPU without AVX (SSE only), or a build without GOEXPERIMENT=simd
+//	UTL_EXPECT_SIMD_LEVEL=sse2     128-bit kernels (CPU with AVX, without AVX2); "avx" is an alias
+//	UTL_EXPECT_SIMD_LEVEL=avx2     AVX2 kernels
+//	UTL_EXPECT_SIMD_LEVEL=avx512   AVX-512 kernels (VBMI included)
+//
+// The CPU flags found in /proc/cpuinfo are logged as evidence.
+func TestDispatch_ExpectedLevel(t *testing.T) {
+	want := os.Getenv("UTL_EXPECT_SIMD_LEVEL")
+	if want == "" {
+		t.Skip("UTL_EXPECT_SIMD_LEVEL not set")
+	}
+	if os.Getenv("UTL_SIMD_LEVEL") != "" {
+		t.Fatal("UTL_SIMD_LEVEL forces the level; unset it to test the real detection")
+	}
+	if data, err := os.ReadFile("/proc/cpuinfo"); err == nil {
+		for _, line := range strings.Split(string(data), "\n") {
+			if strings.HasPrefix(line, "flags") {
+				var found []string
+				have := " " + line + " "
+				for _, f := range []string{"sse2", "sse4_2", "avx", "avx2", "avx512f", "avx512vbmi"} {
+					if strings.Contains(have, " "+f+" ") {
+						found = append(found, f)
+					}
+				}
+				t.Logf("cpu flags (subset): %s", strings.Join(found, " "))
+				break
+			}
+		}
+	}
+	t.Logf("detected SIMD level: %s (%d)", simdLevelName(simdLevel), simdLevel)
+
+	switch want {
+	case "scalar":
+		assert.Equal(t, simdLevelScalar, simdLevel)
+	case "sse2", "avx":
+		assert.Equal(t, simdLevelSSE2, simdLevel,
+			"expected the 128-bit kernels (this fails on a CPU without AVX or with AVX2)")
+	case "avx2":
+		assert.Equal(t, simdLevelAVX2, simdLevel)
+	case "avx512":
+		assert.GreaterOrEqual(t, simdLevel, simdLevelAVX512)
+	default:
+		t.Fatalf("unknown UTL_EXPECT_SIMD_LEVEL %q", want)
+	}
+}
+
+// TestDispatch_ActiveLevelRoundTrip packs and unpacks at every level that this
+// CPU (or the simulated CPU) supports.
+func TestDispatch_ActiveLevelRoundTrip(t *testing.T) {
+	values := make([]uint32, 128)
+	for i := range values {
+		values[i] = uint32(i*2654435761) >> (i % 29)
+	}
+	packed, err := PackUint32(0, values, nil, nil)
+	require.NoError(t, err)
+	got, _, err := UnpackUint32(packed, nil, nil)
+	require.NoError(t, err)
+	assert.Equal(t, values, got, "level %s", simdLevelName(simdLevel))
 }

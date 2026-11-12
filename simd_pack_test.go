@@ -360,7 +360,7 @@ func BenchmarkRawLoadStoreAVX2_Ptr(b *testing.B) {
 func BenchmarkRawShiftAndSSE2(b *testing.B) {
 	src := make([]uint32, blockSize)
 	dst := make([]uint32, blockSize)
-	mask := archsimd.BroadcastUint32x4(0xFF)
+	mask := broadcastUint32x4(0xFF)
 	for i := range src {
 		src[i] = uint32(i * 7)
 	}

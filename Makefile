@@ -1,4 +1,5 @@
-.PHONY: test test-simd test-force-scalar test-force-sse2 test-force-avx2 test-force-avx512 \
+.PHONY: test test-simd test-force-scalar test-force-avx test-force-sse2 test-force-avx2 test-force-avx512 \
+       test-cpu-avx-only test-cpu-sse-only check-isa test-cpu-levels build-remote-test \
        bench bench-simd bench-simd-v2 bench-save-scalar bench-save-simd bench-compare \
        compare-with-fastpfor bench-matrix bench-matrix-table bench-matrix-compare \
        bench-quick bench-quick-save bench-ab \
@@ -52,8 +53,38 @@ test-simd:
 test-force-scalar:
 	GOEXPERIMENT=simd UTL_SIMD_LEVEL=scalar $(GO) test ./... -count=1
 
-test-force-sse2:
-	GOEXPERIMENT=simd UTL_SIMD_LEVEL=sse2 $(GO) test ./... -count=1
+# 128-bit (AVX) level. "sse2" is the old name of the same level.
+test-force-avx:
+	GOEXPERIMENT=simd UTL_SIMD_LEVEL=avx $(GO) test ./... -count=1
+
+test-force-sse2: test-force-avx
+
+# Simulated CPUs: GODEBUG=cpu.<feature>=off makes archsimd.X86.<feature>() false,
+# so the real dispatch (not the UTL_SIMD_LEVEL override) picks the level.
+# AVX without AVX2 (Ivy Bridge class): must run the 128-bit kernels.
+test-cpu-avx-only:
+	GOEXPERIMENT=simd GODEBUG=cpu.avx512f=off,cpu.avx2=off $(GO) test ./... -count=1
+
+# No AVX at all (SSE-only class, e.g. Nehalem or qemu64): must run scalar, silently.
+test-cpu-sse-only:
+	GOEXPERIMENT=simd GODEBUG=cpu.avx512f=off,cpu.avx2=off,cpu.avx=off $(GO) test ./... -count=1
+
+# The 128-bit kernels must not contain AVX2/AVX-512-only instructions.
+check-isa:
+	GO=$(GO) scripts/check_avx128_isa.sh
+
+test-cpu-levels: test-cpu-avx-only test-cpu-sse-only check-isa
+
+# Test binary for an old machine (e.g. CentOS 7, glibc 2.17, no AVX2).
+# CGO_ENABLED=0 -> statically linked: no libc.so.6 / GLIBC_2.xx needed.
+# GOAMD64=v1    -> baseline x86-64 only (no compiler-emitted POPCNT/AVX/BMI).
+# See utlpfor-sse-issue-currentplan.md for how to run it and what to expect.
+REMOTE_TEST ?= utlpfor.test
+
+build-remote-test:
+	CGO_ENABLED=0 GOAMD64=v1 GOOS=linux GOARCH=amd64 GOEXPERIMENT=simd $(GO) test -c -o $(REMOTE_TEST) .
+	@file $(REMOTE_TEST) | grep -q 'statically linked' || { echo "$(REMOTE_TEST) is not static" >&2; exit 1; }
+	@printf 'Built %s (%s): statically linked\n' "$(REMOTE_TEST)" "$$(du -h $(REMOTE_TEST) | cut -f1)"
 
 test-force-avx2:
 	GOEXPERIMENT=simd UTL_SIMD_LEVEL=avx2 $(GO) test ./... -count=1

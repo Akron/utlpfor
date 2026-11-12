@@ -560,7 +560,7 @@ func packAVX2BW32(dst *byte, values *uint32) {
 func unpackSSE2BW4(dst *uint32, payload *byte) {
 	p := unsafe.Pointer(payload)
 	d := unsafe.Pointer(dst)
-	mask := archsimd.BroadcastUint32x4(0xF)
+	mask := broadcastUint32x4(0xF)
 	w0g0 := archsimd.LoadUint32x4Array((*[4]uint32)(unsafe.Add(p, 0)))
 	w0g0.And(mask).StoreArray((*[4]uint32)(unsafe.Add(d, 0)))
 	w0g0.ShiftAllRight(4).And(mask).StoreArray((*[4]uint32)(unsafe.Add(d, 64)))
@@ -603,7 +603,7 @@ func unpackSSE2BW4(dst *uint32, payload *byte) {
 func packSSE2BW4(dst *byte, values *uint32) {
 	p := unsafe.Pointer(values)
 	d := unsafe.Pointer(dst)
-	mask := archsimd.BroadcastUint32x4(0xF)
+	mask := broadcastUint32x4(0xF)
 	acc0g0 := archsimd.LoadUint32x4Array((*[4]uint32)(unsafe.Add(p, 0))).And(mask)
 	acc0g0 = acc0g0.Or(archsimd.LoadUint32x4Array((*[4]uint32)(unsafe.Add(p, 64))).And(mask).ShiftAllLeft(4))
 	acc0g0 = acc0g0.Or(archsimd.LoadUint32x4Array((*[4]uint32)(unsafe.Add(p, 128))).And(mask).ShiftAllLeft(8))
@@ -646,7 +646,7 @@ func packSSE2BW4(dst *byte, values *uint32) {
 func unpackSSE2BW8(dst *uint32, payload *byte) {
 	p := unsafe.Pointer(payload)
 	d := unsafe.Pointer(dst)
-	mask := archsimd.BroadcastUint32x4(0xFF)
+	mask := broadcastUint32x4(0xFF)
 	w0g0 := archsimd.LoadUint32x4Array((*[4]uint32)(unsafe.Add(p, 0)))
 	w0g0.And(mask).StoreArray((*[4]uint32)(unsafe.Add(d, 0)))
 	w0g0.ShiftAllRight(8).And(mask).StoreArray((*[4]uint32)(unsafe.Add(d, 64)))
@@ -693,7 +693,7 @@ func unpackSSE2BW8(dst *uint32, payload *byte) {
 func packSSE2BW8(dst *byte, values *uint32) {
 	p := unsafe.Pointer(values)
 	d := unsafe.Pointer(dst)
-	mask := archsimd.BroadcastUint32x4(0xFF)
+	mask := broadcastUint32x4(0xFF)
 	acc0g0 := archsimd.LoadUint32x4Array((*[4]uint32)(unsafe.Add(p, 0))).And(mask)
 	acc0g0 = acc0g0.Or(archsimd.LoadUint32x4Array((*[4]uint32)(unsafe.Add(p, 64))).And(mask).ShiftAllLeft(8))
 	acc0g0 = acc0g0.Or(archsimd.LoadUint32x4Array((*[4]uint32)(unsafe.Add(p, 128))).And(mask).ShiftAllLeft(16))
@@ -740,7 +740,7 @@ func packSSE2BW8(dst *byte, values *uint32) {
 func unpackSSE2BW12(dst *uint32, payload *byte) {
 	p := unsafe.Pointer(payload)
 	d := unsafe.Pointer(dst)
-	mask := archsimd.BroadcastUint32x4(0xFFF)
+	mask := broadcastUint32x4(0xFFF)
 	w0g0 := archsimd.LoadUint32x4Array((*[4]uint32)(unsafe.Add(p, 0)))
 	w0ng0 := archsimd.LoadUint32x4Array((*[4]uint32)(unsafe.Add(p, 64)))
 	w0g0.And(mask).StoreArray((*[4]uint32)(unsafe.Add(d, 0)))
@@ -799,7 +799,7 @@ func unpackSSE2BW12(dst *uint32, payload *byte) {
 func packSSE2BW12(dst *byte, values *uint32) {
 	p := unsafe.Pointer(values)
 	d := unsafe.Pointer(dst)
-	mask := archsimd.BroadcastUint32x4(0xFFF)
+	mask := broadcastUint32x4(0xFFF)
 	acc0g0 := archsimd.LoadUint32x4Array((*[4]uint32)(unsafe.Add(p, 0))).And(mask)
 	acc0g0 = acc0g0.Or(archsimd.LoadUint32x4Array((*[4]uint32)(unsafe.Add(p, 64))).And(mask).ShiftAllLeft(12))
 	acc0g0 = acc0g0.Or(archsimd.LoadUint32x4Array((*[4]uint32)(unsafe.Add(p, 128))).And(mask).ShiftAllLeft(24))
@@ -858,7 +858,7 @@ func packSSE2BW12(dst *byte, values *uint32) {
 func unpackSSE2BW16(dst *uint32, payload *byte) {
 	p := unsafe.Pointer(payload)
 	d := unsafe.Pointer(dst)
-	mask := archsimd.BroadcastUint32x4(0xFFFF)
+	mask := broadcastUint32x4(0xFFFF)
 	w0g0 := archsimd.LoadUint32x4Array((*[4]uint32)(unsafe.Add(p, 0)))
 	w0g0.And(mask).StoreArray((*[4]uint32)(unsafe.Add(d, 0)))
 	w0g0.ShiftAllRight(16).And(mask).StoreArray((*[4]uint32)(unsafe.Add(d, 64)))
@@ -913,7 +913,7 @@ func unpackSSE2BW16(dst *uint32, payload *byte) {
 func packSSE2BW16(dst *byte, values *uint32) {
 	p := unsafe.Pointer(values)
 	d := unsafe.Pointer(dst)
-	mask := archsimd.BroadcastUint32x4(0xFFFF)
+	mask := broadcastUint32x4(0xFFFF)
 	acc0g0 := archsimd.LoadUint32x4Array((*[4]uint32)(unsafe.Add(p, 0))).And(mask)
 	acc0g0 = acc0g0.Or(archsimd.LoadUint32x4Array((*[4]uint32)(unsafe.Add(p, 64))).And(mask).ShiftAllLeft(16))
 	acc0g0.StoreArray((*[4]uint32)(unsafe.Add(d, 0)))
@@ -968,7 +968,7 @@ func packSSE2BW16(dst *byte, values *uint32) {
 func unpackSSE2BW20(dst *uint32, payload *byte) {
 	p := unsafe.Pointer(payload)
 	d := unsafe.Pointer(dst)
-	mask := archsimd.BroadcastUint32x4(0xFFFFF)
+	mask := broadcastUint32x4(0xFFFFF)
 	w0g0 := archsimd.LoadUint32x4Array((*[4]uint32)(unsafe.Add(p, 0)))
 	w0ng0 := archsimd.LoadUint32x4Array((*[4]uint32)(unsafe.Add(p, 64)))
 	w0g0.And(mask).StoreArray((*[4]uint32)(unsafe.Add(d, 0)))
@@ -1043,7 +1043,7 @@ func unpackSSE2BW20(dst *uint32, payload *byte) {
 func packSSE2BW20(dst *byte, values *uint32) {
 	p := unsafe.Pointer(values)
 	d := unsafe.Pointer(dst)
-	mask := archsimd.BroadcastUint32x4(0xFFFFF)
+	mask := broadcastUint32x4(0xFFFFF)
 	acc0g0 := archsimd.LoadUint32x4Array((*[4]uint32)(unsafe.Add(p, 0))).And(mask)
 	acc0g0 = acc0g0.Or(archsimd.LoadUint32x4Array((*[4]uint32)(unsafe.Add(p, 64))).And(mask).ShiftAllLeft(20))
 	acc0g0.StoreArray((*[4]uint32)(unsafe.Add(d, 0)))
@@ -1118,7 +1118,7 @@ func packSSE2BW20(dst *byte, values *uint32) {
 func unpackSSE2BW24(dst *uint32, payload *byte) {
 	p := unsafe.Pointer(payload)
 	d := unsafe.Pointer(dst)
-	mask := archsimd.BroadcastUint32x4(0xFFFFFF)
+	mask := broadcastUint32x4(0xFFFFFF)
 	w0g0 := archsimd.LoadUint32x4Array((*[4]uint32)(unsafe.Add(p, 0)))
 	w0ng0 := archsimd.LoadUint32x4Array((*[4]uint32)(unsafe.Add(p, 64)))
 	w0g0.And(mask).StoreArray((*[4]uint32)(unsafe.Add(d, 0)))
@@ -1197,7 +1197,7 @@ func unpackSSE2BW24(dst *uint32, payload *byte) {
 func packSSE2BW24(dst *byte, values *uint32) {
 	p := unsafe.Pointer(values)
 	d := unsafe.Pointer(dst)
-	mask := archsimd.BroadcastUint32x4(0xFFFFFF)
+	mask := broadcastUint32x4(0xFFFFFF)
 	acc0g0 := archsimd.LoadUint32x4Array((*[4]uint32)(unsafe.Add(p, 0))).And(mask)
 	acc0g0 = acc0g0.Or(archsimd.LoadUint32x4Array((*[4]uint32)(unsafe.Add(p, 64))).And(mask).ShiftAllLeft(24))
 	acc0g0.StoreArray((*[4]uint32)(unsafe.Add(d, 0)))
@@ -1276,7 +1276,7 @@ func packSSE2BW24(dst *byte, values *uint32) {
 func unpackSSE2BW28(dst *uint32, payload *byte) {
 	p := unsafe.Pointer(payload)
 	d := unsafe.Pointer(dst)
-	mask := archsimd.BroadcastUint32x4(0xFFFFFFF)
+	mask := broadcastUint32x4(0xFFFFFFF)
 	w0g0 := archsimd.LoadUint32x4Array((*[4]uint32)(unsafe.Add(p, 0)))
 	w0ng0 := archsimd.LoadUint32x4Array((*[4]uint32)(unsafe.Add(p, 64)))
 	w0g0.And(mask).StoreArray((*[4]uint32)(unsafe.Add(d, 0)))
@@ -1367,7 +1367,7 @@ func unpackSSE2BW28(dst *uint32, payload *byte) {
 func packSSE2BW28(dst *byte, values *uint32) {
 	p := unsafe.Pointer(values)
 	d := unsafe.Pointer(dst)
-	mask := archsimd.BroadcastUint32x4(0xFFFFFFF)
+	mask := broadcastUint32x4(0xFFFFFFF)
 	acc0g0 := archsimd.LoadUint32x4Array((*[4]uint32)(unsafe.Add(p, 0))).And(mask)
 	acc0g0 = acc0g0.Or(archsimd.LoadUint32x4Array((*[4]uint32)(unsafe.Add(p, 64))).And(mask).ShiftAllLeft(28))
 	acc0g0.StoreArray((*[4]uint32)(unsafe.Add(d, 0)))
@@ -1864,14 +1864,14 @@ func packAVX512BW32(dst *byte, values *uint32) {
 // threshold comparisons in a single pass over the data.
 // Pointer-based loads avoid the per-iteration slice bounds check.
 func buildExcCountsSSE2(values []uint32) (exc [9]int) {
-	t0 := archsimd.BroadcastUint32x4(0x0)
-	t1 := archsimd.BroadcastUint32x4(0xF)
-	t2 := archsimd.BroadcastUint32x4(0xFF)
-	t3 := archsimd.BroadcastUint32x4(0xFFF)
-	t4 := archsimd.BroadcastUint32x4(0xFFFF)
-	t5 := archsimd.BroadcastUint32x4(0xFFFFF)
-	t6 := archsimd.BroadcastUint32x4(0xFFFFFF)
-	t7 := archsimd.BroadcastUint32x4(0xFFFFFFF)
+	t0 := broadcastUint32x4(0x0)
+	t1 := broadcastUint32x4(0xF)
+	t2 := broadcastUint32x4(0xFF)
+	t3 := broadcastUint32x4(0xFFF)
+	t4 := broadcastUint32x4(0xFFFF)
+	t5 := broadcastUint32x4(0xFFFFF)
+	t6 := broadcastUint32x4(0xFFFFFF)
+	t7 := broadcastUint32x4(0xFFFFFFF)
 
 	n := len(values)
 	if n >= 4 {
