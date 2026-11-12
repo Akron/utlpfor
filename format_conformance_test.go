@@ -2,7 +2,7 @@ package utlpfor
 
 import (
 	"bytes"
-	"errors"
+	"embed"
 	"math/bits"
 	"os"
 	"sort"
@@ -15,6 +15,23 @@ import (
 )
 
 const kaitaiSchemaPath = "utlpfor.ksy"
+
+// The Kaitai schema and the golden vectors are embedded into the test
+// binary, so a binary built with "go test -c" and copied to another machine
+// needs no utlpfor.ksy or testdata/ next to it. (Test files only: nothing is
+// embedded into the library itself.)
+//
+//go:embed utlpfor.ksy
+var kaitaiSchemaSource string
+
+//go:embed testdata/*.bin
+var goldenFS embed.FS
+
+// updateGoldenEnv names the environment variable that makes TestGoldenVectors
+// rewrite the golden files in the source tree (run it from the package
+// directory) instead of comparing against them. The embedded copies change
+// only after the next build.
+const updateGoldenEnv = "UTL_UPDATE_GOLDEN"
 
 // kaitaiBlock holds parsed fields from a UTL-PFOR block using the Kaitai runtime.
 // Field names and extraction logic correspond to the utlpfor.ksy definition.
@@ -43,9 +60,8 @@ type kaitaiBlock struct {
 
 func requireKaitaiSchema(t *testing.T) string {
 	t.Helper()
-	data, err := os.ReadFile(kaitaiSchemaPath)
-	require.NoError(t, err, "kaitai schema %s must exist and be readable", kaitaiSchemaPath)
-	content := string(data)
+	content := kaitaiSchemaSource
+	require.NotEmpty(t, content, "embedded kaitai schema %s must not be empty", kaitaiSchemaPath)
 	require.Contains(t, content, "id: utlpfor_block")
 	require.Contains(t, content, "bit  17")
 	require.Contains(t, content, "SPECIAL flag")
@@ -664,10 +680,7 @@ func TestKaitai_GoldenFilesParse(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			data, err := os.ReadFile(tt.file)
-			if errors.Is(err, os.ErrNotExist) {
-				t.Skipf("golden file %s not found", tt.file)
-			}
+			data, err := goldenFS.ReadFile(tt.file)
 			require.NoError(t, err)
 
 			b := parseKaitaiBlock(t, data)
@@ -729,11 +742,11 @@ func TestGoldenVectors(t *testing.T) {
 			packed, err := PackUint32(tt.flag, work, nil, nil)
 			require.NoError(t, err)
 
-			golden, err := os.ReadFile(tt.file)
-			if errors.Is(err, os.ErrNotExist) {
+			if os.Getenv(updateGoldenEnv) != "" {
 				require.NoError(t, os.WriteFile(tt.file, packed, 0644))
-				t.Skipf("golden file %s created; re-run to validate", tt.file)
+				t.Skipf("golden file %s rewritten; rebuild and re-run to validate", tt.file)
 			}
+			golden, err := goldenFS.ReadFile(tt.file)
 			require.NoError(t, err)
 			assert.Equal(t, golden, packed, "output diverged from golden file %s", tt.file)
 		})
