@@ -72,7 +72,8 @@ test-cpu-sse-only:
 
 # The 128-bit kernels must not contain AVX2/AVX-512-only instructions.
 check-isa:
-	GO=$(GO) scripts/check_avx128_isa.sh
+	@test -f scripts/check_avx128_isa.sh || { echo "scripts/check_avx128_isa.sh is missing (not committed?)" >&2; exit 1; }
+	GO=$(GO) bash scripts/check_avx128_isa.sh
 
 test-cpu-levels: test-cpu-avx-only test-cpu-sse-only check-isa
 
