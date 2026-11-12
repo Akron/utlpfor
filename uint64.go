@@ -283,12 +283,12 @@ func PackUint64(flag Flag, values []uint64, dst []byte, scratch []uint32) ([]byt
 	if len(scratch) < ScratchLen64 {
 		scratch = make([]uint32, ScratchLen64)
 	}
-	switch simdLevel {
-	case simdLevelAVX512VBMI, simdLevelAVX512:
+	switch {
+	case simdLevel.has(simdAVX512):
 		return packUint64AVX512(flag, values, dst, scratch)
-	case simdLevelAVX2:
+	case simdLevel.has(simdAVX2):
 		return packUint64AVX2(flag, values, dst, scratch)
-	case simdLevelSSE2:
+	case simdLevel.has(simdAVX):
 		return packUint64SSE2(flag, values, dst, scratch)
 	default:
 		return packUint64Scalar(flag, values, dst, scratch)
@@ -339,12 +339,12 @@ func UnpackUint64(src []byte, values []uint64, scratch []uint32) ([]uint64, int,
 	if len(scratch) < ScratchLen64 {
 		scratch = make([]uint32, ScratchLen64)
 	}
-	switch simdLevel {
-	case simdLevelAVX512VBMI, simdLevelAVX512:
+	switch {
+	case simdLevel.has(simdAVX512):
 		return unpackUint64AVX512(src, values, scratch)
-	case simdLevelAVX2:
+	case simdLevel.has(simdAVX2):
 		return unpackUint64AVX2(src, values, scratch)
-	case simdLevelSSE2:
+	case simdLevel.has(simdAVX):
 		return unpackUint64SSE2(src, values, scratch)
 	default:
 		return unpackUint64Scalar(src, values, scratch)

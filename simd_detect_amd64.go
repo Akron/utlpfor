@@ -4,8 +4,9 @@ package utlpfor
 
 import "simd/archsimd"
 
-// detectSIMDLevel probes CPU features and returns the best SIMD level.
-func detectSIMDLevel() int {
+// detectSIMDLevel probes CPU features and returns the usable SIMD features as
+// a bit set.
+func detectSIMDLevel() simdFeatures {
 	return selectSimdLevel(
 		archsimd.X86.AVX512VBMI(),
 		archsimd.X86.AVX512(),

@@ -20,12 +20,12 @@ func gtCountU32(v, threshold uint32) int {
 // Only for testing purposes.
 func selectBitWidthSIMDtest(values []uint32) (width int, excCount int) {
 	var excCounts [9]int
-	switch simdLevel {
-	case simdLevelAVX512VBMI, simdLevelAVX512:
+	switch {
+	case simdLevel.has(simdAVX512):
 		excCounts = buildExcCountsAVX512(values)
-	case simdLevelAVX2:
+	case simdLevel.has(simdAVX2):
 		excCounts = buildExcCountsAVX2(values)
-	case simdLevelSSE2:
+	case simdLevel.has(simdAVX):
 		excCounts = buildExcCountsSSE2(values)
 	default:
 		return selectBitWidth(values)
@@ -50,12 +50,12 @@ func selectBitWidthWithFORSIMDtest(values []uint32) (useFOR bool, baseValue uint
 	}
 
 	var excCounts [9]int
-	switch simdLevel {
-	case simdLevelAVX512VBMI, simdLevelAVX512:
+	switch {
+	case simdLevel.has(simdAVX512):
 		excCounts = buildExcCountsAVX512(values)
-	case simdLevelAVX2:
+	case simdLevel.has(simdAVX2):
 		excCounts = buildExcCountsAVX2(values)
-	case simdLevelSSE2:
+	case simdLevel.has(simdAVX):
 		excCounts = buildExcCountsSSE2(values)
 	default:
 		return decideFORFull(values, minVal, maxVal)

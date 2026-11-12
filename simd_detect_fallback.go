@@ -2,7 +2,8 @@
 
 package utlpfor
 
-// detectSIMDLevel returns scalar level when SIMD is not available.
-func detectSIMDLevel() int {
+// detectSIMDLevel returns the empty feature set (scalar level) when SIMD is
+// not available.
+func detectSIMDLevel() simdFeatures {
 	return simdLevelScalar
 }

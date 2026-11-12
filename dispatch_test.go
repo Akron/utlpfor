@@ -16,17 +16,17 @@ func TestMain(m *testing.M) {
 		case "scalar":
 			simdLevel = simdLevelScalar
 		case "avx", "sse2": // "avx" is an alias of "sse2"
-			if detected < simdLevelSSE2 {
+			if !detected.has(simdAVX) {
 				os.Exit(0)
 			}
 			simdLevel = simdLevelSSE2
 		case "avx2":
-			if detected < simdLevelAVX2 {
+			if !detected.has(simdAVX2) {
 				os.Exit(0)
 			}
 			simdLevel = simdLevelAVX2
 		case "avx512":
-			if detected < simdLevelAVX512 {
+			if !detected.has(simdAVX512) {
 				os.Exit(0)
 			}
 			simdLevel = simdLevelAVX512
@@ -35,32 +35,40 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
-func simdLevelName(level int) string {
-	switch level {
-	case simdLevelScalar:
-		return "Scalar"
-	case simdLevelSSE2:
-		return "SSE2 (128-bit kernels, needs AVX)"
-	case simdLevelAVX2:
-		return "AVX2"
-	case simdLevelAVX512:
-		return "AVX-512"
-	case simdLevelAVX512VBMI:
+// simdLevelName names the highest feature of a (normalized) feature set.
+func simdLevelName(level simdFeatures) string {
+	switch {
+	case level.has(simdAVX512VBMI):
 		return "AVX-512 VBMI"
+	case level.has(simdAVX512):
+		return "AVX-512"
+	case level.has(simdAVX2):
+		return "AVX2"
+	case level.has(simdAVX):
+		return "SSE2 (128-bit kernels, needs AVX)"
 	default:
-		return "Unknown"
+		return "Scalar"
 	}
 }
 
 func TestDispatch_SimdLevelIsSet(t *testing.T) {
-	assert.GreaterOrEqual(t, simdLevel, simdLevelScalar)
-	assert.LessOrEqual(t, simdLevel, simdLevelAVX512VBMI)
+	// The set is normalized: no feature bit without the bits below it.
+	assert.Zero(t, simdLevel&^simdLevelAVX512VBMI, "unknown feature bit set")
+	for _, f := range []struct{ flag, needs simdFeatures }{
+		{simdAVX2, simdAVX},
+		{simdAVX512, simdAVX2},
+		{simdAVX512VBMI, simdAVX512},
+	} {
+		if simdLevel.has(f.flag) {
+			assert.True(t, simdLevel.has(f.needs), "feature %#b needs %#b", f.flag, f.needs)
+		}
+	}
 
-	t.Logf("Active SIMD level: %s (%d)", simdLevelName(simdLevel), simdLevel)
+	t.Logf("Active SIMD level: %s (features %#05b)", simdLevelName(simdLevel), simdLevel)
 	t.Logf("SIMD levels testable on this system:")
 	t.Logf("  Scalar:       always available")
-	for _, lvl := range []int{simdLevelSSE2, simdLevelAVX2, simdLevelAVX512, simdLevelAVX512VBMI} {
-		if simdLevel >= lvl {
+	for _, lvl := range []simdFeatures{simdLevelSSE2, simdLevelAVX2, simdLevelAVX512, simdLevelAVX512VBMI} {
+		if simdLevel&lvl == lvl {
 			t.Logf("  %-14s available", simdLevelName(lvl)+":")
 		} else {
 			t.Logf("  %-14s not available", simdLevelName(lvl)+":")
@@ -182,6 +190,39 @@ func TestSelectSimdLevel_Scalar(t *testing.T) {
 	assert.Equal(t, simdLevelScalar, selectSimdLevel(false, false, false, false))
 }
 
+// A simulated CPU (GODEBUG=cpu.<feature>=off) can report a higher feature
+// without its prerequisites; the selection must not trust it.
+func TestSelectSimdLevel_InconsistentFlags(t *testing.T) {
+	// cpu.avx512f=off leaves VBMI set (no GODEBUG option for it).
+	assert.Equal(t, simdLevelAVX2, selectSimdLevel(true, false, true, true),
+		"VBMI without AVX-512 must fall back to AVX2")
+	// cpu.avx512f=off,cpu.avx2=off on an AVX-512 machine (make test-cpu-avx-only).
+	assert.Equal(t, simdLevelSSE2, selectSimdLevel(true, false, false, true),
+		"VBMI without AVX2 must fall back to the 128-bit level")
+	// cpu.avx2=off only: AVX-512 flags stay set.
+	assert.Equal(t, simdLevelSSE2, selectSimdLevel(true, true, false, true),
+		"AVX-512 without AVX2 must fall back to the 128-bit level")
+	// cpu.avx=off (make test-cpu-sse-only): everything else stays set.
+	assert.Equal(t, simdLevelScalar, selectSimdLevel(true, true, true, false),
+		"no AVX means scalar, whatever else is claimed")
+	assert.Equal(t, simdLevelScalar, selectSimdLevel(true, false, false, false))
+}
+
+// The result is a bit set with one bit per supported feature.
+func TestSelectSimdLevel_BitFlags(t *testing.T) {
+	assert.Equal(t, simdFeatures(0b0000), selectSimdLevel(false, false, false, false))
+	assert.Equal(t, simdFeatures(0b0001), selectSimdLevel(false, false, false, true))
+	assert.Equal(t, simdFeatures(0b0011), selectSimdLevel(false, false, true, true))
+	assert.Equal(t, simdFeatures(0b0111), selectSimdLevel(false, true, true, true))
+	assert.Equal(t, simdFeatures(0b1111), selectSimdLevel(true, true, true, true))
+
+	s := selectSimdLevel(false, true, true, true)
+	assert.True(t, s.has(simdAVX))
+	assert.True(t, s.has(simdAVX2))
+	assert.True(t, s.has(simdAVX512))
+	assert.False(t, s.has(simdAVX512VBMI))
+}
+
 func TestSelectSimdLevel_PreferHighest(t *testing.T) {
 	assert.Equal(t, simdLevelAVX512VBMI,
 		selectSimdLevel(true, true, true, true),
@@ -235,7 +276,7 @@ func TestDispatch_HonoursGODEBUGCPU(t *testing.T) {
 		assert.Equal(t, simdLevelScalar, simdLevel,
 			"a CPU without AVX must run the scalar code")
 	case strings.Contains(godebug, ",cpu.avx2=off,"):
-		assert.LessOrEqual(t, simdLevel, simdLevelSSE2,
+		assert.False(t, simdLevel.has(simdAVX2),
 			"a CPU without AVX2 must not use the AVX2 kernels")
 	default:
 		t.Skip("no simulated CPU in GODEBUG")
@@ -287,7 +328,7 @@ func TestDispatch_ExpectedLevel(t *testing.T) {
 	case "avx2":
 		assert.Equal(t, simdLevelAVX2, simdLevel)
 	case "avx512":
-		assert.GreaterOrEqual(t, simdLevel, simdLevelAVX512)
+		assert.True(t, simdLevel.has(simdAVX512), "expected the AVX-512 kernels")
 	default:
 		t.Fatalf("unknown UTL_EXPECT_SIMD_LEVEL %q", want)
 	}

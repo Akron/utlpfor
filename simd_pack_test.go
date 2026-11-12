@@ -1009,26 +1009,24 @@ const poisonByte = 0xAA
 
 // packLanesForLevel routes a direct lane-kernel call to the dispatcher of
 // the given SIMD level (test helper mirroring PackUint32 dispatch).
-func packLanesForLevel(t *testing.T, level int, dst []byte, values []uint32, bitWidth int) {
+func packLanesForLevel(t *testing.T, level simdFeatures, dst []byte, values []uint32, bitWidth int) {
 	t.Helper()
-	switch level {
-	case simdLevelScalar:
-		packLanesUTLScalar(dst, values, bitWidth)
-	case simdLevelSSE2:
-		packLanesUTLSSE2(dst, values, bitWidth)
-	case simdLevelAVX2:
-		packLanesUTLAVX2(dst, values, bitWidth)
-	case simdLevelAVX512, simdLevelAVX512VBMI:
+	switch {
+	case level.has(simdAVX512):
 		packLanesUTLAVX512(dst, values, bitWidth)
+	case level.has(simdAVX2):
+		packLanesUTLAVX2(dst, values, bitWidth)
+	case level.has(simdAVX):
+		packLanesUTLSSE2(dst, values, bitWidth)
 	default:
-		t.Fatalf("unknown SIMD level %d", level)
+		packLanesUTLScalar(dst, values, bitWidth)
 	}
 }
 
 // cpuSupportsLevel reports whether the physical CPU can execute the
 // kernels of the given level (independent of UTL_SIMD_LEVEL forcing).
-func cpuSupportsLevel(level int) bool {
-	return detectSIMDLevel() >= level
+func cpuSupportsLevel(level simdFeatures) bool {
+	return detectSIMDLevel()&level == level
 }
 
 // TestPackLanesUTL_PoisonedDst verifies that every pack lane kernel fully
@@ -1037,7 +1035,7 @@ func cpuSupportsLevel(level int) bool {
 // redundant clear(dst) in the dispatchers).
 func TestPackLanesUTL_PoisonedDst(t *testing.T) {
 	levels := []struct {
-		level int
+		level simdFeatures
 		name  string
 	}{
 		{simdLevelScalar, "scalar"},
@@ -1050,7 +1048,7 @@ func TestPackLanesUTL_PoisonedDst(t *testing.T) {
 		values[i] = uint32(i*2654435761) ^ uint32(i<<7)
 	}
 	for _, lv := range levels {
-		if lv.level > simdLevelScalar && !cpuSupportsLevel(lv.level) {
+		if lv.level != simdLevelScalar && !cpuSupportsLevel(lv.level) {
 			t.Logf("CPU lacks %s support; skipping level", lv.name)
 			continue
 		}

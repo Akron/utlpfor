@@ -17,16 +17,12 @@ import (
 // proxy until benchmarked on AVX-512 hardware).
 func deltaFullUnpackThreshold(bitWidth int) int {
 	if bitWidth >= 20 {
-		switch simdLevel {
-		case simdLevelAVX512VBMI, simdLevelAVX512:
+		// AVX2 implies AVX-512 here (the set is normalized). Add a
+		// has(simdAVX512) case above once AVX-512 hardware was benchmarked.
+		if simdLevel.has(simdAVX2) {
 			return 4
-		case simdLevelAVX2:
-			return 4
-		case simdLevelSSE2:
-			return 2
-		default:
-			return 2
 		}
+		return 2 // 128-bit (AVX) and scalar
 	}
 	return utlValuesPerLane
 }
@@ -205,12 +201,12 @@ func getFullUnpackViaBlock(pos int, src []byte, scratch []uint32) (uint32, error
 	}
 	var unpacked []uint32
 	var err error
-	switch simdLevel {
-	case simdLevelAVX512VBMI, simdLevelAVX512:
+	switch {
+	case simdLevel.has(simdAVX512):
 		unpacked, _, err = unpackBlockForUint64AVX512(scratch[:0], scratch[2*blockSize:], src)
-	case simdLevelAVX2:
+	case simdLevel.has(simdAVX2):
 		unpacked, _, err = unpackBlockForUint64AVX2(scratch[:0], scratch[2*blockSize:], src)
-	case simdLevelSSE2:
+	case simdLevel.has(simdAVX):
 		unpacked, _, err = unpackBlockForUint64SSE2(scratch[:0], scratch[2*blockSize:], src)
 	default:
 		unpacked, _, err = unpackUint32Scalar(scratch[:0], scratch[2*blockSize:], src, true)

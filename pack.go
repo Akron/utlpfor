@@ -84,12 +84,12 @@ func PackUint32(flag Flag, values []uint32, dst []byte, scratch []uint32) ([]byt
 	} else if len(scratch) < ScratchLen {
 		scratch = make([]uint32, ScratchLen)
 	}
-	switch simdLevel {
-	case simdLevelAVX512VBMI, simdLevelAVX512:
+	switch {
+	case simdLevel.has(simdAVX512):
 		return packUint32AVX512(flag, dst, scratch, values)
-	case simdLevelAVX2:
+	case simdLevel.has(simdAVX2):
 		return packUint32AVX2(flag, dst, scratch, values)
-	case simdLevelSSE2:
+	case simdLevel.has(simdAVX):
 		return packUint32SSE2(flag, dst, scratch, values)
 	default:
 		return packUint32Scalar(flag, dst, scratch, values)

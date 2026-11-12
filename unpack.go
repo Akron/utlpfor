@@ -6,12 +6,12 @@ func UnpackUint32(src []byte, values []uint32, scratch []uint32) ([]uint32, int,
 	if len(scratch) < blockSize {
 		scratch = make([]uint32, blockSize)
 	}
-	switch simdLevel {
-	case simdLevelAVX512VBMI, simdLevelAVX512:
+	switch {
+	case simdLevel.has(simdAVX512):
 		return unpackUint32AVX512(values, scratch, src)
-	case simdLevelAVX2:
+	case simdLevel.has(simdAVX2):
 		return unpackUint32AVX2(values, scratch, src)
-	case simdLevelSSE2:
+	case simdLevel.has(simdAVX):
 		return unpackUint32SSE2(values, scratch, src)
 	default:
 		return unpackUint32Scalar(values, scratch, src, false)
