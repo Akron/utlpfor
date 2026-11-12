@@ -14,16 +14,18 @@ jobs:
       - uses: actions/checkout@v6
       - uses: actions/setup-go@v6
         with:
-          go-version: "1.26"
+          # Go 1.27.x has the archsimd API the SIMD kernels are written for and
+          # the VPSRL peephole fix; gotip (1.28-devel) has a different API.
+          go-version: "1.27"
           cache: true
 
-      - name: Set up gotip
+      - name: Show CPU
         run: |
-          go install golang.org/dl/gotip@latest
-          gotip download
+          grep -m1 'model name' /proc/cpuinfo
+          grep -o -w 'avx512f\|avx2\|avx' /proc/cpuinfo | sort -u | tr '\n' ' '
 
       - name: Test with SIMD
-        run: GOEXPERIMENT=simd gotip test -race -count=1 ./...
+        run: GOEXPERIMENT=simd go test -race -count=1 ./...
 
       - name: Test simulated AVX-only and SSE-only CPUs, check 128-bit ISA
         run: make test-cpu-levels

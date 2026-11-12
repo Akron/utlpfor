@@ -111,25 +111,27 @@ AVX-512 > AVX2 > AVX (128-bit) > scalar fallback.
 needs AVX (Sandy Bridge/Bulldozer or newer; AVX2 is not required). CPUs
 without AVX (SSE-only) silently use the scalar code.
 
-- **Go 1.26+** with `GOEXPERIMENT=simd` for SIMD acceleration
+- **Go 1.27** (tested with 1.27.4) with `GOEXPERIMENT=simd` for SIMD
+  acceleration. `simd/archsimd` is still an experiment: the SIMD kernels follow
+  the `archsimd` API of Go 1.27 and do not compile with the 1.28 development
+  tree (`gotip`) of November 2026 or newer, whose API changed (e.g.
+  `Permute` became `LookupMod`). Go 1.26.x compilers have a known (and
+  [fixed in 1.27](https://github.com/golang/go/commit/aa80d7a7e6bf97aa27a74cc5056ef270a2a0c2f4))
+  issue generating suboptimal code, resulting in performance degradation on
+  AVX2 and AVX-512 bitpacking kernels.
 - Scalar fallback works without the experiment flag on any architecture
-- **Recommended**: Use `gotip` (Go 1.27-devel) for optimal AVX2/AVX-512
-  performance until Go 1.27 is released. Go 1.26.x compilers have a
-  known (and [fixed](https://github.com/golang/go/commit/aa80d7a7e6bf97aa27a74cc5056ef270a2a0c2f4))
-  issue generating suboptimal code, resulting in performance degradation on AVX2 and AVX-512
-  bitpacking kernels.
 
 ## Quick Start
 
 ```bash
 # Scalar path (any Go 1.26+)
-gotip test ./...
+go test ./...
 
-# With SIMD acceleration
-GOEXPERIMENT=simd gotip test ./...
+# With SIMD acceleration (Go 1.27)
+GOEXPERIMENT=simd go test ./...
 
 # Benchmarks
-GOEXPERIMENT=simd gotip test -bench=. -benchmem -count=5 ./...
+GOEXPERIMENT=simd go test -bench=. -benchmem -count=5 ./...
 ```
 
 ## Data Format

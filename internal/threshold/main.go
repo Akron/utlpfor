@@ -41,7 +41,7 @@ func main() {
 				"deltaFullUnpackThreshold values per SIMD level.\n\n"+
 				"Generate input with:\n"+
 				"  for level in scalar sse2 avx2 avx512; do\n"+
-				"    GOEXPERIMENT=simd UTL_SIMD_LEVEL=$level gotip test \\\n"+
+				"    GOEXPERIMENT=simd UTL_SIMD_LEVEL=$level go test \\\n"+
 				"      -bench=BenchmarkGetUint32_Approaches -benchmem -count=5 \\\n"+
 				"      -run='^$' -timeout=300s ./... \\\n"+
 				"      > benchmarks/get-$level.txt\n"+

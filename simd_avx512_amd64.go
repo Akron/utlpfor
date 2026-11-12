@@ -440,8 +440,8 @@ func splitUint64AVX512(lower, upper []uint32, values []uint64, count int) {
 		end := uintptr(count) * 8
 		for off := uintptr(0); off+64 <= end; off += 64 {
 			v := archsimd.LoadUint64x8Array((*[8]uint64)(unsafe.Add(vp, off)))
-			v.TruncToUint32().GetLo().StoreArray((*[8]uint32)(unsafe.Add(lp, off/2)))
-			v.ShiftAllRight(32).TruncToUint32().GetLo().StoreArray((*[8]uint32)(unsafe.Add(up, off/2)))
+			v.TruncToUint32().StoreArray((*[8]uint32)(unsafe.Add(lp, off/2)))
+			v.ShiftAllRight(32).TruncToUint32().StoreArray((*[8]uint32)(unsafe.Add(up, off/2)))
 		}
 	}
 	for i := (count / 8) * 8; i < count; i++ {
@@ -537,7 +537,7 @@ func narrowToUint32AVX512(dst []uint32, values []uint64, count int) {
 		end := uintptr(count) * 8
 		for off := uintptr(0); off+64 <= end; off += 64 {
 			archsimd.LoadUint64x8Array((*[8]uint64)(unsafe.Add(vp, off))).
-				TruncToUint32().GetLo().StoreArray((*[8]uint32)(unsafe.Add(dp, off/2)))
+				TruncToUint32().StoreArray((*[8]uint32)(unsafe.Add(dp, off/2)))
 		}
 	}
 	for i := (count / 8) * 8; i < count; i++ {
@@ -558,7 +558,7 @@ func forSubtract64AVX512(dst []uint32, values []uint64, base uint64) {
 		for off := uintptr(0); off+64 <= end; off += 64 {
 			archsimd.LoadUint64x8Array((*[8]uint64)(unsafe.Add(vp, off))).
 				Sub(baseVec).
-				TruncToUint32().GetLo().StoreArray((*[8]uint32)(unsafe.Add(dp, off/2)))
+				TruncToUint32().StoreArray((*[8]uint32)(unsafe.Add(dp, off/2)))
 		}
 	}
 	for i := (n / 8) * 8; i < n; i++ {
@@ -578,24 +578,14 @@ func forAdd64AVX512(dst []uint64, values []uint32, base uint64, count int) {
 		// off iterates in output bytes (uint64); input is uint32, so off/2.
 		end := uintptr(count) * 8
 		for off := uintptr(0); off+64 <= end; off += 64 {
-			wide := widenUint32x8(archsimd.LoadUint32x8Array((*[8]uint32)(unsafe.Add(vp, off/2)))).
-				Add(baseVec)
+			wide := archsimd.LoadUint32x8Array((*[8]uint32)(unsafe.Add(vp, off/2))).
+				ExtendToUint64().Add(baseVec)
 			wide.StoreArray((*[8]uint64)(unsafe.Add(dp, off)))
 		}
 	}
 	for i := (count / 8) * 8; i < count; i++ {
 		dst[i] = uint64(values[i]) + base
 	}
-}
-
-// widenUint32x8 zero-extends eight uint32 lanes to eight uint64 lanes
-// (VPMOVZXDQ zmm, ymm). In current gotip (Nov 2026), archsimd's
-// Uint32x8.ExtendToUint64 returns only four lanes (Uint64x4); the 8-lane
-// form lives on Uint32x16 and converts its low eight lanes, so the 256-bit
-// load is placed in the low half of a zero Uint32x16 first.
-func widenUint32x8(v archsimd.Uint32x8) archsimd.Uint64x8 {
-	var z archsimd.Uint32x16
-	return z.SetLo(v).ExtendToUint64()
 }
 
 // combineUint64AVX512 merges lower and upper uint32 halves into uint64 values.
@@ -610,8 +600,8 @@ func combineUint64AVX512(dst []uint64, lower, upper []uint32, count int) {
 		// off iterates in output bytes (uint64); inputs are uint32, so off/2.
 		end := uintptr(count) * 8
 		for off := uintptr(0); off+64 <= end; off += 64 {
-			loVec := widenUint32x8(archsimd.LoadUint32x8Array((*[8]uint32)(unsafe.Add(lp, off/2))))
-			hiVec := widenUint32x8(archsimd.LoadUint32x8Array((*[8]uint32)(unsafe.Add(up, off/2))))
+			loVec := archsimd.LoadUint32x8Array((*[8]uint32)(unsafe.Add(lp, off/2))).ExtendToUint64()
+			hiVec := archsimd.LoadUint32x8Array((*[8]uint32)(unsafe.Add(up, off/2))).ExtendToUint64()
 			loVec.Or(hiVec.ShiftAllLeft(32)).StoreArray((*[8]uint64)(unsafe.Add(dp, off)))
 		}
 	}

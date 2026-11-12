@@ -8,10 +8,11 @@
        generate-native generate \
        sim bench-binary
 
-# Go toolchain binary to use (defaults to gotip).
-# Override to easily revert:
-#   make GO=go test
-GO ?= gotip
+# Go toolchain binary to use (defaults to go, which must be Go 1.27.x for the
+# SIMD kernels: the archsimd API of the 1.28 development tree, i.e. gotip,
+# differs, see README). Override, e.g.:
+#   make GO=go1.27.4 test-simd
+GO ?= go
 
 # GOAMD64=v2 is recommended for consumers on modern x86-64 if they want the fastest popcount-heavy path
 
