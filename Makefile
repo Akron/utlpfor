@@ -355,7 +355,14 @@ bench-threshold-full: bench-threshold threshold-analyze
 
 BENCH_BINARY ?= utlpfor-bench.test
 
+# Statically linked (CGO_ENABLED=0): runs on old machines (e.g. CentOS 7, glibc 2.17) without
+# "GLIBC_2.xx not found". GOAMD64 defaults to v1 (same as a plain local build); the SIMD level
+# is chosen at run time, not by GOAMD64. Quick start on an AVX-only machine (Sandy Bridge):
+#   see "Benchmarks on the old machine" in utlpfor-sse-issue-currentplan.md
+BENCH_GOAMD64 ?= v1
+
 bench-binary:
-	GOEXPERIMENT=simd $(GO) test -c -o $(BENCH_BINARY) .
-	@printf 'Built %s (%s)\n' "$(BENCH_BINARY)" "$$(du -h $(BENCH_BINARY) | cut -f1)"
+	CGO_ENABLED=0 GOAMD64=$(BENCH_GOAMD64) GOEXPERIMENT=simd $(GO) test -c -o $(BENCH_BINARY) .
+	@file $(BENCH_BINARY) | grep -q 'statically linked' || { echo "$(BENCH_BINARY) is not static" >&2; exit 1; }
+	@printf 'Built %s (%s), statically linked\n' "$(BENCH_BINARY)" "$$(du -h $(BENCH_BINARY) | cut -f1)"
 	@echo "Copy to remote and run with -test.bench flags (see Makefile for examples)"
